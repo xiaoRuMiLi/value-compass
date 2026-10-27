@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# 密钥
+.env
+
+# 运行时数据与产物（可由脚本重新生成）
+data/
+generated/
+scratch/
+
+# 临时文件
+*.log
+.DS_Store
+Thumbs.db
