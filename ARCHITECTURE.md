@@ -276,18 +276,37 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 - 加新大师：在 `analysis/masters/` 加一个文件 + `config/masters/` 加一个 toml。
 - 加新页面：在 `pages/` 加 HTML + `static/js/` 加对应脚本 + `web/routes/pages.py` 加路由。
 
-## 13. 数据源可用性（已实测）
+## 13. 数据源可用性（spike 实测，2026-11-11）
 
-| 数据源 | 可用性 | 说明 |
+| 能力 | 结论 | 接口 / 说明 |
 |---|---|---|
-| 东方财富公开接口 | 可用 | 行情、K 线、F10 财务指标、公告、板块、资金流、分红送配、机构持仓 |
-| 巨潮资讯 | 可用 | 公告、财报 PDF、招股书（需正确 orgId，如茅台 `gssh0600519`） |
-| 东财股吧 | 可用但需绕 | JSON 接口失效，需解析 HTML |
-| 天天基金 | 可用但需绕 | 基金持仓 JSON 接口失效，需解析 HTML |
-| 公司官网 | 可用但需绕 | 无统一接口，需按站点模板 + 选择器抓取 |
-| 新浪期货 | 可用 | 商品主力实时价与全历史日 K 线，免费无 key |
-| 通达信 MCP / iFinD MCP / Wind | 不可用 | 本环境未配置 |
-| 东财人气榜接口 | 不可用 | 返回服务异常，市场热点改用概念板块实现 |
+| 实时行情 + 历史估值 | 可用 | 东财 push2 + RPT_VALUEANALYSIS_DET |
+| 财务指标 + 三大报表 | 可用 | 东财 RPT_F10_FINANCE_MAINFINADATA + lrb/zcfzb/xjllb |
+| 主营构成（产品/地区） | 可用 | 东财 F10 BusinessAnalysis（zygcfx） |
+| 公告 / 财报 PDF / 招股书 | 可用 | 巨潮 hisAnnouncement + static.cninfo.com.cn PDF + 东财公告 |
+| 分红送配 | 可用 | 东财 RPT_SHAREBONUS_DET |
+| 研报 | 可用 | 东财 reportapi |
+| 行业板块 | 可用 | 东财 push2 板块列表 |
+| 资金流向 | 可用 | 东财个股资金流 kline |
+| 沪深港通持股 | 可用 | 东财 RPT_MUTUAL_HOLDSTOCKNORTH_STA |
+| 市场热点 | 可用 | 东财概念板块（人气榜接口失效） |
+| 商品价格 | 可用 | 新浪期货实时价 + 历史 K 线 |
+| 业绩预告 | 可用 | 东财 RPT_PUBLIC_OP_NEWPREDICT |
+| 一致预期 | 可用 | 东财 F10 ProfitForecast（评级统计/机构预测/盈利预测） |
+| 财报披露日历 | 可用 | 东财 RPT_PUBLIC_BS_APPOIN |
+| 十大流通股东 / 十大股东 | 可用 | 东财 F10 ShareholderResearch（sdltgd/sdgd）或 RPT_F10_EH_FREEHOLDERS |
+| 股东户数 | 可用 | 东财 F10 ShareholderResearch（gdrs） |
+| 解禁 | 可用 | 东财 RPT_LIFT_STOCK / F10 xsjj（无解禁时为空） |
+| 宏观 CPI / PMI | 可用 | 东财 RPT_ECONOMY_CPI / RPT_ECONOMY_PMI |
+| 股吧情绪 | 需绕 | JSON 接口失效，解析股吧 HTML |
+| 基金持仓 | 需绕 | 天天基金 HTML，或 F10 ShareholderResearch 的 jjcg |
+| 诉讼 | 需绕 | 东财公告列表 + 本地标题关键词过滤（巨潮全文搜索不限定单股） |
+| 诚信（处罚/问询/违规） | 需绕 | 东财公告列表 + 关键词/规则挖掘 |
+| 官网动态 | 需绕 | 站点模板 + 选择器，无统一接口 |
+| 股权质押 | 待定 | 东财 report 名未找到；候选：公告挖掘 / 中登质押接口 |
+| 公司行动（增发/回购/可转债/股权激励） | 待定 | 候选：公告挖掘 / 东财 F10 股本变动 |
+| 无风险利率（国债收益率） | 待定 | 候选：中债 / 新浪 / 东财宏观（report 名待确认） |
+| 通达信 / iFinD / Wind MCP | 不可用 | 本环境未配置 |
 
 ## 14. SQLite 表清单
 

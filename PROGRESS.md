@@ -91,5 +91,6 @@ L5 skill 化 + 验收（串行收尾）
 
 ## 备注
 
-- 数据源验证（L1 之前先做一次 spike）：17 个能力接口逐个测，产出"可用/需绕/不可用"清单，据此微调 P1-P17。
+- 数据源验证 spike 已完成（2026-11-11），完整清单见 ARCHITECTURE.md 第 13 节。
+- 三项待定，实现对应 provider 时再定：股权质押、公司行动（增发/回购/可转债/股权激励）、无风险利率。
 - 本环境 git 推送需先 `Remove-Item Env:GIT_SSH_COMMAND`，再设 `GIT_SSH=C:\Windows\System32\OpenSSH\ssh.exe`。
