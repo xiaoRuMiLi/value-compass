@@ -258,12 +258,15 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 
 ## 11. 命名约定
 
+完整开发规范见 [CONVENTIONS.md](CONVENTIONS.md)，这里只列要点：
+
 - Python 模块/包：小写 `snake_case`，如 `eastmoney.py`、`red_flags.py`。
 - 数据 JSON：`{code}_{category}.json`，如 `600519_financial.json`。
 - 输出报告：`{code}_{report}_{YYYYMMDD}.html`。
 - 文档存档：`{code}/{year}/{doc_id}.pdf`。
 - 测试：`test_*.py`，与源码目录一一对应。
 - 常量集中 `config/`，枚举/类型集中 `models.py`。
+- 类用 `PascalCase`，函数/变量用 `snake_case`，常量用 `UPPER_SNAKE_CASE`。
 
 ## 12. 扩展规则
 
@@ -381,3 +384,6 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 - [ARCHITECTURE.md](ARCHITECTURE.md)：目录结构、分层与扩展规则。
 - [SCHEMA.md](SCHEMA.md)：SQLite 表结构与字段定义。
 - [CONTRACTS.md](CONTRACTS.md)：数据模型、Port 接口与 Web API 契约。
+- [CONVENTIONS.md](CONVENTIONS.md)：命名与开发规范。
+- [ROADMAP.md](ROADMAP.md)：里程碑路线。
+- [PROGRESS.md](PROGRESS.md)：工作单元与进度表。
