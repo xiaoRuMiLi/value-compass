@@ -21,8 +21,8 @@ L5 skill 化 + 验收（串行收尾）
 
 | 编号 | 模块 | 输入 | 输出 | 依赖 | 状态 |
 |---|---|---|---|---|---|
-| W0.1 | 目录骨架 + pyproject.toml | 无 | 可安装的包结构 | - | 待办 |
-| W0.2 | models.py | CONTRACTS 第 2 节 | 全部数据类（34 类） | W0.1 | 待办 |
+| W0.1 | 目录骨架 + pyproject.toml | 无 | 可安装的包结构 | - | 已完成 |
+| W0.2 | models.py | CONTRACTS 第 2 节 | 全部数据类（34 类） | W0.1 | 已完成 |
 | W0.3 | 配置/路径/日志/代码归一化 | 无 | config 加载、paths、logging、symbols | W0.1 | 待办 |
 | W0.4 | storage 层 | SCHEMA.md | schema.sql、db.py 迁移、repository 基础读写 | W0.2 | 待办 |
 | W0.5 | _shared 传输 | 无 | HTTP、重试、限流、缓存 | W0.3 | 待办 |
