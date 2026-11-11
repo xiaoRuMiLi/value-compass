@@ -65,4 +65,4 @@
 
 - 每个任务完成即更新本表并 git 提交，保持进度表与代码同步。
 - 数据源验证（0.4）若发现接口不可用，先改 `SCHEMA.md`/`CONTRACTS.md` 再继续。
-- 本环境 git 推送需先设 `GIT_SSH=C:\Windows\System32\OpenSSH\ssh.exe`。
+- 本环境 git 推送需先执行：`Remove-Item Env:GIT_SSH_COMMAND`，再设 `GIT_SSH=C:\Windows\System32\OpenSSH\ssh.exe`（沙箱默认用 `GIT_SSH_COMMAND=cmd /c exit 1` 阻断 SSH）。
