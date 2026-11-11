@@ -38,6 +38,7 @@
 
 - 源码根目录：`C:\Users\Administrator\Documents\Codex\value-compass`。
 - 技能部署目录：`C:\Users\Administrator\.codex\skills\value-compass`（软链接或安装，待 skill 化阶段创建）。
+- 细粒度任务与实时状态见 [PROGRESS.md](PROGRESS.md)，每完成一个任务更新该表并提交。
 - 每完成一个里程碑，更新本文件"当前状态"。
 
 ## 文档索引
@@ -45,3 +46,4 @@
 - [ARCHITECTURE.md](ARCHITECTURE.md)：目录结构、分层与扩展规则。
 - [SCHEMA.md](SCHEMA.md)：SQLite 表结构与字段定义。
 - [CONTRACTS.md](CONTRACTS.md)：数据模型、Port 接口与 Web API 契约。
+- [PROGRESS.md](PROGRESS.md)：细粒度任务清单与进度状态。
