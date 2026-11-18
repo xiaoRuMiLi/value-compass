@@ -36,12 +36,12 @@ L5 skill 化 + 验收（串行收尾）
 |---|---|---|---|---|
 | P1 | quote | QuotePort | Snapshot / KlineBar / ValuationPoint | 已完成 |
 | P2 | financial | FinancialPort | FinancialReport / StatementItem / RevenueComposition | 已完成 |
-| P3 | announcement | AnnouncementPort | Announcement(Page) / Document | 待办 |
-| P4 | sentiment | SentimentPort | Sentiment | 待办 |
+| P3 | announcement | AnnouncementPort | Announcement(Page) / Document | 已完成 |
+| P4 | sentiment | SentimentPort | Sentiment | 已完成 |
 | P5 | holding | HoldingPort | CirculatingHolder / FundHolding | 已完成 |
 | P6 | research | ResearchPort | ResearchReport | 已完成 |
 | P7 | industry | IndustryPort | IndustryBoard | 已完成 |
-| P8 | litigation | LitigationPort | Litigation | 待办 |
+| P8 | litigation | LitigationPort | Litigation | 已完成 |
 | P9 | dividend | DividendPort | DividendRecord | 已完成 |
 | P10 | capitalflow | CapitalFlowPort | CapitalFlow / NorthboundHolding | 已完成 |
 | P11 | hotspot | HotspotPort | Hotspot | 已完成 |

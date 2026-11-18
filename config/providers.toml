@@ -21,7 +21,7 @@ primary = "eastmoney"
 primary = "eastmoney"
 
 [providers.litigation]
-primary = "eastmoney"
+primary = "cninfo"
 
 [providers.dividend]
 primary = "eastmoney"
