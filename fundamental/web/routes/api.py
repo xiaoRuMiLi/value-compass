@@ -201,3 +201,20 @@ def get_industries(date: str | None = None) -> list[dict[str, Any]]:
         return _rows(rows)
     finally:
         conn.close()
+
+
+@router.get("/stock/{symbol}/documents")
+def get_documents(symbol: str) -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        stock_id = _resolve_stock(conn, symbol)
+        return _rows(
+            repository.fetch_all(
+                conn,
+                "SELECT id, doc_type, period, title, source_url, local_path, file_size, sha256, status "
+                "FROM documents WHERE stock_id = ? ORDER BY period DESC",
+                (stock_id,),
+            )
+        )
+    finally:
+        conn.close()
