@@ -679,3 +679,10 @@ class FinancialReviewReport:
     findings: list[dict[str, Any]]
     integrity_summary: str = ""
     score: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class CycleAssessment:
+    position: str
+    evidence: list[str] = field(default_factory=list)
+    score: Optional[float] = None

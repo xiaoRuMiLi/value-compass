@@ -155,6 +155,7 @@ IndustryReport(industry, as_of, companies, dimension_summary)
 DelistingRisk(symbol, score, triggers, note)
 FraudScore(symbol, score, signals, note)
 FinancialReviewReport(symbol, summary, findings, integrity_summary, score)
+CycleAssessment(position, evidence, score)
 ```
 
 ## 5. Web API 端点
