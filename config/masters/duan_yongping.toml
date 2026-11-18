@@ -1,0 +1,5 @@
+[thresholds]
+gross_margin_min = 25.0
+net_margin_min = 15.0
+roe_min = 15.0
+debt_ratio_max = 40.0

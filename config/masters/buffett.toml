@@ -1,0 +1,5 @@
+[thresholds]
+roe_min = 15.0
+gross_margin_min = 30.0
+debt_ratio_max = 50.0
+revenue_growth_min = 10.0

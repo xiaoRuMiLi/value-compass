@@ -67,8 +67,8 @@ L5 skill 化 + 验收（串行收尾）
 | A7 | holder_tracking（持仓追踪） | HolderPosition | 已完成 |
 | A8 | price_correlation（价格相关性） | PriceCorrelation | 已完成 |
 | A9 | redflags + fraud_score + delisting（风险红旗/造假/退市） | RedFlag / FraudScore / DelistingRisk | 已完成 |
-| A10 | masters（大师模型） | MasterVerdict | 待办 |
-| A11 | financial_review + integrity（财报体检/诚信挖掘） | FinancialReviewReport / IntegrityRecord | 待办 |
+| A10 | masters（大师模型） | MasterVerdict | 已完成 |
+| A11 | financial_review + integrity（财报体检/诚信挖掘） | FinancialReviewReport / IntegrityRecord | 已完成 |
 
 ## L4 web API 与 pages（可并行）
 
