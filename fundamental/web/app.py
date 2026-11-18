@@ -24,3 +24,13 @@ def health() -> dict[str, str]:
 @app.get("/report")
 def report_page() -> FileResponse:
     return FileResponse(_PAGES_DIR / "report.html")
+
+
+@app.get("/financials")
+def financials_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "financials.html")
+
+
+@app.get("/industry")
+def industry_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "industry.html")

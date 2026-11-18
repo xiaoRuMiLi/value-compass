@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>value-compass · 财务全景</title>
+  <link rel="stylesheet" href="/static/css/base.css">
+</head>
+<body>
+  <header class="topbar"><h1 id="title">财务全景</h1></header>
+  <main>
+    <section class="panel">
+      <h2>三大报表</h2>
+      <div class="tabs" id="tabs">
+        <button class="tab active" data-type="income">利润表</button>
+        <button class="tab" data-type="balance">资产负债表</button>
+        <button class="tab" data-type="cashflow">现金流量表</button>
+      </div>
+      <div class="scroll" id="statement"></div>
+    </section>
+
+    <section class="panel">
+      <h2>主营构成（最近报告期）</h2>
+      <div id="composition"></div>
+    </section>
+
+    <section class="panel">
+      <h2>股东结构</h2>
+      <h3>十大流通股东</h3>
+      <div class="scroll"><table id="holders"></table></div>
+      <h3>股东户数变化</h3>
+      <div class="scroll"><table id="holderCount"></table></div>
+    </section>
+  </main>
+  <script src="/static/js/financials.js"></script>
+</body>
+</html>

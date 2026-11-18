@@ -116,3 +116,88 @@ def get_analysis(symbol: str) -> dict[str, Any]:
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result
+
+
+@router.get("/stock/{symbol}/statement")
+def get_statement(
+    symbol: str,
+    type: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+) -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        stock_id = _resolve_stock(conn, symbol)
+        sql = (
+            "SELECT report_date, report_type, statement_type, item_code, item_name, item_value, item_yoy "
+            "FROM statement_items WHERE stock_id = ?"
+        )
+        params: list[Any] = [stock_id]
+        if type:
+            sql += " AND statement_type = ?"
+            params.append(type)
+        sql += " ORDER BY report_date DESC, item_code"
+        return _rows(repository.fetch_all(conn, sql, params))
+    finally:
+        conn.close()
+
+
+@router.get("/stock/{symbol}/revenue-composition")
+def get_revenue_composition(
+    symbol: str,
+    dimension: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+) -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        stock_id = _resolve_stock(conn, symbol)
+        sql = "SELECT * FROM revenue_composition WHERE stock_id = ?"
+        params: list[Any] = [stock_id]
+        if dimension:
+            sql += " AND dimension = ?"
+            params.append(dimension)
+        sql += " ORDER BY report_date DESC"
+        return _rows(repository.fetch_all(conn, sql, params))
+    finally:
+        conn.close()
+
+
+@router.get("/stock/{symbol}/holders")
+def get_holders(symbol: str, report_date: str | None = None) -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        stock_id = _resolve_stock(conn, symbol)
+        sql = "SELECT * FROM circulating_holders WHERE stock_id = ?"
+        params: list[Any] = [stock_id]
+        if report_date:
+            sql += " AND report_date = ?"
+            params.append(report_date)
+        sql += " ORDER BY report_date DESC, rank"
+        return _rows(repository.fetch_all(conn, sql, params))
+    finally:
+        conn.close()
+
+
+@router.get("/stock/{symbol}/shareholder-count")
+def get_shareholder_count(symbol: str) -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        stock_id = _resolve_stock(conn, symbol)
+        return _rows(
+            repository.fetch_all(
+                conn, "SELECT * FROM shareholder_count WHERE stock_id = ? ORDER BY end_date DESC", (stock_id,)
+            )
+        )
+    finally:
+        conn.close()
+
+
+@router.get("/industry")
+def get_industries(date: str | None = None) -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        rows = repository.fetch_all(conn, "SELECT * FROM industry ORDER BY pct_change DESC")
+        return _rows(rows)
+    finally:
+        conn.close()
