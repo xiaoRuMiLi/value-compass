@@ -63,9 +63,9 @@ L5 skill 化 + 验收（串行收尾）
 | A3 | return（分红复利/回报） | ReturnResult | 已完成 |
 | A4 | moat（护城河） | MoatAssessment | 已完成 |
 | A5 | cycle（市场周期） | CycleAssessment | 已完成 |
-| A6 | comparison + industry（横向对比/行业地位） | CompanyComparison / PeerPosition | 待办 |
-| A7 | holder_tracking（持仓追踪） | HolderPosition | 待办 |
-| A8 | price_correlation（价格相关性） | PriceCorrelation | 待办 |
+| A6 | comparison + industry（横向对比/行业地位） | CompanyComparison / PeerPosition | 已完成 |
+| A7 | holder_tracking（持仓追踪） | HolderPosition | 已完成 |
+| A8 | price_correlation（价格相关性） | PriceCorrelation | 已完成 |
 | A9 | redflags + fraud_score + delisting（风险红旗/造假/退市） | RedFlag / FraudScore / DelistingRisk | 已完成 |
 | A10 | masters（大师模型） | MasterVerdict | 待办 |
 | A11 | financial_review + integrity（财报体检/诚信挖掘） | FinancialReviewReport / IntegrityRecord | 待办 |
