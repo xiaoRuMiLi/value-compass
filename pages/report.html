@@ -8,14 +8,43 @@
 </head>
 <body>
   <header class="topbar">
-    <h1 id="title">加载中…</h1>
-    <div class="price" id="price">-</div>
+    <div>
+      <h1 id="title">加载中…</h1>
+      <div id="tags" class="tags"></div>
+    </div>
+    <div class="head-right">
+      <div class="price" id="price">-</div>
+      <div class="score-badge" id="scoreBadge">-</div>
+    </div>
   </header>
+
   <main>
+    <section class="panel">
+      <h2>财务五维评分</h2>
+      <div id="dimensions"></div>
+    </section>
+
+    <section class="panel">
+      <h2>估值</h2>
+      <div id="valuation"></div>
+    </section>
+
+    <section class="panel">
+      <h2>大师观点</h2>
+      <div id="masters"></div>
+    </section>
+
+    <section class="panel">
+      <h2>财报体检</h2>
+      <p id="reviewSummary" class="muted"></p>
+      <ul id="findings"></ul>
+    </section>
+
     <section class="panel">
       <h2>日 K 线</h2>
       <div id="kline" class="chart"></div>
     </section>
+
     <section class="panel">
       <h2>财务摘要</h2>
       <table id="financials">
@@ -26,6 +55,7 @@
       </table>
     </section>
   </main>
+
   <script src="/static/js/vendor/echarts.min.js"></script>
   <script src="/static/js/report.js"></script>
 </body>

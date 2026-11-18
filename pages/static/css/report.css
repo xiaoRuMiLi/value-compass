@@ -11,7 +11,7 @@ body {
 
 .topbar {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   padding: 16px 24px;
   background: #fff;
@@ -23,10 +23,39 @@ body {
   font-size: 20px;
 }
 
+.head-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
 .price {
   font-size: 22px;
   font-weight: 600;
   color: #d97706;
+}
+
+.score-badge {
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: #fef3c7;
+  color: #92400e;
+  font-weight: 600;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.tag {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 12px;
 }
 
 main {
@@ -51,6 +80,84 @@ main {
 .chart {
   width: 100%;
   height: 420px;
+}
+
+.dim-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 70px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.dim-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: #f1f5f9;
+  overflow: hidden;
+}
+
+.dim-fill {
+  height: 100%;
+  background: #2563eb;
+}
+
+.dim-value {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.val-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 140px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f1f3;
+}
+
+.val-name {
+  font-weight: 500;
+}
+
+.val-range {
+  color: #374151;
+}
+
+.val-margin {
+  text-align: right;
+  color: #64748b;
+}
+
+.master-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.master-head {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.signal {
+  font-size: 13px;
+  color: #4b5563;
+  padding: 2px 0;
+}
+
+.muted {
+  color: #4b5563;
+}
+
+#findings {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.finding {
+  color: #b91c1c;
+  font-size: 13px;
+  padding: 2px 0;
 }
 
 table {
