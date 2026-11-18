@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from fundamental.models import KlineBar, Market, Snapshot, ValuationPoint
 from fundamental.providers._shared import HttpClient, RateLimiter, ResponseCache
+from fundamental.providers._shared.convert import to_float
 from fundamental.providers.registry import register
 from fundamental.utils.symbols import parse_symbol
 
@@ -14,15 +15,6 @@ _KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 _VALUATION_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 
 _SECID_PREFIX = {"SH": "1", "SZ": "0", "BJ": "0", "HK": "116"}
-
-
-def _to_float(value: object) -> float | None:
-    if value is None or value == "-" or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _secid(market: Market, code: str) -> str:
@@ -52,9 +44,9 @@ class EastmoneyQuoteProvider:
         data = payload.get("data") or {}
         return Snapshot(
             fetched_at=datetime.now(timezone.utc).isoformat(),
-            price=_to_float(data.get("f43")),
-            market_cap=_to_float(data.get("f116")),
-            turnover_rate=_to_float(data.get("f168")),
+            price=to_float(data.get("f43")),
+            market_cap=to_float(data.get("f116")),
+            turnover_rate=to_float(data.get("f168")),
         )
 
     def fetch_kline(self, symbol: str, start: str, end: str) -> list[KlineBar]:
@@ -125,14 +117,14 @@ class EastmoneyQuoteProvider:
                 points.append(
                     ValuationPoint(
                         trade_date=trade_date,
-                        close_price=_to_float(row.get("CLOSE_PRICE")),
-                        pe_ttm=_to_float(row.get("PE_TTM")),
-                        pe_lar=_to_float(row.get("PE_LAR")),
-                        pb_mrq=_to_float(row.get("PB_MRQ")),
-                        ps_ttm=_to_float(row.get("PS_TTM")),
-                        peg=_to_float(row.get("PEG_CAR")),
-                        pcf_ocf_ttm=_to_float(row.get("PCF_OCF_TTM")),
-                        total_market_cap=_to_float(row.get("TOTAL_MARKET_CAP")),
+                        close_price=to_float(row.get("CLOSE_PRICE")),
+                        pe_ttm=to_float(row.get("PE_TTM")),
+                        pe_lar=to_float(row.get("PE_LAR")),
+                        pb_mrq=to_float(row.get("PB_MRQ")),
+                        ps_ttm=to_float(row.get("PS_TTM")),
+                        peg=to_float(row.get("PEG_CAR")),
+                        pcf_ocf_ttm=to_float(row.get("PCF_OCF_TTM")),
+                        total_market_cap=to_float(row.get("TOTAL_MARKET_CAP")),
                     )
                 )
             if len(rows) < 500:
