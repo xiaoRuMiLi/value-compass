@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from fundamental.services.analyze import analyze_stock
 from fundamental.storage import db, repository
 from fundamental.utils.symbols import parse_symbol
 
@@ -107,3 +108,11 @@ def get_kline(
         return _rows(repository.fetch_all(conn, sql, params))
     finally:
         conn.close()
+
+
+@router.get("/stock/{symbol}/analysis")
+def get_analysis(symbol: str) -> dict[str, Any]:
+    result = analyze_stock(symbol)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
