@@ -38,18 +38,18 @@ L5 skill 化 + 验收（串行收尾）
 | P2 | financial | FinancialPort | FinancialReport / StatementItem / RevenueComposition | 已完成 |
 | P3 | announcement | AnnouncementPort | Announcement(Page) / Document | 待办 |
 | P4 | sentiment | SentimentPort | Sentiment | 待办 |
-| P5 | holding | HoldingPort | CirculatingHolder / FundHolding | 待办 |
-| P6 | research | ResearchPort | ResearchReport | 待办 |
-| P7 | industry | IndustryPort | IndustryBoard | 待办 |
+| P5 | holding | HoldingPort | CirculatingHolder / FundHolding | 已完成 |
+| P6 | research | ResearchPort | ResearchReport | 已完成 |
+| P7 | industry | IndustryPort | IndustryBoard | 已完成 |
 | P8 | litigation | LitigationPort | Litigation | 待办 |
-| P9 | dividend | DividendPort | DividendRecord | 待办 |
+| P9 | dividend | DividendPort | DividendRecord | 已完成 |
 | P10 | capitalflow | CapitalFlowPort | CapitalFlow / NorthboundHolding | 待办 |
 | P11 | hotspot | HotspotPort | Hotspot | 待办 |
 | P12 | official | OfficialPort | OfficialUpdate | 待办 |
 | P13 | commodity | CommodityPort | ProductPrice / StockProduct | 待办 |
 | P14 | forecast | ForecastPort | EarningsForecast / ConsensusEstimate / ReportCalendarItem | 待办 |
 | P15 | governance | GovernancePort | CorporateAction / InsiderTrade / ShareholderCount / Pledge / Unlock | 待办 |
-| P16 | macro | MacroPort | MacroIndicator | 待办 |
+| P16 | macro | MacroPort | MacroIndicator | 已完成 |
 | P17 | integrity | IntegrityPort | IntegrityRecord | 待办 |
 
 ## L3 analysis（11 个，可并行）
