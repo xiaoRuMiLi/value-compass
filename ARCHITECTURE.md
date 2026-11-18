@@ -406,3 +406,4 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 - [CONVENTIONS.md](CONVENTIONS.md)：命名与开发规范。
 - [ROADMAP.md](ROADMAP.md)：里程碑路线。
 - [PROGRESS.md](PROGRESS.md)：工作单元与进度表。
+- [EXTENDING.md](EXTENDING.md)：扩展操作手册。

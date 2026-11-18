@@ -8,3 +8,4 @@ A股/港股/中概股综合价值分析框架，兼具 Codex skill 与本地可�
 - 开发规范：[CONVENTIONS.md](CONVENTIONS.md)
 - 路线图：[ROADMAP.md](ROADMAP.md)
 - 进度：[PROGRESS.md](PROGRESS.md)
+- 扩展：[EXTENDING.md](EXTENDING.md)
