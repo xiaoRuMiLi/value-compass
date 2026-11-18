@@ -45,7 +45,7 @@ L5 skill 化 + 验收（串行收尾）
 | P9 | dividend | DividendPort | DividendRecord | 已完成 |
 | P10 | capitalflow | CapitalFlowPort | CapitalFlow / NorthboundHolding | 已完成 |
 | P11 | hotspot | HotspotPort | Hotspot | 已完成 |
-| P12 | official | OfficialPort | OfficialUpdate | 待办 |
+| P12 | official | OfficialPort | OfficialUpdate | 已完成 |
 | P13 | commodity | CommodityPort | ProductPrice / StockProduct | 已完成 |
 | P14 | forecast | ForecastPort | EarningsForecast / ConsensusEstimate / ReportCalendarItem | 已完成 |
 | P15 | governance | GovernancePort | CorporateAction / InsiderTrade / ShareholderCount / Pledge / Unlock | 已完成 |
