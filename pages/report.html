@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>value-compass</title>
+  <link rel="stylesheet" href="/static/css/report.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="title">加载中…</h1>
+    <div class="price" id="price">-</div>
+  </header>
+  <main>
+    <section class="panel">
+      <h2>日 K 线</h2>
+      <div id="kline" class="chart"></div>
+    </section>
+    <section class="panel">
+      <h2>财务摘要</h2>
+      <table id="financials">
+        <thead>
+          <tr><th>报告期</th><th>营收（亿）</th><th>归母净利（亿）</th><th>ROE（%）</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/static/js/vendor/echarts.min.js"></script>
+  <script src="/static/js/report.js"></script>
+</body>
+</html>
