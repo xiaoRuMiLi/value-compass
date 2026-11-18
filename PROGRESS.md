@@ -43,11 +43,11 @@ L5 skill 化 + 验收（串行收尾）
 | P7 | industry | IndustryPort | IndustryBoard | 已完成 |
 | P8 | litigation | LitigationPort | Litigation | 待办 |
 | P9 | dividend | DividendPort | DividendRecord | 已完成 |
-| P10 | capitalflow | CapitalFlowPort | CapitalFlow / NorthboundHolding | 待办 |
-| P11 | hotspot | HotspotPort | Hotspot | 待办 |
+| P10 | capitalflow | CapitalFlowPort | CapitalFlow / NorthboundHolding | 已完成 |
+| P11 | hotspot | HotspotPort | Hotspot | 已完成 |
 | P12 | official | OfficialPort | OfficialUpdate | 待办 |
-| P13 | commodity | CommodityPort | ProductPrice / StockProduct | 待办 |
-| P14 | forecast | ForecastPort | EarningsForecast / ConsensusEstimate / ReportCalendarItem | 待办 |
+| P13 | commodity | CommodityPort | ProductPrice / StockProduct | 已完成 |
+| P14 | forecast | ForecastPort | EarningsForecast / ConsensusEstimate / ReportCalendarItem | 已完成 |
 | P15 | governance | GovernancePort | CorporateAction / InsiderTrade / ShareholderCount / Pledge / Unlock | 待办 |
 | P16 | macro | MacroPort | MacroIndicator | 已完成 |
 | P17 | integrity | IntegrityPort | IntegrityRecord | 待办 |
