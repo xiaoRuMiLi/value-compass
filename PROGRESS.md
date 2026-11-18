@@ -34,7 +34,7 @@ L5 skill 化 + 验收（串行收尾）
 
 | 编号 | 能力 | Port | 输出 models | 状态 |
 |---|---|---|---|---|
-| P1 | quote | QuotePort | Snapshot / KlineBar / ValuationPoint | 待办 |
+| P1 | quote | QuotePort | Snapshot / KlineBar / ValuationPoint | 已完成 |
 | P2 | financial | FinancialPort | FinancialReport / StatementItem / RevenueComposition | 待办 |
 | P3 | announcement | AnnouncementPort | Announcement(Page) / Document | 待办 |
 | P4 | sentiment | SentimentPort | Sentiment | 待办 |
