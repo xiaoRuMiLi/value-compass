@@ -48,4 +48,4 @@ primary = "eastmoney"
 primary = "eastmoney"
 
 [providers.integrity]
-primary = "eastmoney"
+primary = "cninfo"

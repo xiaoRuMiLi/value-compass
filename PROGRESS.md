@@ -48,9 +48,9 @@ L5 skill 化 + 验收（串行收尾）
 | P12 | official | OfficialPort | OfficialUpdate | 待办 |
 | P13 | commodity | CommodityPort | ProductPrice / StockProduct | 已完成 |
 | P14 | forecast | ForecastPort | EarningsForecast / ConsensusEstimate / ReportCalendarItem | 已完成 |
-| P15 | governance | GovernancePort | CorporateAction / InsiderTrade / ShareholderCount / Pledge / Unlock | 待办 |
+| P15 | governance | GovernancePort | CorporateAction / InsiderTrade / ShareholderCount / Pledge / Unlock | 已完成 |
 | P16 | macro | MacroPort | MacroIndicator | 已完成 |
-| P17 | integrity | IntegrityPort | IntegrityRecord | 待办 |
+| P17 | integrity | IntegrityPort | IntegrityRecord | 已完成 |
 
 ## L3 analysis（11 个，可并行）
 
