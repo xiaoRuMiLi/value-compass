@@ -58,9 +58,9 @@ L5 skill 化 + 验收（串行收尾）
 
 | 编号 | 模块 | 输出 | 状态 |
 |---|---|---|---|
-| A1 | financial 评分 | DimensionScore | 待办 |
-| A2 | valuation（DCF/DDM/相对/格雷厄姆） | ValuationResult | 待办 |
-| A3 | return（分红复利/回报） | ReturnResult | 待办 |
+| A1 | financial 评分 | DimensionScore | 已完成 |
+| A2 | valuation（DCF/DDM/相对/格雷厄姆） | ValuationResult | 已完成 |
+| A3 | return（分红复利/回报） | ReturnResult | 已完成 |
 | A4 | moat（护城河） | MoatAssessment | 待办 |
 | A5 | cycle（市场周期） | 周期位置 | 待办 |
 | A6 | comparison + industry（横向对比/行业地位） | CompanyComparison / PeerPosition | 待办 |
@@ -93,4 +93,5 @@ L5 skill 化 + 验收（串行收尾）
 
 - 数据源验证 spike 已完成（2026-11-11），完整清单见 ARCHITECTURE.md 第 13 节。
 - 三项待定，实现对应 provider 时再定：股权质押、公司行动（增发/回购/可转债/股权激励）、无风险利率。
+- `analysis/return.py` 因与 Python 关键字冲突已改名 `returns.py`；现金流量表"购建固定资产"字段在多期请求中缺失，DCF 的 capex 暂用 OCF 代理，待补单期请求。
 - 本环境 git 推送需先 `Remove-Item Env:GIT_SSH_COMMAND`，再设 `GIT_SSH=C:\Windows\System32\OpenSSH\ssh.exe`。

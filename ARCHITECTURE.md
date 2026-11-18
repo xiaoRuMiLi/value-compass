@@ -75,7 +75,7 @@ value-compass/
 │   │   ├── financial.py              # 财务质量评分
 │   │   ├── comparison.py             # 横向对比（市占率、指标趋势、排名）
 │   │   ├── cycle.py                  # 市场周期判断
-│   │   ├── return.py                 # 分红复利 / 总回报
+│   │   ├── returns.py                # 分红复利 / 总回报
 │   │   ├── valuation/
 │   │   │   ├── base.py               # ValuationMethod 接口
 │   │   │   ├── dcf.py                # 现金流折现
