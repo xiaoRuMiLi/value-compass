@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from fundamental.models import KlineBar, Snapshot, ValuationPoint
+from fundamental.models import KlineBar, Snapshot, Stock, ValuationPoint
 
 
 class QuotePort(Protocol):
+    def fetch_stock_info(self, symbol: str) -> Stock: ...
+
     def fetch_snapshot(self, symbol: str) -> Snapshot: ...
 
     def fetch_kline(self, symbol: str, start: str, end: str) -> list[KlineBar]: ...

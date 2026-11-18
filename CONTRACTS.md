@@ -63,6 +63,7 @@ Page[T](items, total, page, size)
 
 ```text
 QuotePort            capability="quote"
+  fetch_stock_info(symbol) -> Stock
   fetch_snapshot(symbol) -> Snapshot
   fetch_kline(symbol, start, end) -> list[KlineBar]      # 不复权 OHLCV + adj_factor
   fetch_valuations(symbol, start=None, end=None) -> list[ValuationPoint]

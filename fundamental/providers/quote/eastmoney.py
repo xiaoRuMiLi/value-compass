@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fundamental.models import KlineBar, Market, Snapshot, ValuationPoint
+from fundamental.models import KlineBar, Market, Snapshot, Stock, ValuationPoint
 from fundamental.providers._shared import HttpClient, RateLimiter, ResponseCache
 from fundamental.providers._shared.convert import to_float
 from fundamental.providers.registry import register
@@ -30,6 +30,15 @@ class EastmoneyQuoteProvider:
         self.client = client or HttpClient(
             cache=ResponseCache(), rate_limiter=RateLimiter(min_interval=0.1)
         )
+
+    def fetch_stock_info(self, symbol: str) -> Stock:
+        code, market = parse_symbol(symbol)
+        payload = self.client.get_json(
+            _SNAPSHOT_URL,
+            params={"secid": _secid(market, code), "fields": "f57,f58", "fltt": "2"},
+        )
+        data = payload.get("data") or {}
+        return Stock(code=code, market=market, name=str(data.get("f58") or code))
 
     def fetch_snapshot(self, symbol: str) -> Snapshot:
         code, market = parse_symbol(symbol)
