@@ -25,8 +25,8 @@ L5 skill 化 + 验收（串行收尾）
 | W0.2 | models.py | CONTRACTS 第 2 节 | 全部数据类（34 类） | W0.1 | 已完成 |
 | W0.3 | 配置/路径/日志/代码归一化 | 无 | config 加载、paths、logging、symbols | W0.1 | 已完成 |
 | W0.4 | storage 层 | SCHEMA.md | schema.sql、db.py 迁移、repository 基础读写 | W0.2 | 已完成 |
-| W0.5 | _shared 传输 | 无 | HTTP、重试、限流、缓存 | W0.3 | 待办 |
-| W0.6 | registry | providers.toml | 能力 → 源选择 | W0.5 | 待办 |
+| W0.5 | _shared 传输 | 无 | HTTP、重试、限流、缓存 | W0.3 | 已完成 |
+| W0.6 | registry | providers.toml | 能力 → 源选择 | W0.5 | 已完成 |
 
 ## L2 providers（17 个，可并行）
 

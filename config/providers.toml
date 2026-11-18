@@ -1,0 +1,51 @@
+[providers.quote]
+primary = "eastmoney"
+
+[providers.financial]
+primary = "eastmoney"
+
+[providers.announcement]
+primary = "cninfo"
+fallback = "eastmoney"
+
+[providers.sentiment]
+primary = "guba"
+
+[providers.holding]
+primary = "eastmoney"
+
+[providers.research]
+primary = "eastmoney"
+
+[providers.industry]
+primary = "eastmoney"
+
+[providers.litigation]
+primary = "eastmoney"
+
+[providers.dividend]
+primary = "eastmoney"
+
+[providers.capitalflow]
+primary = "eastmoney"
+
+[providers.hotspot]
+primary = "eastmoney"
+
+[providers.official]
+primary = "official"
+
+[providers.commodity]
+primary = "sina"
+
+[providers.forecast]
+primary = "eastmoney"
+
+[providers.governance]
+primary = "eastmoney"
+
+[providers.macro]
+primary = "eastmoney"
+
+[providers.integrity]
+primary = "eastmoney"
