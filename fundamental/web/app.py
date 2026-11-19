@@ -34,3 +34,23 @@ def financials_page() -> FileResponse:
 @app.get("/industry")
 def industry_page() -> FileResponse:
     return FileResponse(_PAGES_DIR / "industry.html")
+
+
+@app.get("/review")
+def review_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "review.html")
+
+
+@app.get("/integrity")
+def integrity_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "integrity.html")
+
+
+@app.get("/calendar")
+def calendar_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "calendar.html")
+
+
+@app.get("/calculator")
+def calculator_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "calculator.html")

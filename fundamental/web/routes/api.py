@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from fundamental.services.analyze import analyze_stock
+from fundamental.services.analyze import analyze_stock, compute_return_for
 from fundamental.storage import db, repository
 from fundamental.utils.symbols import parse_symbol
 
@@ -216,5 +216,59 @@ def get_documents(symbol: str) -> list[dict[str, Any]]:
                 (stock_id,),
             )
         )
+    finally:
+        conn.close()
+
+
+@router.get("/stock/{symbol}/integrity")
+def get_integrity(symbol: str) -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        stock_id = _resolve_stock(conn, symbol)
+        return _rows(
+            repository.fetch_all(
+                conn,
+                "SELECT record_date, behavior_type, category, title, description, severity, source, source_url "
+                "FROM integrity_records WHERE stock_id = ? ORDER BY record_date DESC",
+                (stock_id,),
+            )
+        )
+    finally:
+        conn.close()
+
+
+@router.get("/stock/{symbol}/return")
+def get_return(symbol: str, start: str | None = None, end: str | None = None) -> Any:
+    return compute_return_for(symbol, start, end)
+
+
+@router.get("/stock/{symbol}/calendar")
+def get_calendar(symbol: str) -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        stock_id = _resolve_stock(conn, symbol)
+        events: list[dict[str, Any]] = []
+        for row in repository.fetch_all(
+            conn, "SELECT planned_date, report_type FROM report_calendar WHERE stock_id = ?", (stock_id,)
+        ):
+            events.append({"type": "财报", "date": row["planned_date"], "title": f"{row['report_type']} 财报披露"})
+        for row in repository.fetch_all(
+            conn, "SELECT ex_date, cash_per_share FROM dividends WHERE stock_id = ? AND ex_date IS NOT NULL", (stock_id,)
+        ):
+            cash = row["cash_per_share"] or 0
+            events.append({"type": "分红", "date": row["ex_date"], "title": f"每 10 股派 {cash * 10:.2f} 元"})
+        for row in repository.fetch_all(
+            conn, "SELECT unlock_date, unlock_shares FROM unlocks WHERE stock_id = ?", (stock_id,)
+        ):
+            shares = (row["unlock_shares"] or 0) / 1e4
+            events.append({"type": "解禁", "date": row["unlock_date"], "title": f"解禁 {shares:.0f} 万股"})
+        for row in repository.fetch_all(
+            conn,
+            "SELECT publish_date, title FROM announcements WHERE stock_id = ? AND title LIKE '%股东大会%'",
+            (stock_id,),
+        ):
+            events.append({"type": "股东大会", "date": row["publish_date"], "title": row["title"]})
+        events.sort(key=lambda item: item["date"] or "")
+        return events
     finally:
         conn.close()

@@ -228,3 +228,24 @@ def analyze_stock(symbol: str, db_path: Path | None = None) -> dict[str, Any]:
         }
     finally:
         conn.close()
+
+
+def compute_return_for(
+    symbol: str,
+    start: str | None = None,
+    end: str | None = None,
+    db_path: Path | None = None,
+) -> Any:
+    conn = db.init_db(db_path)
+    try:
+        code, market = parse_symbol(symbol)
+        stock_id = repository.get_stock_id(conn, code, market)
+        if stock_id is None:
+            return returns_mod.compute_return([], [], start or "", end or "")
+        kline = _load_kline(conn, stock_id)
+        dividends = _load_dividends(conn, stock_id)
+        start = start or (kline[0].trade_date if kline else "")
+        end = end or (kline[-1].trade_date if kline else "")
+        return returns_mod.compute_return(kline, dividends, start, end)
+    finally:
+        conn.close()
