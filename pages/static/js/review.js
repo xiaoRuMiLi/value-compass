@@ -5,7 +5,6 @@
 
   async function render() {
     const a = await getJSON(`/api/stock/${symbol}/analysis`);
-    document.getElementById("title").textContent = `${a.stock?.name || symbol} · 财报体检`;
     document.getElementById("summary").textContent = a.review.summary;
     const findings = document.getElementById("findings");
     for (const f of a.review.findings) {

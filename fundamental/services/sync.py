@@ -54,8 +54,8 @@ def sync_stock(
     # 行情与估值
     snapshot = quote.fetch_snapshot(symbol)
     repository.insert_many(
-        conn, "snapshots", ["stock_id", "fetched_at", "price", "market_cap", "turnover_rate"],
-        [(stock_id, snapshot.fetched_at, snapshot.price, snapshot.market_cap, snapshot.turnover_rate)],
+        conn, "snapshots", ["stock_id", "fetched_at", "price", "market_cap", "turnover_rate", "pct_change"],
+        [(stock_id, snapshot.fetched_at, snapshot.price, snapshot.market_cap, snapshot.turnover_rate, snapshot.pct_change)],
     )
     stats["snapshots"] = 1
 

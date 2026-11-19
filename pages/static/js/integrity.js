@@ -5,8 +5,6 @@
 
   async function render() {
     const rows = await getJSON(`/api/stock/${symbol}/integrity`);
-    const overview = await getJSON(`/api/stock/${symbol}/overview`);
-    document.getElementById("title").textContent = `${overview.stock?.name || symbol} · 诚信档案`;
     const table = document.getElementById("records");
     const hr = document.createElement("tr");
     ["日期", "性质", "类别", "严重度", "事件"].forEach((t) => hr.appendChild(el("th", t)));

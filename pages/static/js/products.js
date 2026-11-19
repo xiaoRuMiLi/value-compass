@@ -8,8 +8,6 @@
   }
 
   async function render() {
-    const overview = await getJSON(`/api/stock/${symbol}/overview`);
-    document.getElementById("title").textContent = `${overview.stock?.name || symbol} · 产品价格对比`;
     const products = await getJSON(`/api/stock/${symbol}/products`);
     if (!products.length) {
       document.getElementById("correlation").textContent = "未配置商品映射";

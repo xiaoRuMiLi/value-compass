@@ -41,6 +41,11 @@ def industry_page() -> FileResponse:
     return FileResponse(_PAGES_DIR / "industry.html")
 
 
+@app.get("/stocks")
+def stocks_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "stocks.html")
+
+
 @app.get("/review")
 def review_page() -> FileResponse:
     return FileResponse(_PAGES_DIR / "review.html")

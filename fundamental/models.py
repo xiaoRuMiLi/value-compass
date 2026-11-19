@@ -167,6 +167,7 @@ class Snapshot:
     price: Optional[float] = None
     market_cap: Optional[float] = None
     turnover_rate: Optional[float] = None
+    pct_change: Optional[float] = None
 
 
 @dataclass(frozen=True)

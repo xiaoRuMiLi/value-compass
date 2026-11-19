@@ -19,7 +19,6 @@
   }
 
   function renderScore(score) {
-    document.getElementById("scoreBadge").textContent = `${score.total} ${score.rating}`;
     const box = document.getElementById("dimensions");
     for (const dimension of score.dimensions) {
       const row = el("div", "dim-row");
@@ -114,9 +113,6 @@
       getJSON(`/api/stock/${symbol}/kline`),
       getJSON(`/api/stock/${symbol}/financials`),
     ]);
-    const stock = analysis.stock || {};
-    document.getElementById("title").textContent = `${stock.name || symbol}（${stock.code}.${stock.market}）`;
-    document.getElementById("price").textContent = analysis.snapshot?.price ?? "-";
     renderScore(analysis.score);
     renderValuation(analysis.valuation);
     renderMasters(analysis.masters);
@@ -126,7 +122,6 @@
   }
 
   render().catch((error) => {
-    document.getElementById("title").textContent = "加载失败";
     console.error(error);
   });
 })();

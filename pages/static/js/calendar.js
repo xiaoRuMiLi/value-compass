@@ -5,8 +5,6 @@
 
   async function render() {
     const events = await getJSON(`/api/stock/${symbol}/calendar`);
-    const overview = await getJSON(`/api/stock/${symbol}/overview`);
-    document.getElementById("title").textContent = `${overview.stock?.name || symbol} · 事件日历`;
     const table = document.getElementById("events");
     const hr = document.createElement("tr");
     ["日期", "类型", "事件"].forEach((t) => hr.appendChild(el("th", t)));

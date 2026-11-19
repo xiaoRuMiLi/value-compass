@@ -46,7 +46,7 @@ class EastmoneyQuoteProvider:
             _SNAPSHOT_URL,
             params={
                 "secid": _secid(market, code),
-                "fields": "f43,f57,f58,f116,f117,f168",
+                "fields": "f43,f57,f58,f116,f117,f168,f170",
                 "fltt": "2",
             },
         )
@@ -56,6 +56,7 @@ class EastmoneyQuoteProvider:
             price=to_float(data.get("f43")),
             market_cap=to_float(data.get("f116")),
             turnover_rate=to_float(data.get("f168")),
+            pct_change=to_float(data.get("f170")),
         )
 
     def fetch_kline(self, symbol: str, start: str, end: str) -> list[KlineBar]:

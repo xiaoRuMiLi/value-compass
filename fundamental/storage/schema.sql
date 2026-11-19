@@ -48,7 +48,8 @@ CREATE TABLE snapshots (
   fetched_at TEXT NOT NULL,
   price REAL,
   market_cap REAL,
-  turnover_rate REAL
+  turnover_rate REAL,
+  pct_change REAL
 );
 
 CREATE INDEX idx_snapshots_stock_time ON snapshots(stock_id, fetched_at);

@@ -7,7 +7,11 @@ from pathlib import Path
 
 from fundamental.utils import paths
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+_MIGRATIONS = {
+    1: ["ALTER TABLE snapshots ADD COLUMN pct_change REAL"],
+}
 
 
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
@@ -24,8 +28,13 @@ def init_db(db_path: Path | None = None) -> sqlite3.Connection:
     conn = connect(db_path)
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version < SCHEMA_VERSION:
-        schema = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
-        conn.executescript(schema)
+        if version == 0:
+            schema = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
+            conn.executescript(schema)
+        else:
+            for current in range(version, SCHEMA_VERSION):
+                for statement in _MIGRATIONS.get(current, []):
+                    conn.execute(statement)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
     return conn

@@ -115,8 +115,6 @@
         renderStatement(tab.dataset.type);
       })
     );
-    const stock = await getJSON(`/api/stock/${symbol}/overview`);
-    document.getElementById("title").textContent = `${stock.stock?.name || symbol} · 财务全景`;
     await Promise.all([renderStatement("income"), renderComposition(), renderHolders()]);
   }
 

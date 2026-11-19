@@ -24,8 +24,6 @@
   }
 
   async function render() {
-    const overview = await getJSON(`/api/stock/${symbol}/overview`);
-    document.getElementById("title").textContent = `${overview.stock?.name || symbol} · 计算器`;
     const analysis = await getJSON(`/api/stock/${symbol}/analysis`);
     const names = { relative: "相对估值", graham: "格雷厄姆", ddm: "股利折现", dcf: "现金流折现" };
     const box = document.getElementById("valuation");

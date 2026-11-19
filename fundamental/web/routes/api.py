@@ -124,6 +124,32 @@ def get_analysis(symbol: str) -> dict[str, Any]:
     return result
 
 
+@router.get("/stocks")
+def get_stocks() -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        results: list[dict[str, Any]] = []
+        for stock in repository.fetch_all(conn, "SELECT * FROM stocks ORDER BY code"):
+            snapshot = repository.fetch_one(
+                conn,
+                "SELECT price, pct_change FROM snapshots WHERE stock_id = ? ORDER BY fetched_at DESC LIMIT 1",
+                (stock["id"],),
+            )
+            results.append(
+                {
+                    "symbol": f"{stock['code']}.{stock['market']}",
+                    "name": stock["name"],
+                    "code": stock["code"],
+                    "market": stock["market"],
+                    "price": snapshot["price"] if snapshot else None,
+                    "pct_change": snapshot["pct_change"] if snapshot else None,
+                }
+            )
+        return results
+    finally:
+        conn.close()
+
+
 @router.get("/stock/{symbol}/statement")
 def get_statement(
     symbol: str,
