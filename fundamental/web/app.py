@@ -69,3 +69,8 @@ def screener_page() -> FileResponse:
 @app.get("/holders")
 def holders_page() -> FileResponse:
     return FileResponse(_PAGES_DIR / "holders.html")
+
+
+@app.get("/products")
+def products_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "products.html")

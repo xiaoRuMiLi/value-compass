@@ -6,9 +6,11 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
+from fundamental.config import load_settings
 from fundamental.models import StatementType
 from fundamental.providers.announcement.cninfo import CninfoAnnouncementProvider
 from fundamental.providers.capitalflow.eastmoney import EastmoneyCapitalFlowProvider
+from fundamental.providers.commodity.sina import SinaCommodityProvider
 from fundamental.providers.dividend.eastmoney import EastmoneyDividendProvider
 from fundamental.providers.financial.eastmoney import EastmoneyFinancialProvider
 from fundamental.providers.forecast.eastmoney import EastmoneyForecastProvider
@@ -23,6 +25,7 @@ from fundamental.providers.quote.eastmoney import EastmoneyQuoteProvider
 from fundamental.providers.research.eastmoney import EastmoneyResearchProvider
 from fundamental.providers.sentiment.guba import GubaSentimentProvider
 from fundamental.storage import db, repository
+from fundamental.utils.symbols import parse_symbol
 
 
 def _ev(value: Any) -> Any:
@@ -203,6 +206,43 @@ def sync_stock(
         official, lambda o: (stock_id, o.fetched_at, o.category, o.title, o.content, o.url),
     )
 
+    conn.commit()
+    conn.close()
+    return stats
+
+
+def sync_products(db_path: Path | None = None) -> dict[str, int]:
+    """按 config/products.toml 同步股票-商品映射与商品价格。"""
+    products = load_settings().get("products") or []
+    conn = db.init_db(db_path)
+    commodity = SinaCommodityProvider()
+    stats = {"stock_products": 0, "product_prices": 0}
+    seen: set[tuple[str, str]] = set()
+    for item in products:
+        code, market = parse_symbol(item.get("stock", ""))
+        stock_id = repository.get_stock_id(conn, code, market)
+        if stock_id is None:
+            continue
+        product_code = item.get("product_code")
+        source = item.get("source", "sina")
+        repository.insert_many(
+            conn,
+            "stock_products",
+            ["stock_id", "product_code", "product_name", "source", "category"],
+            [(stock_id, product_code, item.get("product_name"), source, item.get("category"))],
+        )
+        stats["stock_products"] += 1
+        if (product_code, source) in seen:
+            continue
+        seen.add((product_code, source))
+        prices = commodity.fetch_product_prices(product_code, source)
+        stats["product_prices"] += _insert(
+            conn,
+            "product_prices",
+            ["product_code", "source", "trade_date", "open", "high", "low", "close", "volume"],
+            prices,
+            lambda p: (p.product_code, p.source, p.trade_date, p.open, p.high, p.low, p.close, p.volume),
+        )
     conn.commit()
     conn.close()
     return stats

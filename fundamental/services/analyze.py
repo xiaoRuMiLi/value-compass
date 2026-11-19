@@ -16,6 +16,7 @@ from fundamental.analysis import (
     fraud_score as fraud_mod,
     integrity as integrity_mod,
     moat as moat_mod,
+    price_correlation as price_correlation_mod,
     redflags as redflags_mod,
     returns as returns_mod,
 )
@@ -344,3 +345,49 @@ def _latest_fy_or_latest(financials: list[FinancialReport]) -> FinancialReport |
     if yearly:
         return yearly[-1]
     return financials[-1] if financials else None
+
+
+def price_compare(
+    symbol: str,
+    product_code: str | None = None,
+    db_path: Path | None = None,
+) -> dict[str, Any]:
+    conn = db.init_db(db_path)
+    try:
+        code, market = parse_symbol(symbol)
+        stock_id = repository.get_stock_id(conn, code, market)
+        if stock_id is None:
+            return {"symbol": symbol, "error": "股票不存在"}
+        if product_code:
+            code_to_use = product_code
+        else:
+            row = repository.fetch_one(
+                conn, "SELECT product_code FROM stock_products WHERE stock_id = ? LIMIT 1", (stock_id,)
+            )
+            if row is None:
+                return {"symbol": symbol, "error": "未配置商品映射"}
+            code_to_use = row["product_code"]
+        prices = repository.fetch_all(
+            conn, "SELECT trade_date, close FROM product_prices WHERE product_code = ? ORDER BY trade_date ASC",
+            (code_to_use,),
+        )
+        kline = _load_kline(conn, stock_id)
+        price_by_date = {row["trade_date"]: row["close"] for row in prices}
+        stock_by_date = {bar.trade_date: bar.close for bar in kline}
+        dates = sorted(set(price_by_date) & set(stock_by_date))
+        price_series = [price_by_date[day] for day in dates]
+        stock_series = [stock_by_date[day] for day in dates]
+        correlation = price_correlation_mod.compute_correlation(
+            code_to_use,
+            f"{dates[0] if dates else ''}~{dates[-1] if dates else ''}",
+            price_series,
+            stock_series,
+        )
+        return {
+            "product_code": code_to_use,
+            "price_series": [{"date": day, "value": value} for day, value in zip(dates, price_series)],
+            "stock_series": [{"date": day, "value": value} for day, value in zip(dates, stock_series)],
+            "correlation": correlation,
+        }
+    finally:
+        conn.close()

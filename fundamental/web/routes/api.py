@@ -6,7 +6,13 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from fundamental.services.analyze import analyze_stock, compare_stocks, compute_return_for, screen_stocks
+from fundamental.services.analyze import (
+    analyze_stock,
+    compare_stocks,
+    compute_return_for,
+    price_compare,
+    screen_stocks,
+)
 from fundamental.storage import db, repository
 from fundamental.utils.symbols import parse_symbol
 
@@ -308,3 +314,24 @@ def get_holder_track(name: str | None = None, category: str | None = None) -> li
         return _rows(repository.fetch_all(conn, sql, params))
     finally:
         conn.close()
+
+
+@router.get("/stock/{symbol}/products")
+def get_products(symbol: str) -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        stock_id = _resolve_stock(conn, symbol)
+        return _rows(
+            repository.fetch_all(
+                conn,
+                "SELECT product_code, product_name, source, category FROM stock_products WHERE stock_id = ?",
+                (stock_id,),
+            )
+        )
+    finally:
+        conn.close()
+
+
+@router.get("/stock/{symbol}/price-compare")
+def get_price_compare(symbol: str, product: str | None = None) -> dict[str, Any]:
+    return price_compare(symbol, product)
