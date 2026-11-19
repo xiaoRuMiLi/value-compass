@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>value-compass · 持仓追踪</title>
+  <link rel="stylesheet" href="/static/css/base.css">
+</head>
+<body>
+  <header class="topbar"><h1>持仓追踪</h1></header>
+  <main>
+    <section class="panel">
+      <div style="display:flex;gap:10px;margin-bottom:12px">
+        <input id="name" type="text" placeholder="股东名称（可模糊）" style="flex:1">
+        <button id="search" class="tab active">查询</button>
+      </div>
+      <div class="scroll"><table id="table"></table></div>
+    </section>
+  </main>
+  <script src="/static/js/holders.js"></script>
+</body>
+</html>

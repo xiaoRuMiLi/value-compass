@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from fundamental.services.analyze import analyze_stock, compute_return_for
+from fundamental.services.analyze import analyze_stock, compare_stocks, compute_return_for, screen_stocks
 from fundamental.storage import db, repository
 from fundamental.utils.symbols import parse_symbol
 
@@ -270,5 +270,41 @@ def get_calendar(symbol: str) -> list[dict[str, Any]]:
             events.append({"type": "股东大会", "date": row["publish_date"], "title": row["title"]})
         events.sort(key=lambda item: item["date"] or "")
         return events
+    finally:
+        conn.close()
+
+
+@router.get("/compare")
+def get_compare(symbols: str) -> list[dict[str, Any]]:
+    return compare_stocks([s.strip() for s in symbols.split(",") if s.strip()])
+
+
+@router.get("/screener")
+def get_screener(
+    min_roe: float | None = None,
+    min_gross: float | None = None,
+    max_debt: float | None = None,
+    min_revenue_growth: float | None = None,
+) -> list[dict[str, Any]]:
+    return screen_stocks(min_roe, min_gross, max_debt, min_revenue_growth)
+
+
+@router.get("/holders/track")
+def get_holder_track(name: str | None = None, category: str | None = None) -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        sql = (
+            "SELECT h.report_date, h.holder_name, h.holder_category, h.hold_num, h.hold_ratio, "
+            "s.code, s.name AS stock_name FROM circulating_holders h JOIN stocks s ON s.id = h.stock_id WHERE 1 = 1"
+        )
+        params: list[Any] = []
+        if name:
+            sql += " AND h.holder_name LIKE ?"
+            params.append(f"%{name}%")
+        if category:
+            sql += " AND h.holder_category = ?"
+            params.append(category)
+        sql += " ORDER BY h.report_date DESC"
+        return _rows(repository.fetch_all(conn, sql, params))
     finally:
         conn.close()

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>value-compass · 筛选</title>
+  <link rel="stylesheet" href="/static/css/base.css">
+</head>
+<body>
+  <header class="topbar"><h1>条件筛选</h1></header>
+  <main>
+    <section class="panel">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <input id="minRoe" type="number" placeholder="ROE 下限 %">
+        <input id="minGross" type="number" placeholder="毛利率下限 %">
+        <input id="maxDebt" type="number" placeholder="负债率上限 %">
+        <input id="minGrowth" type="number" placeholder="营收增速下限 %">
+        <button id="filter" class="tab active">筛选</button>
+      </div>
+      <div class="scroll"><table id="table"></table></div>
+    </section>
+  </main>
+  <script src="/static/js/screener.js"></script>
+</body>
+</html>

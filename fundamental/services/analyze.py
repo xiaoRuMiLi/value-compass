@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Type, TypeVar
 
 from fundamental.analysis import (
+    comparison as comparison_mod,
     cycle as cycle_mod,
     delisting as delisting_mod,
     financial as financial_mod,
@@ -249,3 +250,97 @@ def compute_return_for(
         return returns_mod.compute_return(kline, dividends, start, end)
     finally:
         conn.close()
+
+
+def compare_stocks(symbols: list[str], db_path: Path | None = None) -> list[dict[str, Any]]:
+    conn = db.init_db(db_path)
+    try:
+        results: list[dict[str, Any]] = []
+        for symbol in symbols:
+            code, market = parse_symbol(symbol)
+            stock_id = repository.get_stock_id(conn, code, market)
+            if stock_id is None:
+                continue
+            stock = _load_stock(conn, stock_id)
+            financials = _load_financials(conn, stock_id)
+            dividends = _load_dividends(conn, stock_id)
+            snapshot = _load_snapshot(conn, stock_id)
+            if not financials:
+                continue
+            comparison = comparison_mod.compute_company_comparison(
+                symbol, stock.name, stock.industry or "", financials, dividends
+            )
+            moat = moat_mod.assess_moat(symbol, financials)
+            latest = _latest_fy_or_latest(financials)
+            results.append(
+                {
+                    "symbol": symbol,
+                    "name": stock.name,
+                    "industry": stock.industry,
+                    "price": snapshot.price if snapshot else None,
+                    "market_cap": snapshot.market_cap if snapshot else None,
+                    "revenue_cagr": comparison.revenue_cagr,
+                    "gross_margin": latest.gross_margin,
+                    "net_margin": latest.net_margin,
+                    "roe": latest.roe,
+                    "debt_ratio": latest.debt_ratio,
+                    "revenue_yoy": latest.revenue_yoy,
+                    "net_profit_yoy": latest.net_profit_yoy,
+                    "dividend_yield": comparison.dividend_yield,
+                    "moat_rating": moat.rating,
+                    "cycle": comparison.cycle_position,
+                }
+            )
+        return results
+    finally:
+        conn.close()
+
+
+def screen_stocks(
+    min_roe: float | None = None,
+    min_gross: float | None = None,
+    max_debt: float | None = None,
+    min_revenue_growth: float | None = None,
+    db_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    conn = db.init_db(db_path)
+    try:
+        results: list[dict[str, Any]] = []
+        for stock in repository.fetch_all(conn, "SELECT * FROM stocks ORDER BY code"):
+            financials = _load_financials(conn, stock["id"])
+            if not financials:
+                continue
+            latest = _latest_fy_or_latest(financials)
+            if min_roe is not None and (latest.roe is None or latest.roe < min_roe):
+                continue
+            if min_gross is not None and (latest.gross_margin is None or latest.gross_margin < min_gross):
+                continue
+            if max_debt is not None and (latest.debt_ratio is None or latest.debt_ratio > max_debt):
+                continue
+            if min_revenue_growth is not None and (
+                latest.revenue_yoy is None or latest.revenue_yoy < min_revenue_growth
+            ):
+                continue
+            snapshot = _load_snapshot(conn, stock["id"])
+            results.append(
+                {
+                    "symbol": f"{stock['code']}.{stock['market']}",
+                    "name": stock["name"],
+                    "market_cap": snapshot.market_cap if snapshot else None,
+                    "roe": latest.roe,
+                    "gross_margin": latest.gross_margin,
+                    "net_margin": latest.net_margin,
+                    "debt_ratio": latest.debt_ratio,
+                    "revenue_yoy": latest.revenue_yoy,
+                }
+            )
+        return results
+    finally:
+        conn.close()
+
+
+def _latest_fy_or_latest(financials: list[FinancialReport]) -> FinancialReport | None:
+    yearly = [item for item in financials if item.report_type == ReportType.FY]
+    if yearly:
+        return yearly[-1]
+    return financials[-1] if financials else None

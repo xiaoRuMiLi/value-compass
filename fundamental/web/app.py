@@ -54,3 +54,18 @@ def calendar_page() -> FileResponse:
 @app.get("/calculator")
 def calculator_page() -> FileResponse:
     return FileResponse(_PAGES_DIR / "calculator.html")
+
+
+@app.get("/compare")
+def compare_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "compare.html")
+
+
+@app.get("/screener")
+def screener_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "screener.html")
+
+
+@app.get("/holders")
+def holders_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "holders.html")
