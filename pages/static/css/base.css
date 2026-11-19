@@ -107,3 +107,62 @@ td:first-child {
 .scroll {
   overflow-x: auto;
 }
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 24px;
+  background: #111827;
+  color: #e5e7eb;
+  flex-wrap: wrap;
+}
+
+.topnav .brand {
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+  margin-right: 6px;
+}
+
+.topnav .nav-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.topnav .nav-label {
+  color: #6b7280;
+  font-size: 12px;
+  margin-right: 4px;
+}
+
+.topnav a {
+  color: #d1d5db;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 5px 10px;
+  border-radius: 6px;
+}
+
+.topnav a:hover {
+  background: #1f2937;
+}
+
+.topnav a.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.nav-search {
+  margin-left: auto;
+}
+
+.nav-search input {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #374151;
+  background: #1f2937;
+  color: #e5e7eb;
+  width: 180px;
+}

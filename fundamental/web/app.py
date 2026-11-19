@@ -16,6 +16,11 @@ _PAGES_DIR = paths.project_root() / "pages"
 app.mount("/static", StaticFiles(directory=_PAGES_DIR / "static"), name="static")
 
 
+@app.get("/")
+def index_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "index.html")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
