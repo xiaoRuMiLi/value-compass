@@ -127,6 +127,25 @@ class TestScoreNarrative(unittest.TestCase):
         self.assertIn("盈利能力", text)
         self.assertIn("成长能力", text)
 
+    def test_strongest_by_score_not_score_over_weight(self):
+        # 得分最高的维度应被判为最强，而非 score/weight 比值最大的
+        # 例：盈利能力 80/25=3.2、股东回报 96/15=6.4，但最强应是得分 96 的股东回报
+        score = CompositeScore(
+            total=70.0,
+            rating="推荐",
+            dimensions=[
+                DimensionScore("盈利能力", 80.0, 25, ""),
+                DimensionScore("股东回报", 96.0, 15, ""),
+                DimensionScore("成长能力", 20.0, 25, ""),
+            ],
+            red_flags=[],
+        )
+        text = _score_template(_score_facts(score))
+        self.assertIn("最强维度是股东回报", text)
+        self.assertIn("最弱维度是成长能力", text)
+        self.assertIn("96 分，权重 15%", text)
+        self.assertNotIn("96/15", text)
+
     def test_generate_score_narrative_and_cache(self):
         fake_analyze = mock.MagicMock(return_value={"score": self._score()})
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(

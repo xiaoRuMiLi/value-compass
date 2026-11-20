@@ -53,22 +53,103 @@
 
   function renderScore(score) {
     const box = document.getElementById("dimensions");
-    for (const dimension of score.dimensions) {
+    box.innerHTML = "";
+
+    const dims = score.dimensions || [];
+    const minScore = dims.length ? Math.min(...dims.map((d) => d.score)) : null;
+
+    const summary = el("div", "score-summary");
+    const total = el("div", "score-total");
+    total.appendChild(el("span", "score-total-num", Number(score.total).toFixed(1)));
+    total.appendChild(el("span", "score-total-label", "综合得分 / 100"));
+    summary.appendChild(total);
+
+    const ratingWrap = el("div", "score-rating-wrap");
+    ratingWrap.appendChild(el("span", "score-rating-label", "评级"));
+    ratingWrap.appendChild(el("span", "score-rating-badge", score.rating || "-"));
+    ratingWrap.appendChild(el("span", "score-rating-hint", scoreHint(score.total)));
+    summary.appendChild(ratingWrap);
+
+    const scale = el("div", "score-scale");
+    for (const tick of [
+      { at: 0, label: "0 回避" },
+      { at: 60, label: "60 观望" },
+      { at: 70, label: "70 推荐" },
+      { at: 80, label: "80 强烈推荐" },
+    ]) {
+      const mark = el("div", "score-scale-tick");
+      mark.style.left = `${tick.at}%`;
+      mark.appendChild(el("span", "score-scale-mark-label", tick.label));
+      scale.appendChild(mark);
+    }
+    const pointer = el("div", "score-scale-pointer");
+    pointer.style.left = `${Math.max(0, Math.min(100, score.total))}%`;
+    scale.appendChild(pointer);
+    summary.appendChild(scale);
+
+    if (score.red_flags && score.red_flags.length) {
+      const flagBox = el("div", "score-flags");
+      flagBox.appendChild(el("div", "score-flags-title", "风险提示"));
+      for (const flag of score.red_flags) {
+        const tag = el(
+          "span",
+          "score-flag",
+          `[${flag.severity || flag.flag_type || "提示"}] ${flag.description || ""}`
+        );
+        flagBox.appendChild(tag);
+      }
+      summary.appendChild(flagBox);
+    }
+    box.appendChild(summary);
+
+    for (const dimension of dims) {
       const block = el("div", "dim-block");
       const head = el("div", "dim-head");
-      head.appendChild(el("span", "dim-label", dimension.dimension));
-      head.appendChild(el("span", "dim-value", `${dimension.score}/${dimension.weight}`));
+      const labelWrap = el("div", "dim-label-wrap");
+      labelWrap.appendChild(el("span", "dim-label", dimension.dimension));
+      if (dimension.score === minScore && dims.length > 1) {
+        labelWrap.appendChild(el("span", "dim-weak", "最弱"));
+      }
+      head.appendChild(labelWrap);
+      head.appendChild(
+        el(
+          "span",
+          "dim-value",
+          `${dimension.score.toFixed(1)} 分 · 权重 ${dimension.weight}% · 贡献 +${(
+            (dimension.score * dimension.weight) / 100
+          ).toFixed(1)}`
+        )
+      );
       const bar = el("div", "dim-bar");
-      const fill = el("div", "dim-fill");
-      fill.style.width = `${Math.min(dimension.score, 100)}%`;
+      const fill = el("div", `dim-fill ${scoreFillClass(dimension.score)}`);
+      fill.style.width = `${Math.max(0, Math.min(100, dimension.score))}%`;
       bar.appendChild(fill);
       block.appendChild(head);
       block.appendChild(bar);
+
       if (dimension.detail) {
-        block.appendChild(el("div", "dim-detail", dimension.detail));
+        const details = document.createElement("details");
+        details.className = "dim-details";
+        const summaryEl = el("summary", "dim-details-summary", "查看计算明细");
+        details.appendChild(summaryEl);
+        details.appendChild(el("div", "dim-detail", dimension.detail));
+        block.appendChild(details);
       }
       box.appendChild(block);
     }
+  }
+
+  function scoreHint(total) {
+    if (total >= 80) return "评分优秀";
+    if (total >= 70) return "评分良好";
+    if (total >= 60) return "中性区间";
+    return "评分偏低";
+  }
+
+  function scoreFillClass(score) {
+    if (score >= 70) return "dim-fill-good";
+    if (score >= 45) return "dim-fill-mid";
+    return "dim-fill-low";
   }
 
   function openValuationModal(method) {

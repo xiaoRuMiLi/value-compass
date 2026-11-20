@@ -40,12 +40,12 @@ def _score_facts(score: Any, financials: dict[str, Any] | None = None) -> dict[s
 
 def _score_template(facts: dict[str, Any]) -> str:
     dims = facts["dimensions"]
-    ranked = sorted(dims, key=lambda d: d["score"] / d["weight"] if d["weight"] else 0, reverse=True)
+    ranked = sorted(dims, key=lambda d: d["score"], reverse=True)
     strongest, weakest = ranked[0], ranked[-1]
     lines = [
         f"综合财务评分 {facts['total']} 分，评级“{facts['rating']}”。",
-        f"最强维度是{strongest['name']}（{strongest['score']:.0f}/{strongest['weight']:.0f}），"
-        f"最弱维度是{weakest['name']}（{weakest['score']:.0f}/{weakest['weight']:.0f}）。",
+        f"最强维度是{strongest['name']}（{strongest['score']:.0f} 分，权重 {strongest['weight']:.0f}%），"
+        f"最弱维度是{weakest['name']}（{weakest['score']:.0f} 分，权重 {weakest['weight']:.0f}%）。",
     ]
     growth = facts.get("annual_growth") or []
     if growth:

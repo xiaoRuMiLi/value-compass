@@ -165,7 +165,8 @@ def _render_template(facts: dict[str, Any]) -> list[dict[str, str]]:
     score = facts.get("score_total")
     if score is not None:
         dims = "；".join(
-            f"{d['name']} {d['score']:.0f}/{d['weight']}" for d in facts.get("dimensions", [])
+            f"{d['name']} {d['score']:.0f} 分（权重 {d['weight']}%）"
+            for d in facts.get("dimensions", [])
         )
         basic_segments.append(f"综合财务评分 {score:.1f} 分，评级“{facts.get('score_rating')}”（{dims}）")
     sections.append({"title": "企业基本信息", "content": "；".join(basic_segments) + "。"})
