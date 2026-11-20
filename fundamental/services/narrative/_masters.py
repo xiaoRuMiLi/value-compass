@@ -13,13 +13,14 @@ from fundamental.services.llm import chat, has_live_llm
 from fundamental.utils.prompts import load_prompt
 
 from ._common import (
+    _MASTERS_PROMPT_VERSION,
     _build_prompt,
     _masters_cache_path,
     _now,
     _read_cache,
     _write_cache,
 )
-from ._data import _load_master_financials
+from ._data import _load_master_context, _load_master_financials
 
 _MASTER_LABELS = {
     "buffett": "巴菲特",
@@ -33,7 +34,14 @@ def _value(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
-def _master_facts(result: dict[str, Any], financials: dict[str, Any], verdict: Any) -> dict[str, Any]:
+def _master_facts(
+    result: dict[str, Any],
+    financials: dict[str, Any],
+    verdict: Any,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    context = context or {}
+    basics = context.get("company_basics") or {}
     stock = result.get("stock")
     snapshot = result.get("snapshot")
     score = result.get("score")
@@ -62,13 +70,23 @@ def _master_facts(result: dict[str, Any], financials: dict[str, Any], verdict: A
     ]
     return {
         "company": {
-            "name": _value(stock, "name") or result.get("symbol") or "",
-            "industry": _value(stock, "industry") or "未披露",
+            "name": basics.get("name") or _value(stock, "name") or result.get("symbol") or "",
+            "industry": basics.get("industry") or _value(stock, "industry") or "未披露",
+            "sector": basics.get("sector") or _value(stock, "sector"),
+            "business": basics.get("business"),
+            "profile_summary": basics.get("profile_summary") or "",
+            "list_date": basics.get("list_date"),
+            "is_st": bool(basics.get("is_st")),
+            "revenue_mix": basics.get("revenue_mix") or [],
             "price": _value(snapshot, "price"),
             "market_cap": _value(snapshot, "market_cap"),
             "score_total": _value(score, "total"),
             "score_rating": _value(score, "rating"),
         },
+        "industry": context.get("industry"),
+        "peer_comparison": context.get("peer_comparison"),
+        "latest_report": context.get("latest_report"),
+        "market_valuation": context.get("market_valuation"),
         "master": {
             "name": master_name,
             "label": _MASTER_LABELS.get(master_name, master_name),
@@ -109,11 +127,31 @@ def _master_template(facts: dict[str, Any]) -> str:
     if failed:
         parts.append("未达标项：" + "、".join(failed) + "。")
 
+    profile = company.get("profile_summary")
+    if profile:
+        parts.append(profile)
+    industry = facts.get("industry")
+    if industry and industry.get("summary"):
+        parts.append("行业层面，" + industry["summary"])
+    latest = facts.get("latest_report")
+    if latest and latest.get("summary"):
+        parts.append("最近一期" + latest["summary"])
+
     years = facts.get("financial_years") or []
-    if years:
-        parts.append("最新年度财报摘要显示，" + years[-1]["summary"])
+    latest_annual = next((item for item in reversed(years) if item.get("annual")), None)
+    if latest_annual:
+        parts.append("最新年度财报摘要显示，" + latest_annual["summary"])
+    elif years:
+        parts.append("年度财报摘要显示，" + years[-1]["summary"])
     else:
         parts.append("财报摘要[数据缺失]，无法核对年度与季度经营变化。")
+
+    peers = facts.get("peer_comparison")
+    if peers and peers.get("summary"):
+        parts.append(peers["summary"])
+    market = facts.get("market_valuation")
+    if market and market.get("summary"):
+        parts.append(market["summary"])
 
     moat_rating = (facts.get("moat") or {}).get("rating")
     if moat_rating:
@@ -165,7 +203,7 @@ def generate_masters_narrative(
     cache_path = _masters_cache_path(symbol)
     if not refresh:
         cached = _read_cache(cache_path, ttl_days)
-        if cached:
+        if cached and cached.get("masters_version") == _MASTERS_PROMPT_VERSION:
             return cached
 
     result = analyze_stock(symbol, db_path)
@@ -188,9 +226,10 @@ def generate_masters_narrative(
         }
 
     financials = _load_master_financials(symbol, db_path)
+    context = _load_master_context(symbol, db_path)
     masters: list[dict[str, Any]] = []
     for verdict in verdicts:
-        facts = _master_facts(result, financials, verdict)
+        facts = _master_facts(result, financials, verdict, context)
         text, source = _master_finalize(facts)
         masters.append(
             {
@@ -207,6 +246,7 @@ def generate_masters_narrative(
         "masters": masters,
         "source": "llm" if any(item["source"] == "llm" for item in masters) else "template",
         "generated_at": _now(),
+        "masters_version": _MASTERS_PROMPT_VERSION,
     }
     _write_cache(cache_path, output)
     return output

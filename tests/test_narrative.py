@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -260,6 +261,30 @@ class TestMastersNarrative(unittest.TestCase):
             ]
         }
 
+    def _context(self) -> dict:
+        return {
+            "company_basics": {
+                "name": "五粮液",
+                "industry": "酿酒行业",
+                "sector": "白酒",
+                "business": "白酒生产与销售",
+                "profile_summary": "五粮液：行业“酿酒行业”、赛道“白酒”；主营业务：白酒生产与销售。",
+                "revenue_mix": [
+                    {
+                        "dimension": "product",
+                        "report_date": "2026-06-30",
+                        "items": [{"item": "酒类产品", "ratio_pct": 94.55}],
+                    }
+                ],
+            },
+            "industry": {"summary": "匹配板块“白酒Ⅱ”，板块 PE 22.57 倍。"},
+            "peer_comparison": {"summary": "同行业最近年报 ROE 中位数 19.71%，该公司 6.89%。"},
+            "latest_report": {
+                "summary": "2026-09-30 三季报：营收同比 +7.25%；经营现金流/净利 0.5%。"
+            },
+            "market_valuation": {"summary": "PE(TTM) 23.36 倍，PB 2.4 倍。"},
+        }
+
     def test_year_summary_has_annual_and_quarter(self):
         row = {
             "report_date": "2025-03-31",
@@ -285,13 +310,57 @@ class TestMastersNarrative(unittest.TestCase):
         self.assertIn("-10.0%", summary)
 
     def test_template_keeps_verdict_and_signals(self):
-        facts = _masters._master_facts(self._result(), self._financials(), self._verdict())
+        facts = _masters._master_facts(
+            self._result(), self._financials(), self._verdict(), self._context()
+        )
         text = _masters._master_template(facts)
         self.assertIn("巴菲特", text)
         self.assertIn("回避", text)
         self.assertIn("ROE 连续 3 年 ≥ 15%", text)
         self.assertIn("建议", text)
         self.assertNotIn("公式", text)
+
+    def test_facts_include_business_industry_and_latest_report(self):
+        facts = _masters._master_facts(
+            self._result(), self._financials(), self._verdict(), self._context()
+        )
+        self.assertEqual(facts["company"]["business"], "白酒生产与销售")
+        self.assertIn("酒类产品", str(facts["company"]["revenue_mix"]))
+        self.assertIn("板块 PE", facts["industry"]["summary"])
+        self.assertIn("中位数", facts["peer_comparison"]["summary"])
+        self.assertIn("三季报", facts["latest_report"]["summary"])
+        self.assertIn("PE(TTM)", facts["market_valuation"]["summary"])
+
+    def test_template_uses_latest_report_and_peer_comparison(self):
+        facts = _masters._master_facts(
+            self._result(), self._financials(), self._verdict(), self._context()
+        )
+        text = _masters._master_template(facts)
+        self.assertIn("2026-09-30 三季报", text)
+        self.assertIn("中位数", text)
+        self.assertIn("PE(TTM)", text)
+
+    def test_year_summary_without_annual_says_not_disclosed(self):
+        row = {
+            "report_date": "2026-09-30",
+            "report_type": "Q3",
+            "revenue": 100e8,
+            "net_profit": 20e8,
+            "net_profit_deducted": 19e8,
+            "gross_margin": 70.0,
+            "net_margin": 20.0,
+            "roe": 5.0,
+            "debt_ratio": 30.0,
+            "revenue_yoy": 7.25,
+            "net_profit_yoy": 49.98,
+            "ocf": None,
+            "audit_opinion": None,
+        }
+        summary = _year_summary(
+            {"year": "2026", "annual": None, "quarterly": [_year_metric(row, {})]}
+        )
+        self.assertIn("年报尚未披露", summary)
+        self.assertNotIn("年报[数据缺失]", summary)
 
     def test_system_prompt_includes_master_profile(self):
         system = _masters._system_prompt("buffett")
@@ -305,6 +374,7 @@ class TestMastersNarrative(unittest.TestCase):
             _common.paths, "cache_dir", return_value=Path(tmp)
         ), mock.patch.object(_masters, "analyze_stock", fake_analyze), mock.patch.object(
             _masters, "_load_master_financials", return_value=self._financials()
+        ), mock.patch.object(_masters, "_load_master_context", return_value=self._context()
         ), mock.patch.object(_masters, "has_live_llm", return_value=False):
             first = narrative.generate_masters_narrative("000858.SZ")
             second = narrative.generate_masters_narrative("000858.SZ")
@@ -323,6 +393,7 @@ class TestMastersNarrative(unittest.TestCase):
             _common.paths, "cache_dir", return_value=Path(tmp)
         ), mock.patch.object(_masters, "analyze_stock", return_value=self._result()), mock.patch.object(
             _masters, "_load_master_financials", return_value=self._financials()
+        ), mock.patch.object(_masters, "_load_master_context", return_value=self._context()
         ), mock.patch.object(_masters, "has_live_llm", return_value=True), mock.patch.object(
             _masters, "chat", return_value=ChatResult(content=f"  {llm_text}  ")
         ) as fake_chat:
@@ -332,12 +403,41 @@ class TestMastersNarrative(unittest.TestCase):
         self.assertEqual(output["masters"][0]["text"], llm_text)
         self.assertEqual(fake_chat.call_count, 1)
 
+    def test_old_masters_version_cache_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            _common.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(_masters, "analyze_stock", return_value=self._result()), mock.patch.object(
+            _masters, "_load_master_financials", return_value=self._financials()
+        ), mock.patch.object(_masters, "_load_master_context", return_value=self._context()), mock.patch.object(
+            _masters, "has_live_llm", return_value=False
+        ):
+            first = narrative.generate_masters_narrative("000858.SZ")
+            cache_path = _common._masters_cache_path("000858.SZ")
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+            data["masters_version"] = _common._MASTERS_PROMPT_VERSION - 1
+            cache_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            second = narrative.generate_masters_narrative("000858.SZ")
+
+        self.assertEqual(second["masters_version"], _common._MASTERS_PROMPT_VERSION)
+        self.assertNotEqual(second["generated_at"], first["generated_at"])
+
 
 class TestPrompt(unittest.TestCase):
     def test_load_overview_prompt(self):
         text = load_prompt("overview_narrative")
         self.assertIn("护城河", text)
         self.assertIn("sections", text)
+
+    def test_master_prompts_cover_full_framework(self):
+        buffett = load_prompt("masters/buffett")
+        for keyword in ("股东盈余", "护城河", "资本配置", "一美元", "长期持有者"):
+            self.assertIn(keyword, buffett)
+        duan = load_prompt("masters/duan_yongping")
+        for keyword in ("生意模式", "本分", "能力圈", "经营现金流"):
+            self.assertIn(keyword, duan)
+        base = load_prompt("masters/_base")
+        for keyword in ("peer_comparison", "latest_report", "market_valuation"):
+            self.assertIn(keyword, base)
 
 
 if __name__ == "__main__":

@@ -128,6 +128,15 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
   改文案直接编辑对应 `.md`，无需改代码；新增场景就加一个 `.md` 并在调用处 `load_prompt("<name>")`。
 - 新增大师时：`analysis/masters/` 加规则模型，`prompts/masters/` 加同名档案，
   并在 `narrative/_masters.py` 的 `_MASTER_LABELS` 补中文标签。
+- 大师档案是“思想框架提炼”而非原文摘录：`buffett.md` 基于《巴菲特致股东的信》主题重编，
+  `duan_yongping.md` 基于其公开访谈与经营实践。改档案时保留分节结构，量化阈值仍以
+  `config/masters/*.toml` 为准，LLM 不得改写量化 verdict。
+- 大师叙述的 user 消息除量化信号外还包含：`company.profile_summary`/`revenue_mix`、
+  `industry`（板块行情）、`peer_comparison`（同行业最近年报中位数）、`latest_report`（最近一期
+  财报摘要）、`market_valuation`（市场估值）。新增字段要同步更新 `prompts/masters/_base.md`
+  的输入说明，否则模型可能不知道怎么用。
+- 大师缓存有独立版本 `narrative/_common.py` 的 `_MASTERS_PROMPT_VERSION`：改档案或 facts 结构后
+  递增，旧解读自动失效，其他三类叙述缓存不受影响；也可用 `?refresh=1` 强制刷新。
 - 叙述类结果均带本地缓存：概览 `data/cache/narrative/{symbol}.json`、大师
   `data/cache/narrative/masters_{symbol}.json`，TTL 在 `config/default.toml` 的
   `[narrative] cache_ttl_days`（默认 10 天）。接口加 `?refresh=1` 可强制刷新。
