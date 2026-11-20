@@ -410,6 +410,38 @@ main {
   border-radius: 10px;
 }
 
+.vp-overall {
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+}
+
+.vp-overall-label {
+  font-size: 12px;
+  color: #1d4ed8;
+}
+
+.vp-overall-range {
+  margin: 4px 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: #1e3a8a;
+}
+
+.vp-overall-center {
+  font-size: 12px;
+  color: #334155;
+}
+
+.vp-overall-note {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
 .vp-card,
 .vp-reinvest {
   margin-top: 10px;

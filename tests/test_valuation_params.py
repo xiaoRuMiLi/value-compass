@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -15,6 +16,7 @@ from fundamental.services.narrative._valuation_params import (
     _dividend_reinvestment,
     _fallback_params,
     _normalize_params,
+    _overall_range,
     _recompute,
 )
 
@@ -76,6 +78,27 @@ class TestRecompute(unittest.TestCase):
         self.assertLess(out["ddm"]["margin_of_safety"], 0)
         self.assertIsNotNone(out["dcf"]["fair_value_low"])
         self.assertIsNotNone(out["dividend_reinvestment"])
+        overall = out["overall"]
+        self.assertEqual(overall["methods"], ["ddm", "dcf"])
+        self.assertLessEqual(
+            overall["low"], min(out["ddm"]["fair_value_low"], out["dcf"]["fair_value_low"])
+        )
+        self.assertGreaterEqual(
+            overall["high"], max(out["ddm"]["fair_value_high"], out["dcf"]["fair_value_high"])
+        )
+        self.assertAlmostEqual(overall["margin_of_safety"], overall["center"] / 40.0 - 1, places=3)
+
+    def test_overall_with_only_ddm(self):
+        facts = {"model_inputs": {"dps": 2.0, "price": 40.0, "fcf": None, "shares": None}}
+        params = {
+            "ddm": {"growth": 0.03, "discount": 0.09, "rationale": ""},
+            "dcf": {"growth": 0.04, "discount": 0.10, "terminal_growth": 0.02, "rationale": ""},
+        }
+        out = _recompute(facts, params)
+        overall = out["overall"]
+        self.assertEqual(overall["methods"], ["ddm"])
+        self.assertEqual(overall["low"], out["ddm"]["fair_value_low"])
+        self.assertIn("仅基于", overall["note"])
 
     def test_empty_inputs_yield_none(self):
         facts = {"model_inputs": {"dps": None, "price": None, "fcf": None, "shares": None}}
@@ -87,6 +110,11 @@ class TestRecompute(unittest.TestCase):
         self.assertIsNone(out["ddm"]["fair_value_low"])
         self.assertIsNone(out["dcf"]["fair_value_low"])
         self.assertIsNone(out["dividend_reinvestment"])
+        self.assertIsNone(out["overall"])
+
+    def test_overall_range_rejects_invalid_values(self):
+        self.assertIsNone(_overall_range({"ddm": {"fair_value_low": -1, "fair_value_high": 5}}))
+        self.assertIsNone(_overall_range({"ddm": {"fair_value_low": 10, "fair_value_high": 5}}))
 
 
 class TestDividendReinvestment(unittest.TestCase):
@@ -182,15 +210,92 @@ class TestResearchText(unittest.TestCase):
         self.assertIn("营收同比增长5%", body)
         self.assertNotIn("短句", body)  # 太短被过滤
 
-    def test_load_digest_uses_cache(self):
-        payload = [{"date": "2026-01-01", "org": "x", "title": "t", "content": "c"}]
+    def test_load_digest_uses_fresh_cache(self):
+        reports = [
+            {
+                "date": "2026-01-01",
+                "org": "x",
+                "title": "t",
+                "content": "c",
+                "info_code": "AP1",
+                "rating": "buy",
+                "target_price": 50.0,
+                "eps_forecast": {"this_year": 6.1},
+            }
+        ]
+        payload = {
+            "schema_version": rt._CACHE_SCHEMA_VERSION,
+            "symbol": "600036.SH",
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "reports": reports,
+        }
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
             rt.paths, "cache_dir", return_value=Path(tmp)
         ):
             path = rt._research_cache_path("600036.SH")
             path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             out = rt.load_research_digest("600036.SH")
-            self.assertEqual(out, payload)
+            self.assertEqual(out, reports)
+            self.assertEqual(out[0]["rating"], "buy")
+            self.assertEqual(out[0]["eps_forecast"]["this_year"], 6.1)
+
+    def test_stale_legacy_cache_is_refreshed_and_migrated(self):
+        legacy = [{"date": "2020-01-01", "org": "x", "title": "t", "content": "old"}]
+        meta = {
+            "date": "2026-11-20",
+            "org": "y",
+            "title": "new",
+            "url": "http://example.com/report",
+            "info_code": "AP2",
+            "content": "",
+        }
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            rt.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(rt, "_fetch_recent_reports", return_value=[meta]), mock.patch(
+            "fundamental.providers._shared.HttpClient"
+        ) as Client:
+            Client.return_value.get_text.return_value = (
+                '<div id="ctx-content"><p>三季度息差企稳，资产质量稳健。</p></div>'
+            )
+            path = rt._research_cache_path("600036.SH")
+            path.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+            out = rt.load_research_digest("600036.SH")
+            self.assertEqual(out[0]["info_code"], "AP2")
+            self.assertIn("息差企稳", out[0]["content"])
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["schema_version"], rt._CACHE_SCHEMA_VERSION)
+            self.assertIn("fetched_at", saved)
+
+    def test_reuses_cached_body_by_info_code(self):
+        reports = [
+            {
+                "date": "2026-11-20",
+                "org": "y",
+                "title": "t",
+                "url": "http://old",
+                "info_code": "AP3",
+                "content": "cached body",
+            }
+        ]
+        meta = dict(reports[0], url="http://new", content="")
+        payload = {
+            "schema_version": rt._CACHE_SCHEMA_VERSION,
+            "fetched_at": "2020-01-01T00:00:00+00:00",
+            "reports": reports,
+        }
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            rt.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(rt, "_fetch_recent_reports", return_value=[meta]), mock.patch(
+            "fundamental.providers._shared.HttpClient"
+        ) as Client:
+            Client.return_value.get_text.return_value = (
+                '<div id="ctx-content"><p>不应被抓取的新正文内容。</p></div>'
+            )
+            path = rt._research_cache_path("600036.SH")
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            out = rt.load_research_digest("600036.SH")
+            self.assertEqual(out[0]["content"], "cached body")
+            self.assertFalse(Client.return_value.get_text.called)
 
     def test_graceful_degrade_on_provider_failure(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
@@ -199,6 +304,36 @@ class TestResearchText(unittest.TestCase):
             Provider.return_value.fetch_reports.side_effect = RuntimeError("network down")
             out = rt.load_research_digest("000000.SZ", refresh=True)
             self.assertEqual(out, [])
+
+
+class TestResearchProviderMapping(unittest.TestCase):
+    def test_maps_rating_target_and_eps(self):
+        from fundamental.providers.research.eastmoney import EastmoneyResearchProvider
+
+        row = {
+            "infoCode": "AP9",
+            "publishDate": "2026-11-03 00:00:00.000",
+            "orgSName": "测试证券",
+            "researcher": "张三",
+            "emRatingName": "买入",
+            "indvAimPriceT": "50.5",
+            "title": "测试研报",
+            "predictThisYearEps": "6.13",
+            "predictNextYearEps": "6.34",
+            "indvInduName": "银行Ⅱ",
+        }
+        with mock.patch("fundamental.providers.research.eastmoney.HttpClient") as Client:
+            Client.return_value.get_json.return_value = {"data": [row], "hits": 1}
+            reports = EastmoneyResearchProvider().fetch_reports("600036.SH")
+
+        self.assertEqual(len(reports), 1)
+        report = reports[0]
+        self.assertEqual(report.info_code, "AP9")
+        self.assertEqual(report.rating.value, "buy")
+        self.assertEqual(report.target_price, 50.5)
+        self.assertEqual(report.eps_forecast["next_year"], 6.34)
+        self.assertEqual(report.analyst, "张三")
+        self.assertEqual(report.industry_name, "银行Ⅱ")
 
 
 if __name__ == "__main__":

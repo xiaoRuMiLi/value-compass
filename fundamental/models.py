@@ -313,6 +313,9 @@ class ResearchReport:
     target_price: Optional[float] = None
     title: str = ""
     source_url: Optional[str] = None
+    info_code: Optional[str] = None
+    industry_name: Optional[str] = None
+    eps_forecast: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

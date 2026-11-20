@@ -4,12 +4,46 @@ from __future__ import annotations
 
 from datetime import date
 
-from fundamental.models import ResearchReport
+from fundamental.models import Rating, ResearchReport
 from fundamental.providers._shared import HttpClient, RateLimiter, ResponseCache
+from fundamental.providers._shared.convert import to_float
 from fundamental.providers.registry import register
 from fundamental.utils.symbols import parse_symbol
 
 _URL = "https://reportapi.eastmoney.com/report/list"
+
+_RATING_WORDS = (
+    ("买入", Rating.BUY),
+    ("增持", Rating.OVERWEIGHT),
+    ("中性", Rating.NEUTRAL),
+    ("减持", Rating.UNDERWEIGHT),
+    ("卖出", Rating.SELL),
+)
+
+
+def _to_rating(value: object) -> Rating | None:
+    """东财评级名（买入/增持/优于大市等）归一到统一枚举，无法识别时留空。"""
+
+    if not isinstance(value, str):
+        return None
+    for word, rating in _RATING_WORDS:
+        if word in value:
+            return rating
+    return None
+
+
+def _eps_forecast(row: dict[str, object]) -> dict[str, float]:
+    fields = {
+        "this_year": "predictThisYearEps",
+        "next_year": "predictNextYearEps",
+        "next_two_year": "predictNextTwoYearEps",
+    }
+    result: dict[str, float] = {}
+    for key, raw_key in fields.items():
+        value = to_float(row.get(raw_key))
+        if value is not None:
+            result[key] = value
+    return result
 
 
 @register("research", "eastmoney")
@@ -48,15 +82,22 @@ class EastmoneyResearchProvider:
             if not rows:
                 break
             for row in rows:
-                info_code = row.get("infoCode") or ""
+                info_code = str(row.get("infoCode") or "")
                 results.append(
                     ResearchReport(
                         publish_date=(str(row.get("publishDate") or "") or "")[:10] or None,
                         org_name=row.get("orgSName") or row.get("orgName"),
+                        analyst=row.get("researcher") or None,
+                        rating=_to_rating(row.get("emRatingName")),
+                        target_price=to_float(row.get("indvAimPriceT"))
+                        or to_float(row.get("indvAimPriceL")),
                         title=str(row.get("title") or ""),
                         source_url=f"https://data.eastmoney.com/report/info/{info_code}.html"
                         if info_code
                         else None,
+                        info_code=info_code or None,
+                        industry_name=row.get("indvInduName") or None,
+                        eps_forecast=_eps_forecast(row),
                     )
                 )
             hits = int(payload.get("hits") or 0)

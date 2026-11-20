@@ -347,6 +347,22 @@
 
     const params = data.params || {};
     const cal = data.calibrated || {};
+
+    const overall = cal.overall;
+    if (overall && overall.low != null) {
+      const hero = el("div", "vp-overall");
+      hero.appendChild(el("div", "vp-overall-label", "综合合理股价区间"));
+      hero.appendChild(el("div", "vp-overall-range", `${overall.low} ~ ${overall.high} 元`));
+      const summary = [`中枢 ${overall.center} 元`];
+      if (overall.current_price != null) summary.push(`现价 ${overall.current_price} 元`);
+      if (overall.margin_of_safety != null) {
+        summary.push(`相对现价 ${fmtPct(overall.margin_of_safety)}`);
+      }
+      hero.appendChild(el("div", "vp-overall-center", summary.join(" · ")));
+      if (overall.note) hero.appendChild(el("div", "vp-overall-note", overall.note));
+      box.appendChild(hero);
+    }
+
     const names = { ddm: "股利折现", dcf: "现金流折现" };
     for (const method of ["ddm", "dcf"]) {
       const p = params[method];

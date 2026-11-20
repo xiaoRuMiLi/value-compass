@@ -34,7 +34,9 @@ _TERMINAL_MIN, _TERMINAL_MAX = 0.0, 0.04
 _GAP = 0.02  # discount - growth 的最小间距
 
 # 校准逻辑升级时递增，让缓存失效。
-_VALUATION_PARAMS_VERSION = 1
+_VALUATION_PARAMS_VERSION = 2
+
+_METHOD_LABELS = {"ddm": "股利折现", "dcf": "现金流折现"}
 
 
 def _num(value: Any, default: float) -> float:
@@ -198,6 +200,52 @@ def _valuation_facts(
     }
 
 
+def _overall_range(calibrated: dict[str, Any]) -> dict[str, Any] | None:
+    """把可用模型的区间合成为一个直观的合理股价区间。
+
+    下沿取各模型最低值、上沿取最高值，中枢取各模型中点均值；
+    缺少自由现金流的公司（如银行）只有 DDM 可用时，明确标注依据，不臆造 DCF 结果。
+    """
+
+    available: list[tuple[str, dict[str, Any]]] = []
+    for method in ("ddm", "dcf"):
+        item = calibrated.get(method) or {}
+        low, high = item.get("fair_value_low"), item.get("fair_value_high")
+        if (
+            isinstance(low, (int, float))
+            and isinstance(high, (int, float))
+            and 0 < low <= high
+        ):
+            available.append((method, item))
+    if not available:
+        return None
+
+    lows = [item["fair_value_low"] for _, item in available]
+    highs = [item["fair_value_high"] for _, item in available]
+    centers = [(item["fair_value_low"] + item["fair_value_high"]) / 2 for _, item in available]
+    center = round(sum(centers) / len(centers), 2)
+    price = next(
+        (item.get("current_price") for _, item in available if item.get("current_price")),
+        None,
+    )
+    margin = round(center / price - 1, 4) if isinstance(price, (int, float)) and price > 0 else None
+    methods = [method for method, _ in available]
+    note = (
+        "综合股利折现与现金流折现两种模型：区间取两者并集，中枢为两者中点均值。"
+        if len(methods) == 2
+        else f"仅基于{_METHOD_LABELS[methods[0]]}模型，另一模型因缺少必要输入未参与，合理价参考性有限。"
+    )
+    return {
+        "low": round(min(lows), 2),
+        "high": round(max(highs), 2),
+        "center": center,
+        "current_price": price,
+        "margin_of_safety": margin,
+        "methods": methods,
+        "note": note,
+    }
+
+
 def _recompute(facts: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
     """用校准参数复用项目公式重算 DDM/DCF，并给出股息复投预期。"""
 
@@ -220,11 +268,13 @@ def _recompute(facts: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
             "current_price": result.current_price,
         }
 
-    return {
+    calibrated = {
         "ddm": to_dict(ddm),
         "dcf": to_dict(dcf),
         "dividend_reinvestment": _dividend_reinvestment(dps, price, d["growth"]),
     }
+    calibrated["overall"] = _overall_range(calibrated)
+    return calibrated
 
 
 def _assemble(

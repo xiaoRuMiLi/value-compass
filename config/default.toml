@@ -8,5 +8,10 @@ cache_ttl_seconds = 3600
 [narrative]
 cache_ttl_days = 10
 
+[research]
+cache_ttl_days = 7
+max_reports = 4
+chars_per_report = 1200
+
 [logging]
 level = "INFO"

@@ -93,7 +93,7 @@ value-compass/
 │   │       ├── _score.py             # 五维评分解读
 │   │       ├── _valuation.py         # 估值模型解读
 │   │       ├── _masters.py           # 大师观点解读（基本面 + 行业/同业 + 财报 + 估值 + 档案 → LLM）
-│   │       └── _valuation_params.py  # 估值参数校准（LLM 给保守 g/r → 边界钳制 → 复用公式重算 + 10 年复投）
+│   │       └── _valuation_params.py  # 估值参数校准（LLM 给保守 g/r → 边界钳制 → 公式重算 + 10 年复投 + 综合合理价区间）
 │   ├── analysis/                     # 纯计算，不 import 任何具体数据源
 │   │   ├── financial.py              # 财务质量评分
 │   │   ├── comparison.py             # 横向对比（市占率、指标趋势、排名）
@@ -131,7 +131,7 @@ value-compass/
 │       ├── prompts.py                # 提示词模板加载（prompts/*.md、prompts/masters/*.md）
 │       ├── logging.py
 │       ├── pdf.py                    # PDF 文本提取
-│       ├── research_text.py          # 东财研报正文抓取（供估值参数校准，带缓存/降级）
+│       ├── research_text.py          # 东财研报正文与元数据抓取（schema 版本/TTL/按篇复用/失败降级）
 │       └── paths.py
 │
 ├── pages/                            # 标准交互页面，可共用、参数化
@@ -173,7 +173,7 @@ value-compass/
 ├── generated/                        # 非标准、按临时要求生成的一次性展示 HTML
 │
 ├── data/
-│   ├── cache/                        # 原始响应缓存 + 概览叙述缓存（TTL）
+│   ├── cache/                        # 原始响应缓存 + 叙述缓存 + 研报资料缓存（TTL/版本号）
 │   ├── db/
 │   │   └── fundamental.db            # SQLite 主库
 │   └── archive/                      # 永久本地存档，不清除
