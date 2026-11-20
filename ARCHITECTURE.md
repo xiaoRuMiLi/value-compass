@@ -413,6 +413,12 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 - 行情类：K 线增量追加，实时快照按 TTL 刷新。
 - 离线模式：本地已有则直接从 SQLite + archive 读，不联网。
 
+### 上下文预算与配置指纹
+
+- 叙述层的资料注入预算全部配置化，原则是**质量优先、默认可调大**：`[research]`（研报篇数/单篇字数）、`[intel]`（行业研报/调研的条数与字数）、`[masters]`（大师叙述每类摘录条数与字数）、`[valuation]`（估值校准摘录与引用清单上限）、`[narrative]`（各叙述模块输出 token 上限）。
+- 单次请求的输入软预算由 `llm.max_input_tokens`（默认 32000）控制：超出仅在日志告警、**不截断**（截断 JSON 会破坏结构、诱发幻觉），超 2 倍才做中段截断兜底。估算见 `services/llm.estimate_tokens()`（CJK 约 1 字 1 token，其余约 4 字符 1 token）。
+- 缓存指纹：研报/情报缓存 payload 记录写入时的 `max_chars`，读取时若小于当前配置，视为不新鲜并重抓（`utils/research_text.cache_max_chars()`），避免"调大了预算、页面却仍是旧短摘要"。
+
 ## 17. 批量与行业分析
 
 > 状态：本节描述的是目标设计。`services/batch.py` / `scripts/batch_analyze.py` 尚未实现；

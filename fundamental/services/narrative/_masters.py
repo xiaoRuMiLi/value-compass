@@ -17,6 +17,7 @@ from ._common import (
     _MASTERS_PROMPT_VERSION,
     _build_prompt,
     _masters_cache_path,
+    _max_tokens,
     _now,
     _read_cache,
     _write_cache,
@@ -36,25 +37,32 @@ def _value(obj: Any, key: str, default: Any = None) -> Any:
 
 
 def _intel_facts(intel: dict[str, Any] | None) -> dict[str, Any]:
-    """把情报资料压成适合 prompt 的摘录，控制体量并明确使用边界。"""
+    """把情报资料压成适合 prompt 的摘录，预算由 [masters] 配置控制（质量优先）。"""
 
     intel = intel or {}
+    settings = load_settings()
+    limit = int(settings.get("masters.intel_limit", 3))
+    chars = {
+        "company_reports": int(settings.get("masters.report_chars", 1500)),
+        "industry_reports": int(settings.get("masters.industry_chars", 1500)),
+        "surveys": int(settings.get("masters.survey_chars", 2000)),
+    }
 
-    def brief(key: str, chars: int, limit: int = 2) -> list[dict[str, Any]]:
+    def brief(key: str) -> list[dict[str, Any]]:
         return [
             {
                 "date": item.get("date") or "",
                 "org": item.get("org") or "",
                 "title": item.get("title") or "",
-                "excerpt": (item.get("content") or "")[:chars],
+                "excerpt": (item.get("content") or "")[: chars[key]],
             }
             for item in (intel.get(key) or [])[:limit]
         ]
 
     return {
-        "company_reports": brief("company_reports", 320),
-        "industry_reports": brief("industry_reports", 320),
-        "surveys": brief("surveys", 400),
+        "company_reports": brief("company_reports"),
+        "industry_reports": brief("industry_reports"),
+        "surveys": brief("surveys"),
         "note": "卖方研报与调研纪要代表第三方观点，非公司已实现事实；不得据此改写量化结论。",
     }
 
@@ -222,7 +230,7 @@ def _master_finalize(facts: dict[str, Any]) -> tuple[str, str]:
         system = _system_prompt(facts["master"]["name"])
         result = chat(
             [ChatMessage("system", system), ChatMessage("user", _build_prompt(facts))],
-            max_tokens=700,
+            max_tokens=_max_tokens("masters", 1400),
         )
         text = result.content.strip()
     except (LlmError, LlmConfigError, FileNotFoundError):

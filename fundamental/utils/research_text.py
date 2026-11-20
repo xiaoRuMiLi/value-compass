@@ -40,11 +40,11 @@ def _cache_ttl_days() -> float:
 
 
 def _default_limit() -> int:
-    return int(load_settings().get("research.max_reports", 4))
+    return int(load_settings().get("research.max_reports", 6))
 
 
 def _default_chars() -> int:
-    return int(load_settings().get("research.chars_per_report", 1200))
+    return int(load_settings().get("research.chars_per_report", 3000))
 
 
 def _now() -> str:
@@ -63,12 +63,34 @@ def _is_fresh(fetched_at: Any, ttl_days: float) -> bool:
     return (datetime.now(timezone.utc) - fetched).total_seconds() <= ttl_days * 86400
 
 
+def _payload_max_chars(payload: Any) -> int:
+    if not isinstance(payload, dict):
+        return 0
+    try:
+        return int(payload.get("max_chars") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def cache_max_chars(path: Path) -> int:
+    """读取缓存记录的正文字数上限；无记录（旧缓存）视为 0，用于配置指纹比较。"""
+
+    if not path.exists():
+        return 0
+    try:
+        return _payload_max_chars(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        return 0
+
+
 def _read_cache(
-    path: Path, ttl_days: float, *, legacy_as_stale: bool = True
+    path: Path, ttl_days: float, *, legacy_as_stale: bool = True, min_chars: int = 0
 ) -> list[dict[str, Any]] | None:
     """读研报缓存。旧版裸数组默认视为过期，触发一次迁移重抓。
 
     legacy_as_stale=False 用于联网失败时的降级：此时宁可用旧资料，也不要空结果。
+    min_chars 用于配置指纹：缓存抓取时的正文字数上限小于当前配置，说明用户调大了
+    上下文预算，应视为不新鲜并重抓，避免「配置改了但页面还是旧短摘要」。
     """
 
     if not path.exists():
@@ -83,6 +105,8 @@ def _read_cache(
             return None
         reports = payload.get("reports")
         if not isinstance(reports, list) or not _is_fresh(payload.get("fetched_at"), ttl_days):
+            return None
+        if min_chars and _payload_max_chars(payload) < min_chars:
             return None
         return [item for item in reports if isinstance(item, dict)]
 
@@ -115,10 +139,12 @@ def _read_any_cache(path: Path) -> list[dict[str, Any]] | None:
     return [item for item in reports if isinstance(item, dict)]
 
 
-def read_research_cache(path: Path, ttl_days: float) -> list[dict[str, Any]] | None:
+def read_research_cache(
+    path: Path, ttl_days: float, *, min_chars: int = 0
+) -> list[dict[str, Any]] | None:
     """供情报资料门面复用的带 TTL 缓存读取。"""
 
-    return _read_cache(path, ttl_days)
+    return _read_cache(path, ttl_days, min_chars=min_chars)
 
 
 def _clean(text: str) -> str:
@@ -198,12 +224,14 @@ def load_research_digest(
     max_chars = max_chars_per_report if max_chars_per_report is not None else _default_chars()
     cache_path = _research_cache_path(symbol)
     ttl_days = _cache_ttl_days()
-    cached = _read_cache(cache_path, ttl_days)
+    cached = _read_cache(cache_path, ttl_days, min_chars=max_chars)
 
     if not refresh and cached:
         return cached
 
     stale = _read_any_cache(cache_path)
+    # 旧缓存的正文字数上限低于当前配置时，不复用短正文，按新预算重新抓取。
+    reuse = not refresh and cache_max_chars(cache_path) >= max_chars
     reports = _fetch_recent_reports(symbol, limit)
     if not reports:
         return _read_cache(cache_path, ttl_days, legacy_as_stale=False) or stale or []
@@ -225,7 +253,7 @@ def load_research_digest(
     digest: list[dict[str, Any]] = []
     for report in reports:
         key = _dedupe_key(report)
-        if not refresh and key in reusable:
+        if reuse and key in reusable:
             report["content"] = reusable[key]
             digest.append(report)
             continue
@@ -245,6 +273,7 @@ def load_research_digest(
             "schema_version": _CACHE_SCHEMA_VERSION,
             "symbol": symbol,
             "fetched_at": _now(),
+            "max_chars": max_chars,
             "reports": digest,
         }
         try:

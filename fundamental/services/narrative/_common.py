@@ -7,12 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from fundamental.config import load_settings
 from fundamental.utils import paths
 
-_NARRATIVE_VERSION = 3
+_NARRATIVE_VERSION = 4
 
 # 大师档案/输入结构升级时递增，只让大师解读缓存失效，不影响其他叙述缓存。
-_MASTERS_PROMPT_VERSION = 5
+_MASTERS_PROMPT_VERSION = 6
 
 
 def _plain(value: Any) -> Any:
@@ -39,6 +40,15 @@ def _fmt_price(value: Any) -> str:
 
 def _build_prompt(facts: dict[str, Any]) -> str:
     return json.dumps(facts, ensure_ascii=False, indent=2, default=str)
+
+
+def _max_tokens(name: str, default: int) -> int:
+    """输出 token 上限，读 ``[narrative] {name}_max_tokens``；配置缺失时用默认值。"""
+
+    try:
+        return int(load_settings().get(f"narrative.{name}_max_tokens", default))
+    except (TypeError, ValueError):
+        return default
 
 
 def _now() -> str:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Sequence
 
@@ -12,6 +13,82 @@ from fundamental.providers.llm.port import LlmConfigError, LlmError, LlmPort
 from fundamental.providers.registry import get_provider_class
 
 _llm: LlmPort | None = None
+_logger = logging.getLogger(__name__)
+
+_CJK_RANGES = (("\u3400", "\u4dbf"), ("\u4e00", "\u9fff"), ("\uf900", "\ufaff"))
+
+
+def estimate_tokens(text: str) -> int:
+    """粗略估算 token 数：CJK 约 1 字 1 token，其余约 4 字符 1 token。
+
+    只服务输入预算监控。真实 tokenizer 依模型而异，这里不做精确依赖，
+    宁可粗估也不引入额外分词库。
+    """
+
+    if not text:
+        return 0
+    cjk = sum(1 for ch in text if any(lo <= ch <= hi for lo, hi in _CJK_RANGES))
+    other = len(text) - cjk
+    return cjk + (other + 3) // 4
+
+
+def input_budget(settings: Settings | None = None) -> int:
+    """单次请求的输入 token 软预算，由 ``llm.max_input_tokens`` 配置。"""
+
+    settings = settings or load_settings()
+    try:
+        return int(settings.get("llm.max_input_tokens", 32000))
+    except (TypeError, ValueError):
+        return 32000
+
+
+def _messages_tokens(messages: Sequence[ChatMessage]) -> int:
+    # 每条消息另有约 4 token 的角色标记与分隔开销
+    return sum(estimate_tokens(m.content) + 4 for m in messages)
+
+
+def _truncate_middle(text: str, ratio: float) -> str:
+    target = max(200, int(len(text) * ratio))
+    if target >= len(text):
+        return text
+    head = int(target * 0.75)
+    tail = target - head
+    return text[:head] + "\n...[输入过长，已省略中间部分]...\n" + text[-tail:]
+
+
+def _guard_input(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
+    """输入预算软约束：超预算只告警；超 2 倍才做中段截断兜底。
+
+    不在预算处硬截断，是因为叙述层传入的是 JSON，截断会破坏结构、诱发幻觉，
+    与「可靠可信」的目标冲突。超 2 倍时 API 本就会拒绝，此时截断仅作兜底。
+    """
+
+    items = list(messages)
+    budget = input_budget()
+    estimated = _messages_tokens(items)
+    if estimated <= budget:
+        return items
+
+    _logger.warning(
+        "LLM 输入估算 %d token，超过预算 %d（llm.max_input_tokens）；"
+        "如需更长上下文请调大该值，或调小 research/intel/masters/valuation 的字数配置。",
+        estimated,
+        budget,
+    )
+    if estimated <= budget * 2:
+        return items
+
+    index = max(range(len(items)), key=lambda i: len(items[i].content))
+    target = items[index]
+    ratio = (budget * 0.9) / max(1, estimated)
+    items[index] = ChatMessage(target.role, _truncate_middle(target.content, ratio))
+    _logger.error(
+        "LLM 输入估算 %d token 已超 2 倍预算 %d，对最长消息做中段截断；"
+        "若频繁出现请调大 llm.max_input_tokens。",
+        estimated,
+        budget,
+    )
+    return items
 
 
 def _resolve_api_key(api_key_env: str) -> str | None:
@@ -76,7 +153,7 @@ def chat(
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> ChatResult:
-    return get_llm().chat(list(messages), temperature=temperature, max_tokens=max_tokens)
+    return get_llm().chat(_guard_input(messages), temperature=temperature, max_tokens=max_tokens)
 
 
 def chat_json(
@@ -85,7 +162,7 @@ def chat_json(
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> Any:
-    return get_llm().chat_json(list(messages), temperature=temperature, max_tokens=max_tokens)
+    return get_llm().chat_json(_guard_input(messages), temperature=temperature, max_tokens=max_tokens)
 
 
 def chat_optional(

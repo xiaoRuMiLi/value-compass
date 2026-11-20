@@ -18,6 +18,7 @@ from ._common import (
     _fmt_price,
     _fmt_ratio,
     _fmt_yi,
+    _max_tokens,
     _now,
     _overview_cache_path,
     _plain,
@@ -281,7 +282,7 @@ def _finalize(facts: dict[str, Any]) -> dict[str, Any]:
         system = load_prompt("overview_narrative")
         data = chat_json(
             [ChatMessage("system", system), ChatMessage("user", _build_prompt(facts))],
-            max_tokens=1600,
+            max_tokens=_max_tokens("overview", 2000),
         )
         sections = _parse_sections(data)
     except (LlmError, LlmConfigError):

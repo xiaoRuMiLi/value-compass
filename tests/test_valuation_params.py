@@ -281,6 +281,7 @@ class TestResearchText(unittest.TestCase):
             "schema_version": rt._CACHE_SCHEMA_VERSION,
             "symbol": "600036.SH",
             "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "max_chars": rt._default_chars(),
             "reports": reports,
         }
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
@@ -335,6 +336,7 @@ class TestResearchText(unittest.TestCase):
         payload = {
             "schema_version": rt._CACHE_SCHEMA_VERSION,
             "fetched_at": "2020-01-01T00:00:00+00:00",
+            "max_chars": rt._default_chars(),
             "reports": reports,
         }
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
@@ -350,6 +352,42 @@ class TestResearchText(unittest.TestCase):
             out = rt.load_research_digest("600036.SH")
             self.assertEqual(out[0]["content"], "cached body")
             self.assertFalse(Client.return_value.get_text.called)
+
+    def test_smaller_cache_budget_triggers_refetch(self):
+        """缓存记录的正文上限低于当前配置时，说明预算被调大，应重抓而非复用短正文。"""
+
+        reports = [
+            {
+                "date": "2026-11-20",
+                "org": "y",
+                "title": "t",
+                "url": "http://old",
+                "info_code": "AP9",
+                "content": "短正文",
+            }
+        ]
+        meta = dict(reports[0], url="http://new", content="")
+        payload = {
+            "schema_version": rt._CACHE_SCHEMA_VERSION,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "max_chars": 1,
+            "reports": reports,
+        }
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            rt.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(rt, "_fetch_recent_reports", return_value=[meta]), mock.patch(
+            "fundamental.providers._shared.HttpClient"
+        ) as Client:
+            Client.return_value.get_text.return_value = (
+                '<div id="ctx-content"><p>' + "新正文" * 100 + "</p></div>"
+            )
+            path = rt._research_cache_path("600036.SH")
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            out = rt.load_research_digest("600036.SH")
+            self.assertTrue(Client.return_value.get_text.called)
+            self.assertGreater(len(out[0]["content"]), len("短正文"))
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["max_chars"], rt._default_chars())
 
     def test_graceful_degrade_on_provider_failure(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(

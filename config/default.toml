@@ -7,19 +7,41 @@ cache_ttl_seconds = 3600
 
 [narrative]
 cache_ttl_days = 10
+# 各叙述模块的输出 token 上限：质量优先，给足论证篇幅；成本/延迟敏感时再调小。
+overview_max_tokens = 2000
+score_max_tokens = 1200
+valuation_max_tokens = 1600
+masters_max_tokens = 1800
+valuation_params_max_tokens = 2000
 
 [research]
 cache_ttl_days = 7
-max_reports = 4
-chars_per_report = 1200
+# 上下文策略：质量优先。研报数量与单篇正文上限给足，避免摘要过短导致解读空泛。
+max_reports = 6
+chars_per_report = 3000
 
 [intel]
 industry_ttl_days = 3
 survey_ttl_days = 30
-industry_limit = 3
-survey_limit = 3
-industry_chars = 800
-survey_chars = 1000
+industry_limit = 5
+survey_limit = 5
+industry_chars = 2000
+survey_chars = 2500
+
+[masters]
+# 大师叙述注入的情报摘录预算：每类取几篇、每篇截多少字。
+intel_limit = 3
+report_chars = 1500
+industry_chars = 1500
+survey_chars = 2000
+
+[valuation]
+# 估值参数校准的资料预算：正文越长，g/r 的定参依据越充分。
+intel_limit = 3
+industry_chars = 1200
+survey_chars = 1500
+citation_per_kind = 5
+citation_total = 20
 
 [logging]
 level = "INFO"

@@ -118,6 +118,7 @@ class TestIntelFacade(unittest.TestCase):
         cached = {
             "schema_version": 2,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "max_chars": 2000,
             "reports": [{"info_code": "OLD", "content": "旧正文"}],
         }
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(

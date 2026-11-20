@@ -308,8 +308,9 @@ class TestMastersNarrative(unittest.TestCase):
             self._result(), self._financials(), self._verdict(), self._context(), intel
         )
         self.assertEqual(facts["intel"]["company_reports"][0]["org"], "东海证券")
-        self.assertEqual(len(facts["intel"]["company_reports"][0]["excerpt"]), 320)
-        self.assertEqual(len(facts["intel"]["surveys"][0]["excerpt"]), 400)
+        # 上下文预算放宽后，短于配置上限的正文不再被 320/400 字硬截断
+        self.assertEqual(facts["intel"]["company_reports"][0]["excerpt"], "研报正文内容" * 60)
+        self.assertEqual(facts["intel"]["surveys"][0]["excerpt"], "调研纪要内容" * 80)
 
     def test_template_mentions_third_party_views(self):
         intel = {

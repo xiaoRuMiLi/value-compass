@@ -15,6 +15,7 @@ from fundamental.utils.prompts import load_prompt
 from ._common import (
     _build_prompt,
     _fmt_pct,
+    _max_tokens,
     _now,
     _read_cache,
     _score_cache_path,
@@ -74,7 +75,7 @@ def _score_finalize(facts: dict[str, Any]) -> dict[str, Any]:
         system = load_prompt("score_narrative")
         result = chat(
             [ChatMessage("system", system), ChatMessage("user", _build_prompt(facts))],
-            max_tokens=800,
+            max_tokens=_max_tokens("score", 1200),
         )
         text = result.content.strip()
     except (LlmError, LlmConfigError):

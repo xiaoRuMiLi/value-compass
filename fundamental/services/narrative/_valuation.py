@@ -17,6 +17,7 @@ from ._common import (
     _fmt_pct,
     _fmt_price,
     _fmt_ratio,
+    _max_tokens,
     _now,
     _read_cache,
     _valuation_cache_path,
@@ -120,7 +121,7 @@ def _valuation_finalize(facts: dict[str, Any]) -> dict[str, Any]:
         system = load_prompt("valuation_narrative")
         data = chat_json(
             [ChatMessage("system", system), ChatMessage("user", _build_prompt(facts))],
-            max_tokens=1200,
+            max_tokens=_max_tokens("valuation", 1600),
         )
         sections = _parse_valuation_sections(data)
     except (LlmError, LlmConfigError):

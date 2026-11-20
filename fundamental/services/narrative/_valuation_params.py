@@ -21,6 +21,7 @@ from fundamental.utils.prompts import load_prompt
 
 from ._common import (
     _build_prompt,
+    _max_tokens,
     _now,
     _read_cache,
     _valuation_params_cache_path,
@@ -181,6 +182,10 @@ def _valuation_facts(
 ) -> dict[str, Any]:
     snapshot = result.get("snapshot")
     price = snapshot.price if snapshot else None
+    settings = load_settings()
+    intel_limit = int(settings.get("valuation.intel_limit", 3))
+    industry_chars = int(settings.get("valuation.industry_chars", 1200))
+    survey_chars = int(settings.get("valuation.survey_chars", 1500))
     dps = None
     fcf = None
     shares = None
@@ -214,18 +219,18 @@ def _valuation_facts(
                     "date": item.get("date") or "",
                     "org": item.get("org") or "",
                     "title": item.get("title") or "",
-                    "excerpt": (item.get("content") or "")[:300],
+                    "excerpt": (item.get("content") or "")[:industry_chars],
                 }
-                for item in (intel or {}).get("industry_reports", [])[:2]
+                for item in (intel or {}).get("industry_reports", [])[:intel_limit]
             ],
             "surveys": [
                 {
                     "date": item.get("date") or "",
                     "org": item.get("org") or "",
                     "title": item.get("title") or "",
-                    "excerpt": (item.get("content") or "")[:400],
+                    "excerpt": (item.get("content") or "")[:survey_chars],
                 }
-                for item in (intel or {}).get("surveys", [])[:2]
+                for item in (intel or {}).get("surveys", [])[:intel_limit]
             ],
         },
     }
@@ -337,6 +342,10 @@ def _sellside_sentiment(
 def _citations(intel: dict[str, Any] | None) -> list[dict[str, str]]:
     """汇总可溯源的参考资料清单（日期/机构/标题/原文链接）。"""
 
+    settings = load_settings()
+    per_kind = int(settings.get("valuation.citation_per_kind", 5))
+    total = int(settings.get("valuation.citation_total", 20))
+
     groups = (
         ("个股研报", "company_reports"),
         ("行业研报", "industry_reports"),
@@ -344,7 +353,7 @@ def _citations(intel: dict[str, Any] | None) -> list[dict[str, str]]:
     )
     citations: list[dict[str, str]] = []
     for kind, key in groups:
-        for item in ((intel or {}).get(key) or [])[:4]:
+        for item in ((intel or {}).get(key) or [])[:per_kind]:
             citations.append(
                 {
                     "kind": kind,
@@ -354,7 +363,7 @@ def _citations(intel: dict[str, Any] | None) -> list[dict[str, str]]:
                     "url": str(item.get("url") or ""),
                 }
             )
-    return citations[:10]
+    return citations[:total]
 
 
 def _recompute(facts: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
@@ -409,7 +418,7 @@ def _finalize(facts: dict[str, Any]) -> dict[str, Any]:
         system = load_prompt("valuation_params")
         data = chat_json(
             [ChatMessage("system", system), ChatMessage("user", _build_prompt(facts))],
-            max_tokens=1400,
+            max_tokens=_max_tokens("valuation_params", 2000),
         )
         params = _normalize_params(data)
         return _assemble(facts, params, "llm")
@@ -421,7 +430,7 @@ def generate_valuation_params(
     symbol: str,
     db_path: Path | None = None,
     refresh: bool = False,
-    research_limit: int = 4,
+    research_limit: int | None = None,
 ) -> dict[str, Any]:
     """生成估值参数校准结果：优先 LLM，失败回退模板，带独立缓存。"""
 

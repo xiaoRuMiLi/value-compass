@@ -39,14 +39,15 @@ def _cache_path(symbol: str, kind: str) -> Path:
     return directory / f"{symbol}_{kind}.json"
 
 
-def _read(path: Path, ttl_days: float) -> list[dict[str, Any]]:
-    return read_research_cache(path, ttl_days) or []
+def _read(path: Path, ttl_days: float, *, min_chars: int = 0) -> list[dict[str, Any]]:
+    return read_research_cache(path, ttl_days, min_chars=min_chars) or []
 
 
-def _write(path: Path, items: list[dict[str, Any]]) -> None:
+def _write(path: Path, items: list[dict[str, Any]], max_chars: int) -> None:
     payload = {
         "schema_version": _CACHE_SCHEMA_VERSION,
         "fetched_at": _now(),
+        "max_chars": max_chars,
         "reports": items,
     }
     try:
@@ -72,7 +73,7 @@ def _load_industry(
     ttl_days: float,
 ) -> list[dict[str, Any]]:
     path = _cache_path(symbol, "industry")
-    cached = _read(path, ttl_days)
+    cached = _read(path, ttl_days, min_chars=max_chars)
     if not refresh and cached:
         return cached
     if not industry_code:
@@ -118,7 +119,7 @@ def _load_industry(
         )
 
     if items:
-        _write(path, items)
+        _write(path, items, max_chars)
     return items or cached
 
 
@@ -131,7 +132,7 @@ def _load_survey(
     ttl_days: float,
 ) -> list[dict[str, Any]]:
     path = _cache_path(symbol, "survey")
-    cached = _read(path, ttl_days)
+    cached = _read(path, ttl_days, min_chars=max_chars)
     if not refresh and cached:
         return cached
 
@@ -154,7 +155,7 @@ def _load_survey(
         if record.content
     ]
     if items:
-        _write(path, items)
+        _write(path, items, max_chars)
     return items or cached
 
 
@@ -170,9 +171,9 @@ def load_intel_digest(
 
     selected = tuple(kinds) if kinds else _ALL_KINDS
     settings = load_settings()
-    research_limit = research_limit or int(settings.get("research.max_reports", 4))
-    industry_limit = int(settings.get("intel.industry_limit", 3))
-    survey_limit = int(settings.get("intel.survey_limit", 3))
+    research_limit = research_limit or int(settings.get("research.max_reports", 6))
+    industry_limit = int(settings.get("intel.industry_limit", 5))
+    survey_limit = int(settings.get("intel.survey_limit", 5))
     industry_ttl = float(settings.get("intel.industry_ttl_days", 3))
     survey_ttl = float(settings.get("intel.survey_ttl_days", 30))
 
@@ -190,7 +191,7 @@ def load_intel_digest(
             code,
             refresh=refresh,
             limit=industry_limit,
-            max_chars=int(settings.get("intel.industry_chars", 800)),
+            max_chars=int(settings.get("intel.industry_chars", 2000)),
             ttl_days=industry_ttl,
         )
     if "survey" in selected:
@@ -198,7 +199,7 @@ def load_intel_digest(
             symbol,
             refresh=refresh,
             limit=survey_limit,
-            max_chars=int(settings.get("intel.survey_chars", 1000)),
+            max_chars=int(settings.get("intel.survey_chars", 2500)),
             ttl_days=survey_ttl,
         )
     return output
