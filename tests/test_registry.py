@@ -24,7 +24,7 @@ import fundamental.providers.research.eastmoney  # noqa: F401
 import fundamental.providers.sentiment.guba  # noqa: F401
 
 from fundamental.config import Settings, load_settings
-from fundamental.providers import registry
+from fundamental.providers import ProviderConfigError, registry
 
 
 class TestRegistry(unittest.TestCase):
@@ -47,8 +47,9 @@ class TestRegistry(unittest.TestCase):
         self.assertTrue(callable(provider.fetch_snapshot))
 
     def test_get_provider_class_unknown_source(self):
-        with self.assertRaises(KeyError):
+        with self.assertRaises(ProviderConfigError) as ctx:
             registry.get_provider_class("quote", "not-exist")
+        self.assertIsInstance(ctx.exception, KeyError)  # 兼容旧 catch
 
 
 if __name__ == "__main__":

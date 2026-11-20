@@ -7,6 +7,7 @@ from typing import Any, Sequence
 
 from fundamental.config import Settings, load_settings
 from fundamental.models import ChatMessage, ChatResult
+from fundamental.providers import ProviderConfigError
 from fundamental.providers.llm.port import LlmConfigError, LlmError, LlmPort
 from fundamental.providers.registry import get_provider_class
 
@@ -39,7 +40,7 @@ def _build(settings: Settings) -> LlmPort:
     adapter = str(section.get("adapter") or "openai_compat")
     try:
         provider_cls = get_provider_class("llm", adapter)
-    except KeyError as exc:
+    except ProviderConfigError as exc:
         raise LlmConfigError(f"未知的大模型适配器: {adapter}") from exc
 
     api_key = _resolve_api_key(str(section.get("api_key_env") or ""))

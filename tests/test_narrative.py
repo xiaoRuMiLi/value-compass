@@ -8,6 +8,10 @@ from pathlib import Path
 from unittest import mock
 
 import fundamental.services.narrative as narrative
+import fundamental.services.narrative._common as _common
+import fundamental.services.narrative._overview as _overview
+import fundamental.services.narrative._score as _score
+import fundamental.services.narrative._valuation as _valuation
 from fundamental.models import CompositeScore, DimensionScore, Market, Stock, ValuationResult
 from fundamental.utils.prompts import load_prompt
 
@@ -88,10 +92,10 @@ class TestGenerateOverviewNarrative(unittest.TestCase):
     def test_template_fallback_and_cache(self):
         fake_analyze = mock.MagicMock(return_value=self._result())
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
-            narrative.paths, "cache_dir", return_value=Path(tmp)
-        ), mock.patch.object(narrative, "analyze_stock", fake_analyze), mock.patch.object(
-            narrative, "_load_extra", return_value={"latest_financials": None}
-        ), mock.patch.object(narrative, "has_live_llm", return_value=False):
+            _common.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(_overview, "analyze_stock", fake_analyze), mock.patch.object(
+            _overview, "_load_extra", return_value={"latest_financials": None}
+        ), mock.patch.object(_overview, "has_live_llm", return_value=False):
             first = narrative.generate_overview_narrative("600519.SH")
             second = narrative.generate_overview_narrative("600519.SH")
             third = narrative.generate_overview_narrative("600519.SH", refresh=True)
@@ -123,11 +127,11 @@ class TestScoreNarrative(unittest.TestCase):
     def test_generate_score_narrative_and_cache(self):
         fake_analyze = mock.MagicMock(return_value={"score": self._score()})
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
-            narrative.paths, "cache_dir", return_value=Path(tmp)
-        ), mock.patch.object(narrative, "analyze_stock", fake_analyze), mock.patch.object(
-            narrative, "_load_score_financials", return_value={}
+            _common.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(_score, "analyze_stock", fake_analyze), mock.patch.object(
+            _score, "_load_score_financials", return_value={}
         ), mock.patch.object(
-            narrative, "has_live_llm", return_value=False
+            _score, "has_live_llm", return_value=False
         ):
             first = narrative.generate_score_narrative("600519.SH")
             second = narrative.generate_score_narrative("600519.SH")
@@ -170,10 +174,10 @@ class TestValuationNarrative(unittest.TestCase):
     def test_generate_valuation_narrative_and_cache(self):
         fake_analyze = mock.MagicMock(return_value=self._result())
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
-            narrative.paths, "cache_dir", return_value=Path(tmp)
-        ), mock.patch.object(narrative, "analyze_stock", fake_analyze), mock.patch.object(
-            narrative, "_load_score_financials", return_value={}
-        ), mock.patch.object(narrative, "has_live_llm", return_value=False):
+            _common.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(_valuation, "analyze_stock", fake_analyze), mock.patch.object(
+            _valuation, "_load_score_financials", return_value={}
+        ), mock.patch.object(_valuation, "has_live_llm", return_value=False):
             first = narrative.generate_valuation_narrative("600519.SH")
             second = narrative.generate_valuation_narrative("600519.SH")
             third = narrative.generate_valuation_narrative("600519.SH", refresh=True)

@@ -6,6 +6,7 @@ import json
 import re
 
 from fundamental.models import ProductPrice, StockProduct
+from fundamental.providers import ProviderNotImplementedError
 from fundamental.providers._shared import HttpClient, RateLimiter, ResponseCache
 from fundamental.providers._shared.convert import to_float
 from fundamental.providers.registry import register
@@ -54,4 +55,4 @@ class SinaCommodityProvider:
         return results
 
     def search_products(self, keyword: str) -> list[StockProduct]:
-        raise NotImplementedError("商品目录搜索待后续接入，股票↔商品映射见 config/products.toml")
+        raise ProviderNotImplementedError("商品目录搜索待后续接入，股票↔商品映射见 config/products.toml")

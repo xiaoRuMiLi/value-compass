@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 import requests
 
+from fundamental.providers import ProviderRequestError
 from fundamental.providers._shared.cache import ResponseCache
 from fundamental.providers._shared.rate_limit import RateLimiter
 
@@ -98,4 +99,5 @@ class HttpClient:
                     time.sleep(self.backoff * (2**attempt))
                     continue
         assert last_exc is not None
-        raise last_exc
+        # 统一抛出 ProviderError 体系，原始 requests 异常保留为 __cause__
+        raise ProviderRequestError(f"{method} {url} 请求失败: {last_exc}") from last_exc

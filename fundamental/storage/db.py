@@ -30,17 +30,33 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
 
 
 def init_db(db_path: Path | None = None) -> sqlite3.Connection:
-    """按 schema.sql 建库；用 PRAGMA user_version 做轻量迁移。"""
+    """按 schema.sql 建库；用 PRAGMA user_version 做轻量迁移。
+
+    整个迁移过程包在显式事务中：建表/迁移语句与版本号更新要么一起生效，
+    要么一起回滚，避免中途失败留下"表已建、版本号未更新"的半迁移库。
+    """
     conn = connect(db_path)
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    if version < SCHEMA_VERSION:
-        if version == 0:
-            schema = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
-            conn.executescript(schema)
-        else:
-            for current in range(version, SCHEMA_VERSION):
-                for statement in _MIGRATIONS.get(current, []):
-                    conn.execute(statement)
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        conn.commit()
+    if version >= SCHEMA_VERSION:
+        return conn
+
+    # executescript 会先隐式提交已开启的事务，因此把 BEGIN 一并放进脚本，
+    # 保证脚本内所有语句与 version 更新处于同一事务。
+    script_parts = ["BEGIN IMMEDIATE;"]
+    if version == 0:
+        schema = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
+        script_parts.append(schema)
+    else:
+        for current in range(version, SCHEMA_VERSION):
+            script_parts.extend(_MIGRATIONS.get(current, []))
+    script_parts.append(f"PRAGMA user_version = {SCHEMA_VERSION};")
+    script_parts.append("COMMIT;")
+
+    try:
+        conn.executescript("\n".join(script_parts))
+    except Exception:
+        # 迁移失败：回滚并关闭连接（连接所有权未转移给调用方）
+        conn.rollback()
+        conn.close()
+        raise
     return conn

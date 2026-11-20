@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from fundamental.models import IndustryBoard
+from fundamental.providers import ProviderNotImplementedError
 from fundamental.providers._shared import HttpClient, RateLimiter, ResponseCache
 from fundamental.providers._shared.convert import to_float
 from fundamental.providers.registry import register
@@ -61,4 +62,4 @@ class EastmoneyIndustryProvider:
         return results
 
     def fetch_stock_industry(self, symbol: str) -> IndustryBoard:
-        raise NotImplementedError("需先接入公司行业映射（F10 公司资料）")
+        raise ProviderNotImplementedError("需先接入公司行业映射（F10 公司资料）")

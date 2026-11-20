@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fundamental.models import KlineBar, Market, Snapshot, Stock, ValuationPoint
+from fundamental.providers import ProviderConfigError
 from fundamental.providers._shared import HttpClient, RateLimiter, ResponseCache
 from fundamental.providers._shared.convert import to_float
 from fundamental.providers.registry import register
@@ -20,7 +21,7 @@ _SECID_PREFIX = {"SH": "1", "SZ": "0", "BJ": "0", "HK": "116"}
 def _secid(market: Market, code: str) -> str:
     prefix = _SECID_PREFIX.get(market.value)
     if prefix is None:
-        raise ValueError(f"暂不支持的市场: {market.value}")
+        raise ProviderConfigError(f"暂不支持的市场: {market.value}")
     return f"{prefix}.{code}"
 
 

@@ -32,7 +32,7 @@
 - `models.py` 用 dataclass 定义数据模型，禁止用裸字典跨模块传数据（边界见下）。
 - 导入顺序：标准库 → 第三方 → 本地包，分组空行。
 - provider 只依赖 `models` 和 `_shared`；analysis 只依赖 `models`。
-- 统一抛 `ProviderError`，日志统一走 `utils/logging.py`。
+- 统一抛 `ProviderError` 及其子类：配置/注册用 `ProviderConfigError`、上游请求失败用 `ProviderRequestError`、数据缺失或解析失败用 `ProviderDataError`、能力未实现用 `ProviderNotImplementedError`。这些子类同时兼容原 `KeyError`/`ValueError`/`NotImplementedError`，便于旧调用方渐进迁移。日志统一走 `utils/logging.py`。
 
 ### 数据形态边界（"禁止裸字典"的适用范围）
 

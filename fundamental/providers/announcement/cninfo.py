@@ -7,6 +7,7 @@ import re
 from datetime import date, datetime
 
 from fundamental.models import Announcement, DocStatus, DocType, Document, Market, Page
+from fundamental.providers import ProviderDataError
 from fundamental.providers._shared import HttpClient, RateLimiter, ResponseCache
 from fundamental.providers.registry import register
 from fundamental.utils import paths
@@ -156,7 +157,7 @@ class CninfoAnnouncementProvider:
             None,
         )
         if target is None:
-            raise ValueError(f"未找到 {doc_type} {period} 的公告")
+            raise ProviderDataError(f"未找到 {doc_type} {period} 的公告")
         content = self.client.get(target.pdf_url).content
         dest_dir = paths.documents_dir() / code / (period or "misc")
         dest_dir.mkdir(parents=True, exist_ok=True)

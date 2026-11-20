@@ -87,7 +87,7 @@ L5 skill 化 + 验收（串行收尾）
 |---|---|---|---|---|
 | W5.1 | SKILL.md + references 方法论 | 技能壳 | L4 | 已完成 |
 | W5.2 | 技能壳链接进 ~/.codex/skills | 可被 Codex 发现 | W5.1 | 已完成 |
-| W5.3 | 测试补全（单元 + 契约 + web API，46 例） | 茅台单股已验收；白酒行业批量待 L4 多股同步 | L4 | 已完成 |
+| W5.3 | 测试补全（单元 + 契约 + web API，53 例） | 茅台单股已验收；白酒行业批量待 L4 多股同步 | L4 | 已完成 |
 
 ## 备注
 
@@ -103,6 +103,7 @@ L5 skill 化 + 验收（串行收尾）
 
 - L4 六个单元中 W4.1、W4.3–W4.6 均已落地（13 个页面路由 + 静态托管 + 13 张页面及配套 JS/CSS），原"待办"标记过时，改为"已完成"。
 - W4.2 保持"进行中"：CONTRACTS 第 5 节定义 48 个 API 端点，当前实现 23 个（其中 20 个在契约内、3 个为契约外扩展：`/stock/{symbol}/analysis`、`/stock/{symbol}/calendar`、`/stocks`）。缺口集中在单数据源明细端点（sentiment/research/litigations/dividends/capital-flows 等）与部分分析端点（score/valuation/masters 等），其分析能力多数已由聚合端点 `/stock/{symbol}/analysis` 覆盖，但独立端点尚未暴露。
-- W5.3 测试数由 17 例增至 46 例：`test_analysis` 15 + `test_llm` 10 + `test_narrative` 7 + `test_registry` 4 + `test_storage` 1 + `test_web_api` 9（web 层路由函数成功/错误路径 + app 路由注册契约）。`python -m unittest discover -s tests` 全部通过。
+- W5.3 测试数由 17 例增至 53 例：`test_analysis` 15 + `test_llm` 10 + `test_narrative` 7 + `test_registry` 4 + `test_storage` 3 + `test_web_api` 9 + `test_exceptions` 5（web API + provider 异常体系）。`python -m unittest discover -s tests` 全部通过。
 - 前端公共模块已抽取：`pages/static/js/api.js`（统一 fetch 封装 `VC.getJSON`）、`common.js`（代码符号归一化 `VC.normalize`），13 个页面脚本删除本地重复实现；`el` 因各页签名/默认值不同保留本地。CONVENTIONS 第 4 节已补充"数据形态边界"表，明确 dict 允许的边界（聚合出口/存储行）。
 - charts 页在 CONTRACTS 第 6 节标注为"可选"，实际未实现，不影响 W4.6 完成判定。
+- P2 内部治理（同日完成）：`services/narrative.py`（794 行）拆为 `narrative/` 子包（门面 + 共享工具 + 数据加载 + 三类叙述生成模块）；provider 异常统一到 `ProviderError` 层次（Config/Request/Data/NotImplemented 四类，兼容原 KeyError/ValueError/NotImplementedError）；SQLite 迁移加显式事务，失败时回滚并关闭连接，避免半迁移库。

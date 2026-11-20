@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fundamental.models import CirculatingHolder, FundHolding, HolderCategory
+from fundamental.providers import ProviderNotImplementedError
 from fundamental.providers._shared import HttpClient, RateLimiter, ResponseCache
 from fundamental.providers._shared.convert import to_float
 from fundamental.providers.registry import register
@@ -61,4 +62,4 @@ class EastmoneyHoldingProvider:
         return results
 
     def fetch_fund_holdings(self, symbol: str, end_date: str | None = None) -> list[FundHolding]:
-        raise NotImplementedError("基金持仓需解析天天基金 HTML 或 F10 jjcg，待后续实现")
+        raise ProviderNotImplementedError("基金持仓需解析天天基金 HTML 或 F10 jjcg，待后续实现")

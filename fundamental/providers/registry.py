@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
+from fundamental.providers import ProviderConfigError
+
 _REGISTRY: dict[str, dict[str, type]] = {}
 
 
@@ -18,11 +20,11 @@ def register(capability: str, source: str) -> Callable[[type], type]:
 def get_provider_class(capability: str, source: Optional[str] = None) -> type:
     sources = _REGISTRY.get(capability)
     if not sources:
-        raise KeyError(f"能力未注册: {capability}")
+        raise ProviderConfigError(f"能力未注册: {capability}")
     if source is None:
         return next(iter(sources.values()))
     if source not in sources:
-        raise KeyError(f"能力 {capability} 未注册数据源: {source}")
+        raise ProviderConfigError(f"能力 {capability} 未注册数据源: {source}")
     return sources[source]
 
 
@@ -37,7 +39,7 @@ def registered_sources(capability: str) -> list[str]:
 def primary_source(settings: Any, capability: str) -> str:
     source = settings.get(f"providers.{capability}.primary")
     if not source:
-        raise ValueError(f"providers.toml 缺少 providers.{capability}.primary")
+        raise ProviderConfigError(f"providers.toml 缺少 providers.{capability}.primary")
     return str(source)
 
 
