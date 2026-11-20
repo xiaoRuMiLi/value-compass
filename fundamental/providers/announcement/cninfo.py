@@ -27,6 +27,10 @@ _DOC_KEYWORDS = {
 
 
 def _match_doc_type(title: str, doc: DocType) -> bool:
+    # 原文取证需要完整中文正文：英文版无中文表述，摘要缺管理层讨论与分析章节，
+    # 两者都不适合作为证据来源，统一排除（中文版通常紧随其后）。
+    if "英文版" in title or "摘要" in title or "English" in title:
+        return False
     if doc == DocType.ANNUAL_REPORT:
         return "年度报告" in title and "半年度报告" not in title
     if doc == DocType.SEMI_REPORT:

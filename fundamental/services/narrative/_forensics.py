@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Type, TypeVar
@@ -21,6 +22,7 @@ from fundamental.models import (
     BehaviorType,
     CorporateAction,
     CorporateActionType,
+    DividendRecord,
     EarningsForecast,
     FinancialReport,
     ForecastType,
@@ -44,6 +46,9 @@ from fundamental.utils.intel import load_intel_digest
 from fundamental.utils.prompts import load_prompt
 from fundamental.utils.symbols import parse_symbol
 
+from ._evidence import retrieve_evidence
+from ._quality import excerpt_quality as _excerpt_quality
+from ._report_mining import mine_report_evidence
 from ._common import (
     _build_prompt,
     _forensics_cache_path,
@@ -54,7 +59,10 @@ from ._common import (
 
 # 提示词/输出结构升级时递增，使旧报告缓存失效。
 # 阈值改动不改变版本号，而是由 thresholds_fingerprint 让缓存自动失效。
-_FORENSICS_VERSION = 3
+_FORENSICS_VERSION = 10
+
+# 喂给最终 LLM 的新线索条数上限（控制上下文预算，全文仍写进 output 供前端展示）
+_MAX_MINING_FINDINGS_IN_FACTS = 5
 
 _JUDGEMENTS = {"confirmed", "suspicious", "normal", "unverifiable"}
 _CONFIDENCES = {"high", "medium", "low"}
@@ -116,6 +124,7 @@ def _load_inputs(symbol: str, db_path: Path | None = None) -> dict[str, Any] | N
                 _to(EarningsForecast, r, {"forecast_type": ForecastType})
                 for r in rows("earnings_forecasts")
             ],
+            "dividends": [_to(DividendRecord, r) for r in rows("dividends")],
             "insider_trades": [
                 _to(InsiderTrade, r, {"direction": InsiderDirection})
                 for r in rows("insider_trades")
@@ -133,7 +142,73 @@ def _load_inputs(symbol: str, db_path: Path | None = None) -> dict[str, Any] | N
 # ---------- 事实组装 ----------
 
 
-def _brief_signal(signal: dict[str, Any]) -> dict[str, Any]:
+def _merge_evidence(
+    mined: dict[str, Any],
+    keyword_map: dict[str, list[dict[str, str]]],
+) -> dict[str, list[dict[str, str]]]:
+    """合并两路证据：LLM 分段摘录优先，关键词检索兜底，统一成一种结构。
+
+    - mined.signal_evidence: {sid: [{quote, section, source, period, why}]}
+    - keyword_map: {sid: [{text, source, period, keywords}]}
+
+    统一输出 {sid: [{text, source, period, why, method}]}，供 _brief_signal 挂载。
+    """
+    merged: dict[str, list[dict[str, str]]] = {}
+    mined_signals = mined.get("signal_evidence") or {}
+    all_ids = set(mined_signals) | set(keyword_map)
+    for sid in all_ids:
+        items: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for hit in mined_signals.get(sid, []):
+            text = str(hit.get("quote") or "").strip()
+            if not text or text[:60] in seen:
+                continue
+            seen.add(text[:60])
+            items.append(
+                {
+                    "text": text,
+                    "source": f"{hit.get('source', '')}·{hit.get('section', '')}".strip("·"),
+                    "period": str(hit.get("period") or ""),
+                    "why": str(hit.get("why") or ""),
+                    "method": "llm_mining",
+                    "is_current": bool(hit.get("is_current", False)),
+                    "report_label": str(hit.get("report_label") or ""),
+                    "seq": int(hit.get("seq") or 0),
+                }
+            )
+        for hit in keyword_map.get(sid, []):
+            text = str(hit.get("text") or "").strip()
+            if not text or text[:60] in seen:
+                continue
+            seen.add(text[:60])
+            items.append(
+                {
+                    "text": text,
+                    "source": str(hit.get("source") or ""),
+                    "period": str(hit.get("period") or ""),
+                    "why": str(hit.get("keywords") or ""),
+                    "method": "keyword",
+                    "is_current": bool(hit.get("is_current", False)),
+                    "report_label": str(hit.get("report_label") or ""),
+                    "seq": 0,
+                }
+            )
+        if items:
+            # 排序：当期证据优先（最新季报/当期年报），同档内按报告期时效分
+            # （最新季报 > 年报 > 历史）排，最后按信息密度（解释性短句优先）。
+            items.sort(key=lambda it: (
+                not it.get("is_current", False),
+                -it.get("seq", 0),
+                -_excerpt_quality(it["text"]),
+            ))
+            merged[sid] = items[:8]
+    return merged
+
+
+def _brief_signal(
+    signal: dict[str, Any],
+    evidence_map: dict[str, list[dict[str, str]]] | None = None,
+) -> dict[str, Any]:
     keys = (
         "id", "category", "severity", "title", "period", "facts",
         "trigger", "description", "evidence_refs", "consolidated",
@@ -145,6 +220,10 @@ def _brief_signal(signal: dict[str, Any]) -> dict[str, Any]:
             {"period": o.get("period"), "severity": o.get("severity"), "facts": (o.get("facts") or [])[:3]}
             for o in occurrences[:8]
         ]
+    # 公司原文证据：挂到对应风险点，LLM 逐条剖析时可引用公司自己的解释
+    evidence = (evidence_map or {}).get(str(signal.get("id") or "")) or []
+    if evidence:
+        out["official_explanation"] = evidence
     return out
 
 
@@ -155,20 +234,54 @@ def _facts(
     intel: dict[str, Any] | None,
     max_signals: int,
     max_anomalies: int,
+    evidence_map: dict[str, list[dict[str, str]]] | None = None,
+    mining: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ev = scan["evidence"]
     intel = intel or {}
+    evidence_map = evidence_map or {}
+    covered = sum(1 for s in scan["signals"][:max_signals] if s["id"] in evidence_map)
     return {
         "instruction": (
             "以下全部数据由代码从公开财报与公开资料确定性计算得出，不是模型推测。"
             "请逐条解释、交叉印证，不得引入任何未提供的事实，不得下法律定性结论。"
+            "signal.official_explanation 是公司财报原文中对该类波动的官方说明，"
+            "是解释该风险点的首选依据：引用时必须注明来自公司财报原文；"
+            "若某条风险点没有 official_explanation，就明确写「财报原文中未找到相关说明」，"
+            "不要臆造公司的解释。"
+            "report_mining.source_docs 是本次通读的多份财报，既有最新季报也有年报："
+            "季报（如 2026 三季报/中报/一季报）反映当下经营、时效最新，"
+            "年报（如 2025 年报）权威详细、含公司对全年波动的归因，其余更早年报是历史佐证。"
+            "判断『现在怎么样、拐点是否延续』必须优先引用最新季报，"
+            "解释『全年波动原因』则引用年报的公司自述；两者结合，不要只用旧年报下当期结论。"
+            "每条证据都带 report_label（报告期标签）与 is_current，引用时须注明来自哪一期。"
+            "report_mining.report_summaries 是公司财报分段后的客观总结，"
+            "report_mining.new_findings 是模型通读原文后发现、但确定性扫描未覆盖的线索"
+            "（每条都附了原文摘录）。verdict.essence 作为全文总纲，必须同时纳入规则信号与"
+            "new_findings 中最实质的发现——特别是带具体数字的线索（关联方采购/销售占比、"
+            "研发资本化比重、财务公司信贷、未履行承诺等），不要只谈治理与市场预期而遗漏它们，"
+            "否则总述会与下方剖析对不上。新线索只作提示，不得当作已确认事实，"
+            "引用须注明来自财报原文摘录。"
         ),
         "company": {"symbol": symbol, "name": inputs["name"], "industry": inputs["industry"]},
         "window": scan["window"],
         "periods": scan["periods"],
         "summary": scan["summary"],
-        "signals": [_brief_signal(s) for s in scan["signals"][:max_signals]],
+        "signals": [_brief_signal(s, evidence_map) for s in scan["signals"][:max_signals]],
         "signals_omitted": max(0, len(scan["signals"]) - max_signals),
+        "official_explanation_coverage": {
+            "signals_with_evidence": covered,
+            "signals_total": min(len(scan["signals"]), max_signals),
+        },
+        "report_mining": {
+            "source_doc": (mining or {}).get("source_doc", ""),
+            "period": (mining or {}).get("period", ""),
+            "latest_report": (mining or {}).get("latest_report", ""),
+            "latest_period": (mining or {}).get("latest_period", ""),
+            "source_docs": (mining or {}).get("source_docs", []),
+            "report_summaries": (mining or {}).get("summaries", [])[:8],
+            "new_findings": (mining or {}).get("new_findings", [])[:_MAX_MINING_FINDINGS_IN_FACTS],
+        },
         "anomalies": scan["anomalies"][:max_anomalies],
         "evidence": {
             "regulatory": (ev.get("regulatory") or [])[:8],
@@ -451,6 +564,7 @@ def generate_financial_forensics(
         integrity=inputs["integrity"],
         announcements=inputs["announcements"],
         forecasts=inputs["forecasts"],
+        dividends=inputs.get("dividends"),
         insider_trades=inputs["insider_trades"],
         pledges=inputs["pledges"],
         corporate_actions=inputs["corporate_actions"],
@@ -459,7 +573,45 @@ def generate_financial_forensics(
         recent_years=recent_years,
         config=cfg,
     )
-    facts = _facts(symbol, inputs, scan, intel, max_signals, max_anomalies)
+    # 财报原文证据：先跑关键词检索（离线、快），再跑分段挖掘（LLM、贵）。
+    # 两者都失败不阻断主流程——没有原文时 LLM 仍按扫描数据解释。
+    try:
+        keyword_map = retrieve_evidence(
+            symbol, scan["signals"][:max_signals], db_path=db_path
+        )
+    except Exception:  # noqa: BLE001
+        keyword_map = {}
+
+    # 分段挖掘：带风险点逐段摘录+总结，能发现扫描器未覆盖的新线索。
+    # 结果自带磁盘缓存（按财报指纹+风险点指纹失效），refresh=true 时强制重跑。
+    mining: dict[str, Any] = {}
+    try:
+        mining = mine_report_evidence(
+            symbol, scan["signals"][:max_signals], db_path=db_path, refresh=refresh
+        )
+    except Exception:  # noqa: BLE001
+        mining = {}
+
+    # 关键词检索本身不带当期标记，用挖掘出的"最新报告期年份"给命中打标：
+    # 最新季报（如 2026）与当期年报（如 2025）都算当期证据，历史年份才是佐证。
+    # 这样"当下为主"的排序对两路证据都生效，且 2026 季报不会被误降级。
+    current_years = {
+        str(y) for y in (
+            (mining or {}).get("latest_period", ""),
+            (mining or {}).get("period", ""),
+        ) if y
+    }
+    if current_years:
+        for hits in keyword_map.values():
+            for hit in hits:
+                hit["is_current"] = str(hit.get("period") or "") in current_years
+
+    evidence_map = _merge_evidence(mining, keyword_map)
+
+    facts = _facts(
+        symbol, inputs, scan, intel, max_signals, max_anomalies,
+        evidence_map=evidence_map, mining=mining,
+    )
 
     report: dict[str, Any] | None = None
     source = "template"
@@ -497,6 +649,8 @@ def generate_financial_forensics(
         "thresholds": cfg.as_dict(),
         "company": {"name": inputs["name"], "industry": inputs["industry"]},
         "scan": scan,
+        "official_explanations": evidence_map,
+        "report_mining": mining,
         "citations": _citations(scan, intel),
         "coverage": scan["coverage"],
         **report,

@@ -1013,6 +1013,157 @@ details[open] > .fx-sig-head::before { content: "▾"; }
   color: #334155;
 }
 
+.fx-official {
+  margin-top: 12px;
+  padding: 11px 13px;
+  background: #f0f7ff;
+  border: 1px solid #dbeafe;
+  border-left: 3px solid #93c5fd;
+  border-radius: 6px;
+}
+
+.fx-official-none {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
+.fx-official-item + .fx-official-item {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px dashed #dbeafe;
+}
+
+.fx-official-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.fx-official-source {
+  font-size: 11px;
+  font-weight: 600;
+  color: #1e40af;
+}
+
+.fx-official-period,
+.fx-official-kw,
+.fx-official-method,
+.fx-official-current {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.fx-official-current {
+  padding: 1px 6px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.fx-official-kw {
+  padding: 1px 6px;
+  background: #dbeafe;
+  border-radius: 4px;
+}
+
+.fx-official-method {
+  padding: 1px 6px;
+  background: #dcfce7;
+  color: #166534;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.fx-official-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #1e3a5f;
+}
+
+.fx-mining {
+  margin: 16px 0;
+  padding: 14px 16px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+}
+
+.fx-mining-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #92400e;
+}
+
+.fx-mining-docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.fx-mining-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fx-mining-item {
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #fef3c7;
+  border-radius: 6px;
+}
+
+.fx-mining-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.fx-mining-desc {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #78350f;
+  flex: 1;
+  min-width: 200px;
+}
+
+.fx-mining-quote {
+  margin: 8px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid #fbbf24;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #57534e;
+}
+
+.fx-quote-kind {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px solid #d6d3d1;
+  border-radius: 4px;
+  font-size: 10px;
+  color: #78716c;
+  background: #fafaf9;
+  white-space: nowrap;
+}
+
+.fx-mining-meta {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #a16207;
+}
+
 .fx-analysis {
   padding: 12px 14px;
   background: #f8fafc;
@@ -1077,6 +1228,21 @@ details[open] > .fx-sig-head::before { content: "▾"; }
 .fx-details > summary::-webkit-details-marker { display: none; }
 .fx-details > summary::before { content: "▸ "; }
 .fx-details[open] > summary::before { content: "▾ "; }
+
+/* 辅助信息（参考资料 / 数据覆盖）默认折叠，展开后内容留内边距 */
+.fx-aux-details > summary { color: #64748b; }
+.fx-aux-content,
+.fx-aux-details > .fx-cite-list { padding: 4px 14px 14px; }
+
+/* 分段总结原文（默认折叠） */
+.fx-mining-summaries { margin-top: 14px; border-top: 1px solid #e5e7eb; padding-top: 10px; }
+.fx-aux-hint { margin-left: 8px; font-size: 11px; color: #94a3b8; font-weight: 400; }
+.fx-summary-row { padding: 10px 0; border-bottom: 1px dashed #e7e5e4; }
+.fx-summary-row:last-child { border-bottom: none; }
+.fx-summary-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 5px; }
+.fx-summary-label { font-size: 11px; color: #0f6e56; }
+.fx-summary-section { font-size: 10px; color: #94a3b8; }
+.fx-summary-text { margin: 0; font-size: 12px; line-height: 1.75; color: #57534e; }
 
 .fx-table {
   width: 100%;

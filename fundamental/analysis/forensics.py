@@ -26,6 +26,7 @@ from fundamental.models import (
     Announcement,
     AuditOpinion,
     CorporateAction,
+    DividendRecord,
     EarningsForecast,
     FinancialReport,
     InsiderTrade,
@@ -176,6 +177,63 @@ def _anomaly(
     }
 
 
+# ---------- 业绩拐点（跨期模式识别） ----------
+
+
+def _detect_growth_inflection(
+    series: list[dict[str, Any]],
+    window_start: int,
+    cfg: ForensicsConfig,
+) -> dict[str, Any] | None:
+    """识别「由多年高增长平台转入持续负增长」的业绩拐点。
+
+    这是一个**跨期模式**，不是单点规则：
+      1. 拐点期本身净利同比 < 0；
+      2. 拐点期之前连续 ``inflection_platform_periods`` 期净利同比均 >
+         ``inflection_platform_floor_pct``，且这段平台均值 > ``profit_turn_high_pct``
+         ——确认此前确实处于"多年高增长"而非低基数波动；
+      3. 从拐点期到最新，净利同比为负的期数 >= ``inflection_min_negative_periods``
+         ——确认转负是趋势而非孤立一期。
+
+    只在结论窗口（window_start..末尾）内寻找拐点期，取最近一个满足条件的。
+    返回分析字典（不含 id），由调用方构造 signal / anomaly。
+    """
+    n = len(series)
+    need = cfg.inflection_platform_periods
+    floor = cfg.inflection_platform_floor_pct
+    latest: dict[str, Any] | None = None
+
+    for i in range(max(window_start, need), n):
+        cur = series[i]["net_profit_yoy"]
+        if cur is None or cur >= 0:
+            continue
+        platform = series[i - need:i]
+        yoys = [p["net_profit_yoy"] for p in platform]
+        if any(y is None or y <= floor for y in yoys):
+            continue
+        avg = sum(yoys) / len(yoys)  # type: ignore[arg-type]
+        if avg <= cfg.profit_turn_high_pct:
+            continue
+        # 转负后的持续性：从拐点期到最新，净利同比为负的期数
+        trailing = series[i:]
+        neg_count = sum(
+            1 for t in trailing
+            if t["net_profit_yoy"] is not None and t["net_profit_yoy"] < 0
+        )
+        if neg_count < cfg.inflection_min_negative_periods:
+            continue
+        latest = {
+            "turn": series[i],
+            "turn_index": i,
+            "platform": platform,
+            "platform_yoys": yoys,
+            "platform_avg": avg,
+            "neg_count": neg_count,
+            "trailing": trailing,
+        }
+    return latest
+
+
 # ---------- 财报序列扫描 ----------
 
 
@@ -229,7 +287,6 @@ def _scan_financial_series(
                 "audit_opinion": row.audit_opinion,
             }
         )
-
     # 全历史用于计算 MAD 离群基线；只对最近 lookback 期产出信号
     start = max(1, len(series) - lookback)
     coverage["performed"].append(
@@ -476,6 +533,55 @@ def _scan_financial_series(
                     [ref],
                 )
             )
+
+    # 10b. 业绩拐点：由多年高增长平台转入持续负增长（跨期模式识别）。
+    # 与逐期单点规则不同，这里要求"先有达标的高增长平台、再转负、且转负持续"，
+    # 只产出一条信号（拐点确认期），并把转负后的持续期数写进事实，避免逐期重复报。
+    inflection = _detect_growth_inflection(series, start, cfg)
+    if inflection:
+        turn = inflection["turn"]
+        platform_yoys = inflection["platform_yoys"]
+        avg = inflection["platform_avg"]
+        trailing = inflection["trailing"]
+        neg_count = inflection["neg_count"]
+        swing = turn["net_profit_yoy"] - avg  # type: ignore[operator]
+        trailing_desc = "、".join(
+            f"{t['period']} {_pct(t['net_profit_yoy'])}"
+            for t in trailing if t["net_profit_yoy"] is not None
+        )
+        signals.append(
+            _signal(
+                next_signal(), "业绩波动", "high", "业绩拐点：高增长转负", turn["period"],
+                [
+                    {"label": "拐点确认期", "value": turn["period"]},
+                    {"label": "此前高增长平台", "value": f"{len(platform_yoys)} 期，均值 {_pct(avg)}"},
+                    {"label": "平台期净利同比", "value": " / ".join(_pct(y) for y in platform_yoys)},
+                    {"label": "拐点期净利同比", "value": _pct(turn["net_profit_yoy"])},
+                    {"label": "较平台均值变化", "value": _pp(swing)},
+                    {"label": "转负后持续", "value": f"近 {len(trailing)} 期中 {neg_count} 期为负"},
+                    {"label": "转负后各期", "value": trailing_desc},
+                ],
+                f"此前连续 {len(platform_yoys)} 期净利同比均 > {cfg.inflection_platform_floor_pct:g}% "
+                f"且均值 {_pct(avg)} > {cfg.profit_turn_high_pct:g}%，本期转负，"
+                f"且此后 >= {cfg.inflection_min_negative_periods} 期仍为负",
+                f"{turn['period']} 结束了一段连续 {len(platform_yoys)} 期、均值 {_pct(avg)} 的高增长，"
+                f"归母净利同比转为 {_pct(turn['net_profit_yoy'])}（较平台均值 {_pp(swing)}）；"
+                f"此后近 {len(trailing)} 期中有 {neg_count} 期仍为负（{trailing_desc}），"
+                "构成业绩拐点而非单期波动。需去拐点期与当期年报原文找公司自己的原因说明，"
+                "并核对是需求、价格、渠道、产品结构还是基数效应所致。",
+                [f"financials:{turn['report_date']}"] + [
+                    f"financials:{p['report_date']}" for p in inflection["platform"][-2:]
+                ],
+            )
+        )
+        anomalies.append(
+            _anomaly(
+                next_anomaly(), "归母净利润同比（业绩拐点）", turn["period"],
+                turn["net_profit_yoy"], avg, swing, "%",
+                f"高增长平台均值 > {cfg.profit_turn_high_pct:g}% 且本期转负、持续为负", "down",
+                "跨期模式；平台均值对拐点期",
+            )
+        )
 
     # 11. 连续亏损（按报告期序列）
     loss_window = cfg.loss_lookback_periods
@@ -944,6 +1050,242 @@ def _scan_capital_moves(
     }
 
 
+# ---------- 资本运作与治理线索扫描 ----------
+
+
+# 结构化数据里可离群检测的三类：item_code → (中文名, 取数方向)
+_CAPEX_ITEM_CODES = {
+    "NETCASH_INVEST": ("投资活动现金净流出", "abs"),  # 现金流为负=净流出，取绝对值
+    "CIP": ("在建工程", "raw"),
+}
+
+
+def _annual_series_by_code(
+    statement_items: list[StatementItem], code: str, *, absolute: bool = False
+) -> list[tuple[int, float]]:
+    """按年报(FY)取某科目的历年值，返回 [(年份, 值)] 升序。
+
+    只取年报口径，避免 Q1/H1/Q3 累计口径与年报混用制造假异常。
+    """
+    points: dict[int, float] = {}
+    for item in statement_items or []:
+        if item.item_code != code or item.item_value is None:
+            continue
+        rt = item.report_type.value if hasattr(item.report_type, "value") else str(item.report_type)
+        if rt != "FY":
+            continue
+        year = int(str(item.report_date)[:4])
+        value = abs(item.item_value) if absolute else item.item_value
+        points[year] = float(value)  # 同年多条取最后一条（通常为准）
+    return sorted(points.items())
+
+
+def _scan_capital_operations(
+    dividends: list[DividendRecord],
+    statement_items: list[StatementItem],
+    announcements: list[Announcement],
+    signals: list[dict[str, Any]],
+    anomalies: list[dict[str, Any]],
+    coverage: dict[str, Any],
+    cfg: ForensicsConfig | None = None,
+) -> dict[str, Any]:
+    """资本运作与治理线索：分红/扩股/资本支出用自身历史离群，事件类用公告关键词。
+
+    所有输出都是「值得让 LLM 去看财报原文」的线索，不代表存在问题。
+    检测口径与项目其他扫描一致：以公司自身历史为基线（中位数 + MAD），
+    不套跨行业硬阈值，避免把高分红行业误判为异常。
+    """
+    cfg = cfg or ForensicsConfig()
+    result: dict[str, Any] = {
+        "dividend_outliers": [], "share_capital_jumps": [],
+        "capex_outliers": [], "goodwill_outliers": [], "action_hits": [],
+    }
+
+    # ---- 1. 突击分红：每股派现按年份聚合（同年多次求和），最新年度相对历史 MAD ----
+    by_year: dict[int, float] = defaultdict(float)
+    for d in dividends or []:
+        if d.cash_per_share is None or not d.plan_notice_date:
+            continue
+        try:
+            year = int(str(d.plan_notice_date)[:4])
+        except (ValueError, IndexError):
+            continue
+        by_year[year] += float(d.cash_per_share)
+    dividend_series = sorted(by_year.items())
+    if len(dividend_series) >= 3:
+        years = [y for y, _ in dividend_series]
+        values = [v for _, v in dividend_series]
+        cur_year, cur_val = dividend_series[-1]
+        hist = values[:-1]
+        outlier, median, mad = _mad_outlier(
+            hist, cur_val, multiplier=cfg.dividend_mad_multiplier,
+            min_samples=cfg.mad_min_samples,
+        )
+        if outlier and cur_val > median:
+            pct = (cur_val - median) / median * 100 if median else None
+            signals.append(_signal(
+                "CAPOPS-DIV", "资本运作", "medium", "异常突击分红",
+                f"{cur_year} 年",
+                [
+                    {"label": f"{cur_year}年每股派现(合计)", "value": f"{cur_val:.3f} 元"},
+                    {"label": "历史年度中位数", "value": f"{median:.3f} 元"},
+                    {"label": "偏离历史", "value": f"+{pct:.1f}%" if pct is not None else "数据缺失"},
+                ],
+                f"每股派现相对历史中位数偏离 > {cfg.dividend_mad_multiplier:g}×MAD 且高于历史",
+                f"{cur_year} 年每股派现合计 {cur_val:.3f} 元，明显高于历史年度中位数 "
+                f"{median:.3f} 元（偏离 {pct:.1f}%）。高分红可能反映现金流充裕与股东回报意愿，"
+                "也可能在盈利下滑期形成「突击分红」，需结合当年净利润、经营现金流与分红方案原文判断。",
+                [f"dividends:{cur_year}"],
+            ))
+            result["dividend_outliers"].append(
+                {"year": cur_year, "value": cur_val, "median": median, "pct": pct}
+            )
+        else:
+            coverage["skipped"].append(
+                {"check": "异常突击分红", "reason": f"最新年度派现未显著偏离历史（{len(hist)} 个历史年度）"}
+            )
+    else:
+        coverage["skipped"].append({"check": "异常突击分红", "reason": "分红年度样本不足 3 年"})
+
+    # ---- 2. 扩充股本：SHARE_CAPITAL 年报序列同比增幅 ----
+    share_series = _annual_series_by_code(statement_items, "SHARE_CAPITAL")
+    if len(share_series) >= 2:
+        cur_year, cur_share = share_series[-1]
+        prev_year, prev_share = share_series[-2]
+        growth = _yoy(cur_share, prev_share)
+        if growth is not None and growth > cfg.share_capital_growth_pct:
+            signals.append(_signal(
+                "CAPOPS-SHARE", "资本运作", "medium", "扩充股本",
+                f"{prev_year}→{cur_year} 年报",
+                [
+                    {"label": f"{cur_year}年股本", "value": f"{cur_share / 1e8:,.2f} 亿股"},
+                    {"label": f"{prev_year}年股本", "value": f"{prev_share / 1e8:,.2f} 亿股"},
+                    {"label": "同比增幅", "value": _pct(growth)},
+                ],
+                f"股本同比增幅 > {cfg.share_capital_growth_pct:g}%",
+                f"股本由 {prev_year} 年的 {prev_share / 1e8:,.2f} 亿股变动至 {cur_year} 年的 "
+                f"{cur_share / 1e8:,.2f} 亿股（{_pct(growth)}）。扩股可能来自增发、配股、"
+                "转增或股权激励行权，需结合公告与稀释效应判断对每股收益的影响。",
+                [f"statement_items:SHARE_CAPITAL:{cur_year}"],
+            ))
+            result["share_capital_jumps"].append(
+                {"year": cur_year, "growth": growth, "from": prev_share, "to": cur_share}
+            )
+        else:
+            coverage["skipped"].append({"check": "扩充股本", "reason": "股本同比未显著增长"})
+    else:
+        coverage["skipped"].append({"check": "扩充股本", "reason": "股本年报样本不足"})
+
+    # ---- 3. 异常资本支出：投资现金净流出 + 在建工程，各自相对历史 MAD ----
+    capex_found = False
+    for code, (label, mode) in _CAPEX_ITEM_CODES.items():
+        series = _annual_series_by_code(statement_items, code, absolute=(mode == "abs"))
+        if len(series) < 3:
+            continue
+        years = [y for y, _ in series]
+        values = [v for _, v in series]
+        cur_year, cur_val = series[-1]
+        hist = values[:-1]
+        outlier, median, mad = _mad_outlier(
+            hist, cur_val, multiplier=cfg.capex_mad_multiplier,
+            min_samples=cfg.mad_min_samples,
+        )
+        if outlier and cur_val > median:
+            capex_found = True
+            pct = (cur_val - median) / median * 100 if median else None
+            anomalies.append(_anomaly(
+                f"CAPX{len(anomalies) + 1:03d}", label, f"{cur_year} 年报",
+                cur_val, median, pct, "元",
+                f"相对历史 > {cfg.capex_mad_multiplier:g}×MAD",
+                "up", "年报口径，自身历史基线",
+            ))
+            result["capex_outliers"].append(
+                {"item": label, "year": cur_year, "value": cur_val, "median": median, "pct": pct}
+            )
+    if not capex_found:
+        coverage["skipped"].append({"check": "异常资本支出", "reason": "投资现金流/在建工程未显著偏离历史"})
+    else:
+        # 汇总成一条信号（明细已在 anomalies 中）
+        items = result["capex_outliers"]
+        desc = "；".join(
+            f"{i['item']}{i['year']}年 {_yi(i['value'])}（历史中位 {_yi(i['median'])}，偏高 {i['pct']:.0f}%）"
+            for i in items if i.get("pct") is not None
+        )
+        signals.append(_signal(
+            "CAPOPS-CAPEX", "资本运作", "medium", "异常资本支出",
+            " / ".join(f"{i['year']}" for i in items),
+            [{"label": "偏离项数", "value": f"{len(items)} 项"},
+             {"label": "明细", "value": desc[:160]}],
+            f"投资现金流出/在建工程相对自身历史 > {cfg.capex_mad_multiplier:g}×MAD",
+            f"资本支出相关科目相对公司自身历史明显偏高：{desc}。"
+            "扩产投入可能支撑未来增长，也可能形成过剩产能与减值压力，"
+            "需结合在建工程转固节奏与投资项目收益在财报原文中核对。",
+            [f"statement_items:{i['item']}" for i in items],
+        ))
+
+    # ---- 4. 商誉突增：收购留下的会计痕迹 ----
+    goodwill_series = _annual_series_by_code(statement_items, "GOODWILL")
+    if len(goodwill_series) >= 3:
+        cur_year, cur_gw = goodwill_series[-1]
+        hist_vals = [v for _, v in goodwill_series[:-1]]
+        outlier, median, mad = _mad_outlier(
+            hist_vals, cur_gw, multiplier=cfg.goodwill_mad_multiplier,
+            min_samples=cfg.mad_min_samples,
+        )
+        if outlier and cur_gw > median:
+            signals.append(_signal(
+                "CAPOPS-GW", "资本运作", "medium", "商誉显著增加（收购线索）",
+                f"{cur_year} 年报",
+                [{"label": f"{cur_year}年商誉", "value": _yi(cur_gw)},
+                 {"label": "历史中位数", "value": _yi(median)}],
+                f"商誉相对自身历史 > {cfg.goodwill_mad_multiplier:g}×MAD",
+                f"{cur_year} 年商誉 {_yi(cur_gw)}，明显高于历史中位数 {_yi(median)}。"
+                "商誉增加通常来自溢价收购，需关注被收购方的业绩承诺、"
+                "未来减值风险与是否属于跨界并购，具体交易对价与原因见财报原文。",
+                [f"statement_items:GOODWILL:{cur_year}"],
+            ))
+            result["goodwill_outliers"].append({"year": cur_year, "value": cur_gw, "median": median})
+        else:
+            coverage["skipped"].append({"check": "商誉突增", "reason": "商誉未显著偏离历史"})
+    else:
+        coverage["skipped"].append({"check": "商誉突增", "reason": "商誉年报样本不足 3 年"})
+
+    # ---- 5. 事件类线索：公告标题关键词（收购/跨界/股权激励/关联交易） ----
+    keyword_groups = cfg.capital_action_keywords or {}
+    for label, keywords in keyword_groups.items():
+        hits = []
+        for ann in announcements or []:
+            title = ann.title or ""
+            matched = [kw for kw in keywords if kw in title]
+            if not matched:
+                continue
+            hits.append({
+                "date": ann.publish_date or "",
+                "title": title,
+                "keywords": ",".join(matched[:3]),
+                "url": ann.source_url or ann.pdf_url or "",
+            })
+        if hits:
+            hits.sort(key=lambda h: h["date"], reverse=True)
+            signals.append(_signal(
+                f"CAPOPS-EVT-{label}", "资本运作", "low", label,
+                f"{min(h['date'] for h in hits if h['date']) or '-'} ~ {max(h['date'] for h in hits if h['date']) or '-'}",
+                [{"label": "命中公告数", "value": f"{len(hits)} 条"},
+                 {"label": "最近一条", "value": hits[0]["title"][:40]}],
+                f"公告标题命中「{'/'.join(keywords[:3])}」等关键词",
+                f"共 {len(hits)} 条公告标题涉及「{label}」（关键词命中仅为线索，"
+                "不构成对公司行为的定性）。需结合公告与财报原文确认交易实质、金额与审批程序。",
+                [f"announcement:{h['date']}:{h['title'][:24]}" for h in hits[:5]],
+            ))
+            result["action_hits"].extend([{**h, "type": label} for h in hits])
+        else:
+            coverage["skipped"].append({"check": f"{label}公告线索", "reason": "公告标题无关键词命中"})
+
+    if any(result.values()):
+        coverage["performed"].append("资本运作与治理线索扫描（分红/扩股/资本支出/商誉离群 + 公告关键词）")
+    return result
+
+
 def _scan_price_reaction(
     kline: list[KlineBar],
     announcements: list[Announcement],
@@ -1195,6 +1537,7 @@ def scan_forensics(
     integrity: list[IntegrityRecord] | None = None,
     announcements: list[Announcement] | None = None,
     forecasts: list[EarningsForecast] | None = None,
+    dividends: list[DividendRecord] | None = None,
     insider_trades: list[InsiderTrade] | None = None,
     pledges: list[Pledge] | None = None,
     corporate_actions: list[CorporateAction] | None = None,
@@ -1242,6 +1585,15 @@ def scan_forensics(
         coverage,
         cfg=cfg,
     )
+    capital_ops = _scan_capital_operations(
+        _recent(dividends or [], "plan_notice_date", years),
+        statement_items or [],
+        _recent(announcements or [], "publish_date", years),
+        signals,
+        anomalies,
+        coverage,
+        cfg=cfg,
+    )
     price_reactions = _scan_price_reaction(
         kline or [], announcements or [], ordered, signals, coverage, cfg=cfg
     )
@@ -1260,6 +1612,7 @@ def scan_forensics(
         **regulatory,
         "forecast_checks": forecast_checks,
         "capital_moves": capital,
+        "capital_operations": capital_ops,
         "price_reactions": price_reactions,
         "external_views": external_views,
     }

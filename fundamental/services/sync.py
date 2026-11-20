@@ -127,26 +127,40 @@ def sync_stock(
         conn, "macro_indicators", ["indicator_code", "indicator_name", "trade_date", "value", "source"],
         macro, lambda m: (m.indicator_code, m.indicator_name, m.trade_date, m.value, m.source),
     )
-    industries = EastmoneyIndustryProvider().list_industries()
-    stats["industry"] = _insert(
-        conn, "industry", ["industry_code", "industry_name", "trade_date", "pct_change", "capital_flow", "pe", "pb", "leader_stock"],
-        industries, lambda i: (i.industry_code, i.industry_name, i.trade_date, i.pct_change, i.capital_flow, i.pe, i.pb, i.leader_stock),
-    )
-    flows = EastmoneyCapitalFlowProvider().fetch_capital_flows(symbol)
-    stats["capital_flows"] = _insert(
-        conn, "capital_flows", ["stock_id", "trade_date", "main_net", "super_large_net", "large_net", "medium_net", "small_net", "main_net_ratio"],
-        flows, lambda f: (stock_id, f.trade_date, f.main_net, f.super_large_net, f.large_net, f.medium_net, f.small_net, f.main_net_ratio),
-    )
-    northbound = EastmoneyCapitalFlowProvider().fetch_northbound(symbol)
-    stats["northbound"] = _insert(
-        conn, "northbound", ["stock_id", "trade_date", "hold_shares", "hold_ratio", "change_shares", "change_ratio"],
-        northbound, lambda n: (stock_id, n.trade_date, n.hold_shares, n.hold_ratio, n.change_shares, n.change_ratio),
-    )
-    hotspots = EastmoneyHotspotProvider().fetch_hotspots()
-    stats["hotspots"] = _insert(
-        conn, "hotspots", ["trade_date", "board_code", "board_name", "pct_change", "main_net", "leader_stock_code", "leader_pct_change"],
-        hotspots, lambda h: (h.trade_date, h.board_code, h.board_name, h.pct_change, h.main_net, h.leader_stock_code, h.leader_pct_change),
-    )
+    # 以下为市场面辅助数据，依赖东财 push2 端点（部分网络环境下间歇性阻断）。
+    # 这些不是财报体检所需的核心输入，任一失败都不应阻断财务数据入库。
+    try:
+        industries = EastmoneyIndustryProvider().list_industries()
+        stats["industry"] = _insert(
+            conn, "industry", ["industry_code", "industry_name", "trade_date", "pct_change", "capital_flow", "pe", "pb", "leader_stock"],
+            industries, lambda i: (i.industry_code, i.industry_name, i.trade_date, i.pct_change, i.capital_flow, i.pe, i.pb, i.leader_stock),
+        )
+    except Exception:
+        stats["industry"] = 0
+    try:
+        flows = EastmoneyCapitalFlowProvider().fetch_capital_flows(symbol)
+        stats["capital_flows"] = _insert(
+            conn, "capital_flows", ["stock_id", "trade_date", "main_net", "super_large_net", "large_net", "medium_net", "small_net", "main_net_ratio"],
+            flows, lambda f: (stock_id, f.trade_date, f.main_net, f.super_large_net, f.large_net, f.medium_net, f.small_net, f.main_net_ratio),
+        )
+    except Exception:
+        stats["capital_flows"] = 0
+    try:
+        northbound = EastmoneyCapitalFlowProvider().fetch_northbound(symbol)
+        stats["northbound"] = _insert(
+            conn, "northbound", ["stock_id", "trade_date", "hold_shares", "hold_ratio", "change_shares", "change_ratio"],
+            northbound, lambda n: (stock_id, n.trade_date, n.hold_shares, n.hold_ratio, n.change_shares, n.change_ratio),
+        )
+    except Exception:
+        stats["northbound"] = 0
+    try:
+        hotspots = EastmoneyHotspotProvider().fetch_hotspots()
+        stats["hotspots"] = _insert(
+            conn, "hotspots", ["trade_date", "board_code", "board_name", "pct_change", "main_net", "leader_stock_code", "leader_pct_change"],
+            hotspots, lambda h: (h.trade_date, h.board_code, h.board_name, h.pct_change, h.main_net, h.leader_stock_code, h.leader_pct_change),
+        )
+    except Exception:
+        stats["hotspots"] = 0
 
     forecast = EastmoneyForecastProvider()
     forecasts = forecast.fetch_earnings_forecasts(symbol)

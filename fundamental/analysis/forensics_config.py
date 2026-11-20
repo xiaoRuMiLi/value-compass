@@ -32,6 +32,14 @@ _DEFAULT_SEVERE_CATEGORIES: tuple[str, ...] = (
     "violation_guarantee", "fund_occupation", "broken_promise",
 )
 
+# 资本运作/治理线索的公告标题关键词（只列已披露事实，不代表存在问题）
+_DEFAULT_CAPITAL_ACTION_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "新增收购": ("收购", "并购", "重大资产购买", "吸收合并"),
+    "跨界投资": ("跨界", "对外投资", "子公司", "增资", "参股"),
+    "异常股权激励": ("股权激励", "限制性股票", "股票期权", "激励计划"),
+    "关联交易": ("关联交易", "关联方", "日常关联交易"),
+}
+
 _RATE_KEYS = ("gross_margin", "net_margin", "roe", "debt_ratio")
 
 
@@ -59,6 +67,15 @@ class ForensicsConfig:
 
     # 业绩波动 / 率类异动（百分点）
     revenue_yoy_swing_pp: float = 40.0
+    # 「业绩拐点」：由长周期高增长转入负增长。拐点前平台期的净利同比均值 > N%
+    # （注意是"平台均值"而非"上年单点"，避免一次性高增长造成的误判）
+    profit_turn_high_pct: float = 10.0
+    # 平台期长度：拐点前连续 N 个报告期维持高增长才算"多年高增长"（默认 4 期 ≈ 一年）
+    inflection_platform_periods: int = 4
+    # 平台期每期净利同比的下限（%）：低于此值不计入高增长平台
+    inflection_platform_floor_pct: float = 3.0
+    # 转负后负增长期数门槛：最近 N 期内净利同比为负的期数 >= 该值才算"持续转负"（默认 2）
+    inflection_min_negative_periods: int = 2
     gross_margin_pp: float = 6.0
     net_margin_pp: float = 8.0
     roe_pp: float = 5.0
@@ -81,6 +98,20 @@ class ForensicsConfig:
     # 资金动向
     insider_sell_count: int = 5
     pledge_ratio_pct: float = 35.0
+
+    # 资本运作与治理线索（相对自身历史离群 + 公告关键词）
+    # 突击分红：每股派现相对历史中位数的 MAD 倍数超过该值
+    dividend_mad_multiplier: float = 3.0
+    # 扩充股本：股本同比增幅超过该百分比
+    share_capital_growth_pct: float = 10.0
+    # 异常资本支出：投资活动现金流出净额相对历史中位数的 MAD 倍数
+    capex_mad_multiplier: float = 3.0
+    # 商誉突增：相对历史中位数的 MAD 倍数（收购的会计痕迹）
+    goodwill_mad_multiplier: float = 3.0
+    # 资本运作公告关键词（按风险类型分组）
+    capital_action_keywords: dict[str, tuple[str, ...]] = dataclasses.field(
+        default_factory=lambda: {k: tuple(v) for k, v in _DEFAULT_CAPITAL_ACTION_KEYWORDS.items()}
+    )
 
     # 市场反应
     market_profit_yoy_up_pct: float = 15.0
@@ -154,6 +185,24 @@ class ForensicsConfig:
             # 去重且保持顺序；空列表视为「不配置」，回退默认值
             return tuple(dict.fromkeys(terms)) or default
 
+        def pick_keyword_groups(key: str) -> dict[str, tuple[str, ...]]:
+            """解析 {风险类型: [关键词...]} 映射；未配置/非法时回退默认。"""
+            default = {k: tuple(v) for k, v in base.capital_action_keywords.items()}
+            raw = merged.get(key)
+            if not isinstance(raw, dict):
+                return default
+            out: dict[str, tuple[str, ...]] = {}
+            for group, terms in raw.items():
+                if not isinstance(terms, (list, tuple)):
+                    continue
+                cleaned = [
+                    str(v).strip() for v in terms
+                    if isinstance(v, (str, int, float)) and str(v).strip()
+                ]
+                if cleaned:
+                    out[str(group).strip()] = tuple(dict.fromkeys(cleaned))
+            return out or default
+
         return cls(
             lookback_periods=pick("lookback_periods", int, minimum=2),
             recent_years=pick("recent_years", int, minimum=1),
@@ -168,6 +217,10 @@ class ForensicsConfig:
             deducted_gap_pct=pick("deducted_gap_pct", float, minimum=0.0),
             deducted_gap_high_pct=pick("deducted_gap_high_pct", float, minimum=0.0),
             revenue_yoy_swing_pp=pick("revenue_yoy_swing_pp", float, minimum=0.0),
+            profit_turn_high_pct=pick("profit_turn_high_pct", float, minimum=0.0),
+            inflection_platform_periods=pick("inflection_platform_periods", int, minimum=2),
+            inflection_platform_floor_pct=pick("inflection_platform_floor_pct", float, minimum=0.0),
+            inflection_min_negative_periods=pick("inflection_min_negative_periods", int, minimum=1),
             gross_margin_pp=pick("gross_margin_pp", float, minimum=0.0),
             net_margin_pp=pick("net_margin_pp", float, minimum=0.0),
             roe_pp=pick("roe_pp", float, minimum=0.0),
@@ -182,6 +235,11 @@ class ForensicsConfig:
             forecast_yoy_tolerance_pp=pick("forecast_yoy_tolerance_pp", float, minimum=0.0),
             insider_sell_count=pick("insider_sell_count", int, minimum=1),
             pledge_ratio_pct=pick("pledge_ratio_pct", float, minimum=0.0),
+            dividend_mad_multiplier=pick("dividend_mad_multiplier", float, minimum=0.0),
+            share_capital_growth_pct=pick("share_capital_growth_pct", float, minimum=0.0),
+            capex_mad_multiplier=pick("capex_mad_multiplier", float, minimum=0.0),
+            goodwill_mad_multiplier=pick("goodwill_mad_multiplier", float, minimum=0.0),
+            capital_action_keywords=pick_keyword_groups("capital_action_keywords"),
             market_profit_yoy_up_pct=pick("market_profit_yoy_up_pct", float),
             market_return_down_pct=pick("market_return_down_pct", float),
             market_profit_yoy_down_pct=pick("market_profit_yoy_down_pct", float),
@@ -214,4 +272,16 @@ class ForensicsConfig:
         """供页面/日志展示当前生效的阈值（JSON 可序列化）。"""
 
         out = dataclasses.asdict(self)
-        return {k: (list(v) if isinstance(v, tuple) else v) for k, v in out.items()}
+        result: dict[str, Any] = {}
+        for k, v in out.items():
+            if isinstance(v, tuple):
+                result[k] = list(v)
+            elif isinstance(v, dict):
+                # capital_action_keywords: {str: tuple} → {str: list}
+                result[k] = {
+                    sk: list(sv) if isinstance(sv, tuple) else sv
+                    for sk, sv in v.items()
+                }
+            else:
+                result[k] = v
+        return result

@@ -115,6 +115,37 @@
     return wrap;
   }
 
+  function renderOfficialExplanation(signal, data) {
+    // 公司原文证据：优先取 signal 上挂载的，兼容顶层 official_explanations 映射
+    let items = signal.official_explanation;
+    if (!items && data && data.official_explanations) {
+      items = data.official_explanations[signal.id];
+    }
+    const wrap = el("div", "fx-official");
+    wrap.appendChild(el("div", "fx-block-label", "公司官方说明（财报原文）"));
+    if (!items || !items.length) {
+      wrap.appendChild(
+        el("p", "fx-official-none", "财报原文中未找到针对该类波动的说明，请结合对应报告期公告自行核验。")
+      );
+      return wrap;
+    }
+    for (const item of items) {
+      const card = el("div", "fx-official-item");
+      const meta = el("div", "fx-official-meta");
+      const methodLabel = item.method === "llm_mining" ? "智能摘录" : (item.method === "keyword" ? "关键词命中" : "");
+      meta.appendChild(el("span", "fx-official-source", item.source || "财报原文"));
+      if (methodLabel) meta.appendChild(el("span", "fx-official-method", methodLabel));
+      if (item.is_current === true) meta.appendChild(el("span", "fx-official-current", `当期 ${item.report_label || item.period || ""}`.trim()));
+      else if (item.period) meta.appendChild(el("span", "fx-official-period", `佐证 ${item.report_label || item.period}`));
+      if (item.why) meta.appendChild(el("span", "fx-official-kw", `关联：${item.why}`));
+      else if (item.keywords) meta.appendChild(el("span", "fx-official-kw", `命中：${item.keywords}`));
+      card.appendChild(meta);
+      card.appendChild(el("p", "fx-official-text", item.text || ""));
+      wrap.appendChild(card);
+    }
+    return wrap;
+  }
+
   function renderAnalysis(analysis) {
     const box = el("div", "fx-analysis");
     if (!analysis.analyzed) {
@@ -202,6 +233,7 @@
 
       const body = el("div", "fx-sig-body");
       body.appendChild(renderFacts(signal));
+      body.appendChild(renderOfficialExplanation(signal, data));
       body.appendChild(renderAnalysis(analysis));
       const occ = renderOccurrences(signal);
       if (occ) body.appendChild(occ);
@@ -265,16 +297,20 @@
   function renderCoverage(data) {
     const wrap = el("div", "fx-coverage");
     wrap.appendChild(sectionTitle("数据覆盖与局限", "「未检出」不等于「没问题」"));
+    // 辅助信息默认折叠，避免长清单挤占正文；重要结论仍在此节内，展开即可查看。
+    const details = el("details", "fx-details fx-aux-details");
+    details.appendChild(el("summary", null, "展开数据覆盖、未执行检查与免责边界"));
     const coverage = data.coverage || {};
     const performed = coverage.performed || [];
     const skipped = coverage.skipped || [];
 
+    const content = el("div", "fx-aux-content");
     const done = el("div", "fx-coverage-block");
     done.appendChild(el("div", "fx-block-label", `已执行检查（${performed.length}）`));
     const chips = el("div", "fx-chip-row");
     for (const p of performed) chips.appendChild(chip(p, "ok"));
     done.appendChild(chips);
-    wrap.appendChild(done);
+    content.appendChild(done);
 
     if (skipped.length) {
       const miss = el("div", "fx-coverage-block");
@@ -284,7 +320,7 @@
         ul.appendChild(el("li", null, `${s.check}：${s.reason}`));
       }
       miss.appendChild(ul);
-      wrap.appendChild(miss);
+      content.appendChild(miss);
     }
 
     if ((data.caveats || []).length) {
@@ -293,7 +329,86 @@
       const ul = el("ul", "fx-caveat-list");
       for (const c of data.caveats) ul.appendChild(el("li", null, c));
       cav.appendChild(ul);
-      wrap.appendChild(cav);
+      content.appendChild(cav);
+    }
+    details.appendChild(content);
+    wrap.appendChild(details);
+    return wrap;
+  }
+
+  function renderMiningFindings(data) {
+    const mining = data.report_mining || {};
+    const findings = mining.new_findings || [];
+    const summaries = mining.summaries || mining.report_summaries || [];
+    if (!findings.length && !summaries.length) return null;
+    const wrap = el("div", "fx-mining");
+    const sourceDocs = mining.source_docs || [];
+    const docCount = sourceDocs.length || (mining.source_doc ? 1 : 0);
+    const hasQuarterly = sourceDocs.some((d) => d.doc_type && d.doc_type !== "annual_report");
+    const docLabel = (d) => d.report_label || `${d.period || d.title}${d.doc_type === "annual_report" ? " 年报" : ""}`;
+    wrap.appendChild(
+      sectionTitle(
+        "原文通读发现",
+        docCount > 1
+          ? `通读 ${docCount} 份财报${hasQuarterly ? "（含最新季报）" : ""} · 当下为主，年报佐证`
+          : `${mining.source_doc || "财报原文"}${mining.period ? " · " + mining.period : ""}`
+      )
+    );
+    if (docCount > 1) {
+      const docRow = el("div", "fx-mining-docs");
+      for (const doc of sourceDocs) {
+        docRow.appendChild(
+          chip(`${doc.is_current ? "当期" : "佐证"} ${docLabel(doc)}`, doc.is_current ? "confirmed" : "plain")
+        );
+      }
+      wrap.appendChild(docRow);
+    }
+    wrap.appendChild(
+      el("p", "fx-mining-note", "模型逐段通读财报原文后发现、但规则扫描未覆盖的线索。仅作提示，每条附原文摘录供核验。")
+    );
+    if (findings.length) {
+      const list = el("div", "fx-mining-list");
+      findings.forEach((f, i) => {
+        const item = el("div", "fx-mining-item");
+        const head = el("div", "fx-mining-head");
+        head.appendChild(chip(`线索 ${i + 1}`, "suspicious"));
+        if (f.is_current) head.appendChild(chip(`当期 ${f.report_label || f.period || ""}`.trim(), "confirmed"));
+        else if (f.period) head.appendChild(chip(`佐证 ${f.report_label || f.period}`, "plain"));
+        head.appendChild(el("span", "fx-mining-desc", f.description || ""));
+        item.appendChild(head);
+        if (f.quote) {
+          const quote = el("p", "fx-mining-quote", `“${f.quote}”`);
+          item.appendChild(quote);
+          if (f.quote_kind === "numeric") {
+            quote.appendChild(el("span", "fx-quote-kind", "报表数据（数字摘录）"));
+          }
+        }
+        const meta = [];
+        if (f.section) meta.push(f.section);
+        if (f.source) meta.push(f.source);
+        if (meta.length) item.appendChild(el("div", "fx-mining-meta", meta.join(" · ")));
+        list.appendChild(item);
+      });
+      wrap.appendChild(list);
+    }
+    if (summaries.length) {
+      const details = el("details", "fx-aux-details fx-mining-summaries");
+      const summary = el("summary", "分段总结原文");
+      summary.appendChild(el("span", "fx-aux-hint", `${summaries.length} 段 · 模型对各分段财报的客观归纳`));
+      details.appendChild(summary);
+      const body = el("div", "fx-aux-content");
+      summaries.forEach((s, i) => {
+        const row = el("div", "fx-summary-row");
+        const head = el("div", "fx-summary-head");
+        head.appendChild(chip(`第 ${i + 1} 段`, "plain"));
+        if (s.report_label) head.appendChild(el("span", "fx-summary-label", s.report_label));
+        if (s.section) head.appendChild(el("span", "fx-summary-section", s.section));
+        row.appendChild(head);
+        row.appendChild(el("p", "fx-summary-text", s.text || ""));
+        body.appendChild(row);
+      });
+      details.appendChild(body);
+      wrap.appendChild(details);
     }
     return wrap;
   }
@@ -306,6 +421,9 @@
       wrap.appendChild(el("p", "fx-empty", "暂无可溯源资料。"));
       return wrap;
     }
+    // 参考资料列表较长，默认折叠，标题处已显示条数。
+    const details = el("details", "fx-details fx-aux-details");
+    details.appendChild(el("summary", null, `展开全部 ${items.length} 条参考资料`));
     const list = el("div", "fx-cite-list");
     for (const item of items) {
       const row = el("div", "fx-cite-row");
@@ -315,7 +433,8 @@
       row.appendChild(safeLink(item));
       list.appendChild(row);
     }
-    wrap.appendChild(list);
+    details.appendChild(list);
+    wrap.appendChild(details);
     return wrap;
   }
 
@@ -334,6 +453,10 @@
     deducted_gap_pct: "非经常性损益占比 >",
     deducted_gap_high_pct: "非经常性损益升级 high >",
     revenue_yoy_swing_pp: "营收增速骤变 >",
+    profit_turn_high_pct: "业绩拐点·平台期均值增速 >",
+    inflection_platform_periods: "业绩拐点·平台期长度",
+    inflection_platform_floor_pct: "业绩拐点·平台期每期增速 >",
+    inflection_min_negative_periods: "业绩拐点·转负后持续期数 >=",
     gross_margin_pp: "毛利率异动 >",
     net_margin_pp: "净利率异动 >",
     roe_pp: "ROE 异动 >",
@@ -348,6 +471,10 @@
     forecast_yoy_tolerance_pp: "预告同比容差",
     insider_sell_count: "内部人减持笔数 ≥",
     pledge_ratio_pct: "质押比例 >",
+    dividend_mad_multiplier: "突击分红·历史离群 >",
+    share_capital_growth_pct: "扩充股本·同比增幅 >",
+    capex_mad_multiplier: "异常资本支出·历史离群 >",
+    goodwill_mad_multiplier: "商誉突增·历史离群 >",
     market_profit_yoy_up_pct: "市场反应·净利增 >",
     market_return_down_pct: "市场反应·股价跌 <",
     market_profit_yoy_down_pct: "市场反应·净利降 <",
@@ -386,7 +513,7 @@
     table.appendChild(thead);
     const tbody = el("tbody");
     for (const key of Object.keys(thresholds)) {
-      if (["risk_title_keywords", "negative_view_keywords", "regulatory_severe_categories"].includes(key)) continue;
+      if (["risk_title_keywords", "negative_view_keywords", "regulatory_severe_categories", "capital_action_keywords"].includes(key)) continue;
       const value = thresholds[key];
       const shown = Array.isArray(value) ? (value.length ? value.join("、") : "（未启用）") : String(value);
       const tr = el("tr");
@@ -410,6 +537,8 @@
     const wrap = el("div", "fx-wrap");
     wrap.appendChild(renderVerdict(data));
     wrap.appendChild(renderSignals(data));
+    const mining = renderMiningFindings(data);
+    if (mining) wrap.appendChild(mining);
     wrap.appendChild(renderAnomalies(data));
     wrap.appendChild(renderCrossChecks(data));
     wrap.appendChild(renderCoverage(data));
@@ -431,7 +560,7 @@
     if (!container) return Promise.resolve(null);
     container.innerHTML = "";
     container.appendChild(
-      el("p", "fx-loading", "正在生成财报深度体检…（需扫描多期财报、交叉外部资料并逐条剖析，首次约需数十秒）")
+      el("p", "fx-loading", "正在生成财报深度体检…（首次需逐段通读财报原文提取证据，约需 1-2 分钟；再次生成命中缓存会很快）")
     );
     const query = opts.refresh ? "?refresh=true" : "";
     return VC.getJSON(`/api/stock/${encodeURIComponent(symbol)}/financial-forensics${query}`)

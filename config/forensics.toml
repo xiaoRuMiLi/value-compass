@@ -40,6 +40,16 @@ deducted_gap_high_pct = 50.0
 # ---------- 三、业绩波动 / 率类指标异动（单位：百分点） ----------
 # 「营收增速骤变」：相邻年度同一报告期的营收同比变化绝对值 > N
 revenue_yoy_swing_pp = 40.0
+# 「业绩拐点：高增长转负」——跨期模式识别，而非单点规则。
+# 触发需同时满足：①拐点期净利同比 < 0；②此前连续 inflection_platform_periods 期
+# 净利同比均 > inflection_platform_floor_pct，且这段平台均值 > profit_turn_high_pct；
+# ③转负后近几期中 >= inflection_min_negative_periods 期仍为负。
+# 这样只报"结束多年高增长并持续下滑"的真拐点（如茅台 +15%→-4.5%→持续负），
+# 不会被单期基数扰动或"已经转负后的各期"重复触发。
+profit_turn_high_pct = 10.0              # 高增长平台期均值下限（%）
+inflection_platform_periods = 4          # 平台期长度（报告期数，4≈一年）
+inflection_platform_floor_pct = 3.0      # 平台期每一期净利同比的下限（%）
+inflection_min_negative_periods = 2      # 转负后需有几期仍为负才算持续拐点
 # 各率类指标相对上年同报告期的变化绝对值 > N 才报
 gross_margin_pp = 6.0
 net_margin_pp = 8.0
@@ -72,6 +82,21 @@ forecast_yoy_tolerance_pp = 5.0
 insider_sell_count = 5
 # 最高股权质押比例 > N% 才报
 pledge_ratio_pct = 35.0
+
+# ---------- 七·B、资本运作与治理线索 ----------
+# 说明：收购/股权激励/关联交易/跨界投资在结构化数据里没有独立字段，
+# 采用两层识别：①能从数据算的用「相对自身历史离群」（MAD），与全项目口径一致；
+# ②纯事件类的用公告标题关键词列线索，交给 LLM 结合财报原文判断。
+# 所有条目只代表「值得让 LLM 去看原文」，不代表存在问题。
+# 突击分红：每股派现相对历史中位数的 MAD 倍数 > N（历史样本不足时不报）
+dividend_mad_multiplier = 3.0
+# 扩充股本：股本（SHARE_CAPITAL）同比增幅 > N% 才算异常扩股
+share_capital_growth_pct = 10.0
+# 异常资本支出：投资活动现金净流出相对历史中位数的 MAD 倍数 > N
+capex_mad_multiplier = 3.0
+# 商誉突增：相对历史中位数的 MAD 倍数 > N（收购留下的会计痕迹）
+goodwill_mad_multiplier = 3.0
+# 资本运作公告标题关键词见文件末尾 [forensics.thresholds.capital_action_keywords]
 
 # ---------- 八、财报披露股价反应 ----------
 market_profit_yoy_up_pct = 15.0     # 净利同比 > N% ...
@@ -114,3 +139,11 @@ regulatory_severe_categories = [
     "penalty", "financial_restatement", "misleading_disclosure", "inquiry",
     "violation_guarantee", "fund_occupation", "broken_promise",
 ]
+
+# 资本运作公告标题关键词（命中即列线索，不代表违规）。
+# 作为独立子表放在末尾，避免其表头影响上方 [forensics.thresholds] 的其他键。
+[forensics.thresholds.capital_action_keywords]
+"新增收购" = ["收购", "并购", "重大资产购买", "吸收合并"]
+"跨界投资" = ["跨界", "对外投资", "子公司", "增资", "参股"]
+"异常股权激励" = ["股权激励", "限制性股票", "股票期权", "激励计划"]
+"关联交易" = ["关联交易", "关联方", "日常关联交易"]
