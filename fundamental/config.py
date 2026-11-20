@@ -15,6 +15,7 @@ _CONFIG_ORDER = (
     "products.toml",
     "official.toml",
     "famous_traders.toml",
+    "forensics.toml",
     "llm.toml",
 )
 

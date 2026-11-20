@@ -1161,6 +1161,10 @@ details[open] > .fx-sig-head::before { content: "▾"; }
 .fx-cite-line { color: #475569; }
 .fx-cite-link:hover { text-decoration: underline; }
 
+.fx-thresholds { margin-top: 14px; }
+.fx-thresholds .fx-description { margin: 8px 0 10px; font-size: 11px; color: #64748b; }
+.fx-thresholds .fx-table td:first-child { width: 58%; color: #475569; }
+
 .fx-footer {
   margin-top: 22px;
   padding-top: 12px;

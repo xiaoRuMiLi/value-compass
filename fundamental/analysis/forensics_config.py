@@ -1,0 +1,217 @@
+"""财报取证扫描的触发阈值配置对象。
+
+本模块只依赖标准库，保持 ``analysis`` 层的纯粹性：不读配置文件、不 import
+``fundamental.config``。真正的「文件 → 配置对象」转换放在 services 层
+（``services/forensics_config.py``），扫描器只接受本对象注入。
+
+这样 ``scan_forensics()`` 在测试里不传配置时，用的是这里的内置默认值；
+线上则由叙述层把 ``config/forensics.toml`` 的内容注入进来。
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import hashlib
+import json
+import math
+from typing import Any
+
+# 线索级关键词的内置默认值（可被配置文件整段覆盖）
+_DEFAULT_RISK_TITLE_KEYWORDS: tuple[str, ...] = (
+    "立案", "处罚", "罚没", "诉讼", "仲裁", "问询函", "关注函", "监管函",
+    "警示函", "冻结", "查封", "会计差错", "前期差错", "更正", "追溯调整",
+    "退市", "风险警示", "违规担保", "资金占用", "被执行", "重整", "涉嫌",
+    "调查", "通报批评", "公开谴责", "减值", "业绩预告修正", "业绩变脸",
+)
+_DEFAULT_NEGATIVE_VIEW_KEYWORDS: tuple[str, ...] = (
+    "下调", "低于预期", "不及预期", "减值", "问询", "诉讼", "处罚", "风险",
+    "承压", "下滑", "缩水", "争议", "质疑", "违规",
+)
+_DEFAULT_SEVERE_CATEGORIES: tuple[str, ...] = (
+    "penalty", "financial_restatement", "misleading_disclosure", "inquiry",
+    "violation_guarantee", "fund_occupation", "broken_promise",
+)
+
+_RATE_KEYS = ("gross_margin", "net_margin", "roe", "debt_ratio")
+
+
+@dataclasses.dataclass(frozen=True)
+class ForensicsConfig:
+    """财报体检的全部可调参数。字段名与 ``config/forensics.toml`` 的键一一对应。"""
+
+    # 窗口与输出预算
+    lookback_periods: int = 12
+    recent_years: int = 6
+    max_signals: int = 16
+    max_anomalies: int = 24
+
+    # 离群统计
+    mad_multiplier: float = 3.0
+    mad_min_samples: int = 4
+    rate_require_outlier: tuple[str, ...] = ("debt_ratio",)
+
+    # 盈余质量
+    divergence_revenue_yoy_pct: float = 15.0
+    divergence_profit_yoy_pct: float = -15.0
+    profit_growth_gap_pp: float = 50.0
+    deducted_gap_pct: float = 30.0
+    deducted_gap_high_pct: float = 50.0
+
+    # 业绩波动 / 率类异动（百分点）
+    revenue_yoy_swing_pp: float = 40.0
+    gross_margin_pp: float = 6.0
+    net_margin_pp: float = 8.0
+    roe_pp: float = 5.0
+    debt_ratio_pp: float = 8.0
+    roe_drop_high_pp: float = -5.0
+
+    # 现金质量
+    ocf_profit_ratio: float = 0.65
+    ocf_consecutive_periods: int = 3
+
+    # 费用与成本
+    expense_ratio_pp: float = 5.0
+    expense_cluster_min_items: int = 2
+
+    # 业绩预告
+    forecast_deviation: float = 25.0
+    forecast_amount_tolerance_pct: float = 5.0
+    forecast_yoy_tolerance_pp: float = 5.0
+
+    # 资金动向
+    insider_sell_count: int = 5
+    pledge_ratio_pct: float = 35.0
+
+    # 市场反应
+    market_profit_yoy_up_pct: float = 15.0
+    market_return_down_pct: float = -5.0
+    market_profit_yoy_down_pct: float = -15.0
+    market_return_up_pct: float = 10.0
+    price_min_bars: int = 12
+    price_reaction_periods: int = 8
+    price_window_days: int = 5
+    price_publish_window_days: int = 75
+    external_scan_chars: int = 600
+    external_excerpt_chars: int = 200
+
+    # 聚合与风险等级
+    consolidate_min_occurrences: int = 2
+    loss_lookback_periods: int = 8
+    loss_min_count: int = 3
+    risk_high_min_high: int = 2
+    risk_medium_min_medium: int = 3
+
+    # 线索级关键词
+    risk_title_keywords: tuple[str, ...] = _DEFAULT_RISK_TITLE_KEYWORDS
+    negative_view_keywords: tuple[str, ...] = _DEFAULT_NEGATIVE_VIEW_KEYWORDS
+    regulatory_severe_categories: tuple[str, ...] = _DEFAULT_SEVERE_CATEGORIES
+
+    @classmethod
+    def from_mapping(cls, section: dict[str, Any] | None) -> "ForensicsConfig":
+        """从 ``settings['forensics']`` 构造配置；非法值逐项回退到内置默认值。
+
+        顶层键（窗口/预算）与 ``thresholds`` 子表合并，子表优先。任何类型错误
+        都只影响该字段，不会让整个体检功能崩掉。
+        """
+
+        if not isinstance(section, dict):
+            return cls()
+        thresholds = section.get("thresholds")
+        merged: dict[str, Any] = {
+            k: v for k, v in section.items() if k != "thresholds"
+        }
+        if isinstance(thresholds, dict):
+            merged.update(thresholds)
+
+        base = cls()
+
+        def pick(key: str, cast: Any, *, minimum: float | None = None,
+                 maximum: float | None = None) -> Any:
+            default = getattr(base, key)
+            try:
+                value = cast(merged.get(key, default))
+            except (TypeError, ValueError):
+                return default
+            if isinstance(value, float) and not math.isfinite(value):
+                return default
+            if minimum is not None:
+                value = max(value, minimum)
+            if maximum is not None:
+                value = min(value, maximum)
+            return value
+
+        def pick_terms(key: str, allowed: tuple[str, ...] | None = None) -> tuple[str, ...]:
+            default = getattr(base, key)
+            raw = merged.get(key, default)
+            if not isinstance(raw, (list, tuple)):
+                return default
+            terms = [
+                str(v).strip() for v in raw
+                if isinstance(v, (str, int, float)) and str(v).strip()
+            ]
+            if allowed is not None:
+                terms = [t for t in terms if t in allowed]
+            # 去重且保持顺序；空列表视为「不配置」，回退默认值
+            return tuple(dict.fromkeys(terms)) or default
+
+        return cls(
+            lookback_periods=pick("lookback_periods", int, minimum=2),
+            recent_years=pick("recent_years", int, minimum=1),
+            max_signals=pick("max_signals", int, minimum=1),
+            max_anomalies=pick("max_anomalies", int, minimum=1),
+            mad_multiplier=pick("mad_multiplier", float, minimum=0.1),
+            mad_min_samples=pick("mad_min_samples", int, minimum=2),
+            rate_require_outlier=pick_terms("rate_require_outlier", _RATE_KEYS),
+            divergence_revenue_yoy_pct=pick("divergence_revenue_yoy_pct", float),
+            divergence_profit_yoy_pct=pick("divergence_profit_yoy_pct", float),
+            profit_growth_gap_pp=pick("profit_growth_gap_pp", float, minimum=0.0),
+            deducted_gap_pct=pick("deducted_gap_pct", float, minimum=0.0),
+            deducted_gap_high_pct=pick("deducted_gap_high_pct", float, minimum=0.0),
+            revenue_yoy_swing_pp=pick("revenue_yoy_swing_pp", float, minimum=0.0),
+            gross_margin_pp=pick("gross_margin_pp", float, minimum=0.0),
+            net_margin_pp=pick("net_margin_pp", float, minimum=0.0),
+            roe_pp=pick("roe_pp", float, minimum=0.0),
+            debt_ratio_pp=pick("debt_ratio_pp", float, minimum=0.0),
+            roe_drop_high_pp=pick("roe_drop_high_pp", float),
+            ocf_profit_ratio=pick("ocf_profit_ratio", float, minimum=0.0),
+            ocf_consecutive_periods=pick("ocf_consecutive_periods", int, minimum=1),
+            expense_ratio_pp=pick("expense_ratio_pp", float, minimum=0.0),
+            expense_cluster_min_items=pick("expense_cluster_min_items", int, minimum=0),
+            forecast_deviation=pick("forecast_deviation", float, minimum=0.0),
+            forecast_amount_tolerance_pct=pick("forecast_amount_tolerance_pct", float, minimum=0.0),
+            forecast_yoy_tolerance_pp=pick("forecast_yoy_tolerance_pp", float, minimum=0.0),
+            insider_sell_count=pick("insider_sell_count", int, minimum=1),
+            pledge_ratio_pct=pick("pledge_ratio_pct", float, minimum=0.0),
+            market_profit_yoy_up_pct=pick("market_profit_yoy_up_pct", float),
+            market_return_down_pct=pick("market_return_down_pct", float),
+            market_profit_yoy_down_pct=pick("market_profit_yoy_down_pct", float),
+            market_return_up_pct=pick("market_return_up_pct", float),
+            price_min_bars=pick("price_min_bars", int, minimum=2),
+            price_reaction_periods=pick("price_reaction_periods", int, minimum=1),
+            price_window_days=pick("price_window_days", int, minimum=1),
+            price_publish_window_days=pick("price_publish_window_days", int, minimum=1),
+            external_scan_chars=pick("external_scan_chars", int, minimum=0),
+            external_excerpt_chars=pick("external_excerpt_chars", int, minimum=0),
+            consolidate_min_occurrences=pick("consolidate_min_occurrences", int, minimum=0),
+            loss_lookback_periods=pick("loss_lookback_periods", int, minimum=1),
+            loss_min_count=pick("loss_min_count", int, minimum=1),
+            risk_high_min_high=pick("risk_high_min_high", int, minimum=1),
+            risk_medium_min_medium=pick("risk_medium_min_medium", int, minimum=1),
+            risk_title_keywords=pick_terms("risk_title_keywords"),
+            negative_view_keywords=pick_terms("negative_view_keywords"),
+            regulatory_severe_categories=pick_terms("regulatory_severe_categories"),
+        )
+
+    def fingerprint(self) -> str:
+        """配置指纹：用于让叙述层缓存随阈值改动自动失效。"""
+
+        payload = json.dumps(
+            dataclasses.asdict(self), sort_keys=True, ensure_ascii=False, default=str
+        )
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+
+    def as_dict(self) -> dict[str, Any]:
+        """供页面/日志展示当前生效的阈值（JSON 可序列化）。"""
+
+        out = dataclasses.asdict(self)
+        return {k: (list(v) if isinstance(v, tuple) else v) for k, v in out.items()}

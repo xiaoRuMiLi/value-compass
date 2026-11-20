@@ -37,6 +37,7 @@ from fundamental.models import (
     ChatMessage,
 )
 from fundamental.providers.llm.port import LlmConfigError, LlmError
+from fundamental.services.forensics_config import load_forensics_config
 from fundamental.services.llm import chat_json, has_live_llm
 from fundamental.storage import db, repository
 from fundamental.utils.intel import load_intel_digest
@@ -52,7 +53,8 @@ from ._common import (
 )
 
 # 提示词/输出结构升级时递增，使旧报告缓存失效。
-_FORENSICS_VERSION = 2
+# 阈值改动不改变版本号，而是由 thresholds_fingerprint 让缓存自动失效。
+_FORENSICS_VERSION = 3
 
 _JUDGEMENTS = {"confirmed", "suspicious", "normal", "unverifiable"}
 _CONFIDENCES = {"high", "medium", "low"}
@@ -356,7 +358,7 @@ def _citations(scan: dict[str, Any], intel: dict[str, Any] | None) -> list[dict[
         ret = s.get("window_return_pct")
         add(
             "披露日股价反应", s.get("publish_date"), "本地行情",
-            f"{s.get('report_date')} 报告披露日前后 5 日涨跌 {ret:.2f}%" if ret is not None else "股价反应",
+            f"{s.get('report_date')} 报告披露日前后股价涨跌 {ret:.2f}%" if ret is not None else "股价反应",
             "",
         )
 
@@ -374,7 +376,9 @@ def _citations(scan: dict[str, Any], intel: dict[str, Any] | None) -> list[dict[
 # ---------- 缓存 ----------
 
 
-def _read_forensics_cache(path: Path, ttl_days: float) -> dict[str, Any] | None:
+def _read_forensics_cache(
+    path: Path, ttl_days: float, fingerprint: str
+) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
@@ -382,6 +386,9 @@ def _read_forensics_cache(path: Path, ttl_days: float) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     if data.get("forensics_version") != _FORENSICS_VERSION:
+        return None
+    # 阈值配置一变，旧的扫描结果就必须重算，不必手动清缓存或点「重新分析」
+    if data.get("thresholds_fingerprint") != fingerprint:
         return None
     generated = data.get("generated_at")
     if generated:
@@ -406,10 +413,12 @@ def generate_financial_forensics(
 ) -> dict[str, Any]:
     """生成财报深度体检报告：确定性扫描 + LLM 剖析 + 模板回退 + 独立缓存。"""
 
+    cfg = load_forensics_config()
+    fingerprint = cfg.fingerprint()
     ttl_days = float(load_settings().get("narrative.cache_ttl_days", 10))
     cache_path = _forensics_cache_path(symbol)
     if not refresh:
-        cached = _read_forensics_cache(cache_path, ttl_days)
+        cached = _read_forensics_cache(cache_path, ttl_days, fingerprint)
         if cached:
             return cached
 
@@ -428,11 +437,11 @@ def generate_financial_forensics(
     except Exception:  # 情报资料是增强项，失败不应阻断体检
         intel = None
 
-    settings = load_settings()
-    lookback = int(settings.get("forensics.lookback_periods", 12))
-    recent_years = int(settings.get("forensics.recent_years", 6))
-    max_signals = int(settings.get("forensics.max_signals", 16))
-    max_anomalies = int(settings.get("forensics.max_anomalies", 24))
+    # 窗口、输出预算与全部触发阈值统一来自 config/forensics.toml
+    lookback = cfg.lookback_periods
+    recent_years = cfg.recent_years
+    max_signals = cfg.max_signals
+    max_anomalies = cfg.max_anomalies
 
     scan = scan_forensics(
         symbol,
@@ -448,6 +457,7 @@ def generate_financial_forensics(
         intel=intel,
         lookback_periods=lookback,
         recent_years=recent_years,
+        config=cfg,
     )
     facts = _facts(symbol, inputs, scan, intel, max_signals, max_anomalies)
 
@@ -483,6 +493,8 @@ def generate_financial_forensics(
         "source": source,
         "generated_at": _now(),
         "forensics_version": _FORENSICS_VERSION,
+        "thresholds_fingerprint": fingerprint,
+        "thresholds": cfg.as_dict(),
         "company": {"name": inputs["name"], "industry": inputs["industry"]},
         "scan": scan,
         "citations": _citations(scan, intel),

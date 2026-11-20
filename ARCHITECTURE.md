@@ -87,6 +87,7 @@ value-compass/
 │   │   ├── archive.py                # 文档下载与本地存档
 │   │   ├── analyze.py                # 分析编排
 │   │   ├── llm.py                    # 大模型调用薄封装（get_llm/chat/chat_json）
+│   │   ├── forensics_config.py       # 配置适配：forensics.toml → ForensicsConfig（注入扫描器）
 │   │   └── narrative/                # 结构化结果 → 分段叙述（LLM 增强 + 模板回退 + 本地缓存）
 │   │       ├── __init__.py           # 门面：导出六个 generate_* 入口
 │   │       ├── _common.py            # 格式化 / 提示词输入 / 本地缓存
@@ -116,6 +117,7 @@ value-compass/
 │   │   ├── fraud_score.py            # 造假预警（M-score 等）
 │   │   ├── financial_review.py       # 财报体检/大白话汇总（原轻量版，保留）
 │   │   ├── forensics.py              # 财报取证扫描：多期风险点/异常波动/证据/覆盖度（纯确定性，不下结论）
+│   │   ├── forensics_config.py       # 触发阈值配置对象（纯 dataclass，不读配置文件）
 │   │   ├── integrity.py              # 诚信记录挖掘
 │   │   ├── masters/                  # 大师模型（可插拔）
 │   │   │   ├── base.py               # MasterModel 接口
@@ -191,6 +193,7 @@ value-compass/
 │   ├── products.toml                 # 股票↔商品映射（种子数据）
 │   ├── official.toml                 # 官网站点模板与选择器
 │   ├── llm.toml                      # 大模型供应商与参数
+│   ├── forensics.toml                # 财报体检窗口参数与全部触发阈值（改后缓存按指纹自动失效）
 │   └── masters/                      # 大师模型配置
 │       ├── buffett.toml              # 巴菲特行为逻辑、阈值、权重
 │       └── duan_yongping.toml        # 段永平行为逻辑、阈值、权重
@@ -417,9 +420,9 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 
 ### 上下文预算与配置指纹
 
-- 叙述层的资料注入预算全部配置化，原则是**质量优先、默认可调大**：`[research]`（研报篇数/单篇字数）、`[intel]`（行业研报/调研的条数与字数）、`[masters]`（大师叙述每类摘录条数与字数）、`[valuation]`（估值校准摘录与引用清单上限）、`[forensics]`（财报体检结论窗口期数、事件证据年限、送入 LLM 的信号/波动上限）、`[narrative]`（各叙述模块输出 token 上限，财报体检另按风险点数动态放大，避免 JSON 被截断）。
+- 叙述层的资料注入预算全部配置化，原则是**质量优先、默认可调大**：`[research]`（研报篇数/单篇字数）、`[intel]`（行业研报/调研的条数与字数）、`[masters]`（大师叙述每类摘录条数与字数）、`[valuation]`（估值校准摘录与引用清单上限）、`[forensics]`（财报体检结论窗口期数、事件证据年限、送入 LLM 的信号/波动上限；全部触发阈值另见独立的 `config/forensics.toml`）、`[narrative]`（各叙述模块输出 token 上限，财报体检另按风险点数动态放大，避免 JSON 被截断）。
 - 单次请求的输入软预算由 `llm.max_input_tokens`（默认 32000）控制：超出仅在日志告警、**不截断**（截断 JSON 会破坏结构、诱发幻觉），超 2 倍才做中段截断兜底。估算见 `services/llm.estimate_tokens()`（CJK 约 1 字 1 token，其余约 4 字符 1 token）。
-- 缓存指纹：研报/情报缓存 payload 记录写入时的 `max_chars`，读取时若小于当前配置，视为不新鲜并重抓（`utils/research_text.cache_max_chars()`），避免"调大了预算、页面却仍是旧短摘要"。
+- 缓存指纹：研报/情报缓存 payload 记录写入时的 `max_chars`，读取时若小于当前配置，视为不新鲜并重抓（`utils/research_text.cache_max_chars()`），避免"调大了预算、页面却仍是旧短摘要"。财报体检报告缓存记录 `thresholds_fingerprint`（`ForensicsConfig.fingerprint()`），阈值一改即自动重算，不必手动清缓存。
 
 ## 17. 批量与行业分析
 
@@ -446,7 +449,8 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 
 - `analysis/financial_review.py` 面向不会读财报的用户，把三大报表和核心指标翻译成大白话汇总，并输出疑点与关键点清单（原轻量版，report 页仍保留为折叠的「原始量化疑点清单」）。
 - **深度体检**为双层：`analysis/forensics.py`（纯确定性）负责「算出风险点」，`services/narrative/_forensics.py` 负责「让 LLM 逐条解释」。前者从多期财报、利润表科目、K 线、诚信/公告、业绩预告、内部人交易与质押、情报资料归纳信号与异常波动，输出精确数值/期次/阈值/证据引用 + `coverage`（含因数据缺失跳过的检查）；后者用 `prompts/financial_forensics.md` 生成逐条剖析、综合判断、交叉印证与免责，并对 LLM 输出做枚举降级与缺失补齐。铁律：**数字由代码算、判断由 LLM 做、不下造假定性结论、第三方观点须标注来源**；"未检出"不等于"没问题"。
-- 口径防护：Q1/H1/Q3 累计值按同报告期同比对齐；率类异常以自身历史 MAD 离群为主，避免银行/港股行业属性误判；全历史仅作波动基线，结论窗口默认近 12 期；东财预告金额字段口径混杂，按公告正文过滤并留 5% 容差；连续多期同类信号聚合为趋势型风险点（保留逐期 `occurrences`）。
+- 口径防护：Q1/H1/Q3 累计值按同报告期同比对齐；MAD 离群基线也按报告期类型分组（Q1 只与历年 Q1 比），避免累计口径混比把 MAD 撑歪；率类异常以自身历史离群为主，避免银行/港股行业属性误判；全历史仅作波动基线，结论窗口默认近 12 期；东财预告金额字段口径混杂，按公告正文过滤并留容差；连续多期同类信号聚合为趋势型风险点（保留逐期 `occurrences`）；同一报告期多个费用科目同步异动合并为一条「费用与成本结构同步异动」，明细仍逐条留在 `anomalies`。
+- **阈值全部配置化**：扫描器 `analysis/forensics.py` 不含任何硬编码判定值，全部经 `ForensicsConfig`（`analysis/forensics_config.py` 纯 dataclass）注入；`services/forensics_config.py` 负责把 `config/forensics.toml` 的 `[forensics]` / `[forensics.thresholds]` 读成该对象（非法值逐项回退默认值）。窗口参数、离群倍数、各率类百分点阈值、预告容差、质押/减持门槛、聚合门限、风险等级门槛与线索关键词都在这一份文件里，调大数值＝触发更少。报告响应带 `thresholds` 与 `thresholds_fingerprint`，前端可折叠展示「本次生效的触发阈值」，便于确认配置已生效。
 - 汇总整合 `redflags.py`、`fraud_score.py`、`delisting.py` 的结论，做多期交叉检查：营收 vs 现金流、利润 vs 应收账款、毛利率异常、审计意见、财务重述。
 - `analysis/integrity.py` 从公告中挖掘言行不一与坑害投资者行为：承诺未兑现、违规担保、资金占用、处罚、问询函、财务重述、误导性披露。
 - `integrity` 能力拉取监管处罚、问询、承诺履行等数据，存 `integrity_records` 表，用文字描述正面与负面的道德行为；结果在 `integrity.html` 展示，并汇总进 `review.html`。

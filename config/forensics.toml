@@ -1,0 +1,116 @@
+# 财报深度体检（financial-forensics）全部可调参数。
+#
+# 修改本文件后无需清缓存：报告缓存会记录 thresholds 指纹，配置一变自动重算。
+# 也可在页面上点「重新分析」立即生效。
+# 调参原则：**数值调大 = 触发更少**（更钝），调小 = 触发更多（更敏感）。
+# 阈值只决定「哪些波动值得让 LLM 解释」，不改变任何财报数字，也不改变 LLM 的判断。
+
+[forensics]
+# 结论窗口：只对最近 N 个报告期产出信号；全历史仅作为波动基线
+lookback_periods = 12
+# 事件类证据（监管/诚信/公告/预告/内部人交易）只看近 N 年
+recent_years = 6
+# 单次交给 LLM 剖析的风险点/异常波动上限；超出部分仍完整保留在 scan 中供前端展示
+max_signals = 16
+max_anomalies = 24
+
+[forensics.thresholds]
+
+# ---------- 一、离群统计（自身历史基线） ----------
+# 中位数绝对偏差（MAD）倍数：|当期 - 历史中位数| > N × MAD 才算离群
+mad_multiplier = 3.0
+# 少于 N 个同口径历史样本时不使用离群判定（样本不足宁可不报）
+mad_min_samples = 4
+# 必须「同时偏离自身历史波动」才上报的率类指标。
+# 可选值：gross_margin / net_margin / roe / debt_ratio。
+# 想更钝、进一步减少噪音，可改成下面这行（四项全开）：
+# rate_require_outlier = ["gross_margin", "net_margin", "roe", "debt_ratio"]
+rate_require_outlier = ["debt_ratio"]
+
+# ---------- 二、盈余质量 ----------
+# 「增收不增利」：营收同比 > A 且归母净利同比 < B（单位 %）
+divergence_revenue_yoy_pct = 15.0
+divergence_profit_yoy_pct = -15.0
+# 「利润增速显著背离营收」：净利同比 - 营收同比 > N 个百分点
+profit_growth_gap_pp = 50.0
+# 「扣非净利显著低于归母净利」：非经常性损益占归母净利 > N%；超过 high 阈值升级为高等级
+deducted_gap_pct = 30.0
+deducted_gap_high_pct = 50.0
+
+# ---------- 三、业绩波动 / 率类指标异动（单位：百分点） ----------
+# 「营收增速骤变」：相邻年度同一报告期的营收同比变化绝对值 > N
+revenue_yoy_swing_pp = 40.0
+# 各率类指标相对上年同报告期的变化绝对值 > N 才报
+gross_margin_pp = 6.0
+net_margin_pp = 8.0
+roe_pp = 5.0
+debt_ratio_pp = 8.0
+# ROE 同比下降超过 N 个百分点时升级为 high（填负数）
+roe_drop_high_pp = -5.0
+
+# ---------- 四、现金质量 ----------
+# 「利润未转化为经营现金流」：经营现金流 / 归母净利 < N，且连续 N 期成立
+ocf_profit_ratio = 0.65
+ocf_consecutive_periods = 3
+
+# ---------- 五、费用与成本科目 ----------
+# 单个科目费用率同比变化绝对值 > N 个百分点才算异动
+expense_ratio_pp = 5.0
+# 同一报告期有 >= N 个科目同时异动时，合并成一条「费用与成本结构同步异动」；
+# 填 0 或 1 表示关闭合并、逐科目单列。明细仍逐条保留在 anomalies 中，不丢信息。
+expense_cluster_min_items = 2
+
+# ---------- 六、业绩预告兑现度 ----------
+# 实际值偏离预告区间 > N 才上报（金额口径为 %，同比口径为个百分点）
+forecast_deviation = 25.0
+# 「约 / 左右 / 以上」的点值预告不是精确承诺，留容差
+forecast_amount_tolerance_pct = 5.0
+forecast_yoy_tolerance_pp = 5.0
+
+# ---------- 七、资金动向 ----------
+# 内部人减持笔数 >= N 且净变动为负才报
+insider_sell_count = 5
+# 最高股权质押比例 > N% 才报
+pledge_ratio_pct = 35.0
+
+# ---------- 八、财报披露股价反应 ----------
+market_profit_yoy_up_pct = 15.0     # 净利同比 > N% ...
+market_return_down_pct = -5.0        # ... 但披露日前后股价跌 > N% 才算背离
+market_profit_yoy_down_pct = -15.0 # 净利同比 < N% ...
+market_return_up_pct = 10.0         # ... 但股价涨 > N% 才算背离
+price_min_bars = 12                 # K 线不足 N 根则跳过该项检查
+price_reaction_periods = 8         # 最多回溯最近 N 个报告期
+price_window_days = 5              # 披露日前后各取 N 个交易日
+price_publish_window_days = 75     # 报告期结束后 N 天内寻找披露日
+
+# ---------- 九、信号聚合与风险等级 ----------
+# 同类信号在结论窗口内出现 >= N 期就合并成一条「趋势型风险点」（逐期明细放 occurrences）。
+# 调小可显著减少条目数且不丢信息；填 0 表示关闭聚合。
+consolidate_min_occurrences = 2
+loss_lookback_periods = 8           # 连续亏损检查的回看期数
+loss_min_count = 3                  # 其中 >= N 期亏损才报
+risk_high_min_high = 2              # high 信号 >= N 条 → 总体 high
+risk_medium_min_medium = 3          # 否则 medium 信号 >= N 条 → 总体 medium
+
+# ---------- 十、第三方资料的取证字数 ----------
+external_scan_chars = 600          # 每篇资料参与负面词匹配的正文字数
+external_excerpt_chars = 200        # 命中后保留的摘录字数
+
+# ---------- 十一、线索级关键词（非数值阈值，同样可调） ----------
+# 公告标题命中即记为线索（只列事实，不代表存在违规）
+risk_title_keywords = [
+    "立案", "处罚", "罚没", "诉讼", "仲裁", "问询函", "关注函", "监管函",
+    "警示函", "冻结", "查封", "会计差错", "前期差错", "更正", "追溯调整",
+    "退市", "风险警示", "违规担保", "资金占用", "被执行", "重整", "涉嫌",
+    "调查", "通报批评", "公开谴责", "减值", "业绩预告修正", "业绩变脸",
+]
+# 第三方研报/调研资料中的负面印证词
+negative_view_keywords = [
+    "下调", "低于预期", "不及预期", "减值", "问询", "诉讼", "处罚", "风险",
+    "承压", "下滑", "缩水", "争议", "质疑", "违规",
+]
+# 诚信档案中算作「监管与诚信线索」的类别
+regulatory_severe_categories = [
+    "penalty", "financial_restatement", "misleading_disclosure", "inquiry",
+    "violation_guarantee", "fund_occupation", "broken_promise",
+]

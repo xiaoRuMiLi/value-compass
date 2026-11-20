@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from fundamental.analysis import forensics as fx
+from fundamental.analysis.forensics_config import ForensicsConfig
 from fundamental.models import (
     EarningsForecast,
     FinancialReport,
@@ -159,7 +160,9 @@ class TestForecastGuards(unittest.TestCase):
 class TestConsolidation(unittest.TestCase):
     def test_repeated_signals_become_one_trend_with_occurrences(self):
         rows = [fr(f"{y}-12-31", roe=30.0 - 5.0 * (y - 2021)) for y in range(2021, 2026)]
-        scan = fx.scan_forensics("TEST.SH", rows)
+        # 显式指定低阈值与聚合门限：本例只验证趋势聚合，不依赖当前默认阈值
+        cfg = ForensicsConfig(roe_pp=3.0, consolidate_min_occurrences=3)
+        scan = fx.scan_forensics("TEST.SH", rows, config=cfg)
         roe = [s for s in scan["signals"] if s["title"] == "ROE 显著变化"]
         self.assertEqual(len(roe), 1)
         self.assertTrue(roe[0]["consolidated"])

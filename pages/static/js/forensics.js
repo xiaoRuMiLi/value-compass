@@ -319,6 +319,87 @@
     return wrap;
   }
 
+  // 阈值可调：把本次实际生效的配置展示出来，方便确认 config/forensics.toml 已生效。
+  const THRESHOLD_LABELS = {
+    lookback_periods: "结论窗口（报告期）",
+    recent_years: "事件证据年限",
+    max_signals: "送入 LLM 的风险点上限",
+    max_anomalies: "送入 LLM 的波动上限",
+    mad_multiplier: "MAD 离群倍数",
+    mad_min_samples: "离群判定最少样本",
+    rate_require_outlier: "需历史离群的率类指标",
+    divergence_revenue_yoy_pct: "增收不增利·营收同比 >",
+    divergence_profit_yoy_pct: "增收不增利·净利同比 <",
+    profit_growth_gap_pp: "利润/营收增速差 >",
+    deducted_gap_pct: "非经常性损益占比 >",
+    deducted_gap_high_pct: "非经常性损益升级 high >",
+    revenue_yoy_swing_pp: "营收增速骤变 >",
+    gross_margin_pp: "毛利率异动 >",
+    net_margin_pp: "净利率异动 >",
+    roe_pp: "ROE 异动 >",
+    debt_ratio_pp: "负债率异动 >",
+    roe_drop_high_pp: "ROE 降幅升级 high <",
+    ocf_profit_ratio: "经营现金流/净利 <",
+    ocf_consecutive_periods: "现金质量连续期数",
+    expense_ratio_pp: "费用率异动 >",
+    expense_cluster_min_items: "同源科目合并门限",
+    forecast_deviation: "预告偏离 >",
+    forecast_amount_tolerance_pct: "预告金额容差",
+    forecast_yoy_tolerance_pp: "预告同比容差",
+    insider_sell_count: "内部人减持笔数 ≥",
+    pledge_ratio_pct: "质押比例 >",
+    market_profit_yoy_up_pct: "市场反应·净利增 >",
+    market_return_down_pct: "市场反应·股价跌 <",
+    market_profit_yoy_down_pct: "市场反应·净利降 <",
+    market_return_up_pct: "市场反应·股价涨 >",
+    price_min_bars: "K 线最少根数",
+    price_reaction_periods: "回溯报告期数",
+    price_window_days: "披露日前后交易日",
+    price_publish_window_days: "披露日搜索天数",
+    external_scan_chars: "第三方正文匹配字数",
+    external_excerpt_chars: "第三方摘录字数",
+    consolidate_min_occurrences: "趋势聚合门限",
+    loss_lookback_periods: "亏损回看期数",
+    loss_min_count: "亏损期数 ≥",
+    risk_high_min_high: "总体 high 门槛",
+    risk_medium_min_medium: "总体 medium 门槛",
+  };
+
+  function renderThresholds(data) {
+    const thresholds = data.thresholds;
+    if (!thresholds) return null;
+    const wrap = el("div", "fx-thresholds");
+    const details = el("details", "fx-details");
+    details.appendChild(el("summary", null, "本次生效的触发阈值（可在 config/forensics.toml 调整）"));
+    const note = el(
+      "p",
+      "fx-description",
+      `配置文件：config/forensics.toml · 指纹 ${data.thresholds_fingerprint || "-"} · `
+        + "调大数值＝触发更少；改完自动重算，无需清缓存。"
+    );
+    details.appendChild(note);
+    const table = el("table", "fx-table");
+    const thead = el("thead");
+    const hr = el("tr");
+    for (const t of ["参数", "当前值"]) hr.appendChild(el("th", null, t));
+    thead.appendChild(hr);
+    table.appendChild(thead);
+    const tbody = el("tbody");
+    for (const key of Object.keys(thresholds)) {
+      if (["risk_title_keywords", "negative_view_keywords", "regulatory_severe_categories"].includes(key)) continue;
+      const value = thresholds[key];
+      const shown = Array.isArray(value) ? (value.length ? value.join("、") : "（未启用）") : String(value);
+      const tr = el("tr");
+      tr.appendChild(el("td", null, THRESHOLD_LABELS[key] || key));
+      tr.appendChild(el("td", null, shown));
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    details.appendChild(table);
+    wrap.appendChild(details);
+    return wrap;
+  }
+
   VC.renderForensics = function renderForensics(container, data) {
     if (!container) return;
     container.innerHTML = "";
@@ -332,6 +413,8 @@
     wrap.appendChild(renderAnomalies(data));
     wrap.appendChild(renderCrossChecks(data));
     wrap.appendChild(renderCoverage(data));
+    const thresholds = renderThresholds(data);
+    if (thresholds) wrap.appendChild(thresholds);
     wrap.appendChild(renderCitations(data));
     wrap.appendChild(
       el(

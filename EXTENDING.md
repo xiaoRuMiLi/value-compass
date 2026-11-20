@@ -149,8 +149,27 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
   新端点 `/api/stock/{symbol}/valuation-params?refresh=`；报告页在原默认估值下方新增「参数校准」对照区块，
   两者并存、默认估值不动。
 
-## 5. 快速清单
+## 5. 调整财报体检的触发阈值
 
+改 `config/forensics.toml`，不要改代码。`analysis/forensics.py` 里没有任何硬编码判定值，全部经
+`ForensicsConfig` 注入；字段含义与调参方向写在配置文件每个分组的注释里，原则是**数值调大＝触发更少**。
+
+- `[forensics]`：结论窗口期数、事件证据年限、送入 LLM 的信号/波动上限。
+- `[forensics.thresholds]`：离群倍数、各率类百分点阈值、预告容差、质押/减持门槛、聚合门限、风险等级门槛与线索关键词。
+- 嫌风险点太多：调大 `net_margin_pp` / `roe_pp` / `expense_ratio_pp` / `revenue_yoy_swing_pp`；
+  或把 `rate_require_outlier` 改成四项全开（率类异动还必须偏离自身同口径历史波动）。
+- 嫌条目太碎：调小 `consolidate_min_occurrences`（同类信号 2 期即合并成趋势型风险点），
+  或调小 `expense_cluster_min_items`（同报告期多个科目异动合并成一条）；两者都保留逐期/逐科目明细，不丢信息。
+- 关闭降噪：`consolidate_min_occurrences = 0`、`expense_cluster_min_items = 0`。
+- 生效方式：报告缓存记录 `thresholds_fingerprint`，改完即自动重算，无需清缓存；也可点页面「重新分析」或用 `?refresh=true`。
+  体检区底部的「本次生效的触发阈值」折叠面板可用来核对配置文件是否已被读取。
+- 新增阈值字段：`analysis/forensics_config.py` 加字段与 `from_mapping()` 的 `pick(...)`（带非法值兜底），
+  `config/forensics.toml` 加默认值，`analysis/forensics.py` 用 `cfg.xxx` 判定并写进 `trigger` 文案；
+  不要在扫描器里留第二份硬编码，也不要让 `analysis` 层反过来读配置文件。
+
+## 6. 快速清单
+
+- 调财报体检阈值：只动 `config/forensics.toml`。
 - 改数据源：只动 provider 文件 + `providers.toml`。
 - 改分析：只动 `analysis/` + `models.py` + `analyze.py`。
 - 改展示：只动 `pages/` + `web/`。
