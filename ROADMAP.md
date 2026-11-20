@@ -27,11 +27,11 @@
    - 大师模型（巴菲特/段永平）、财报体检、诚信挖掘、造假预警、退市风险。
 
 5. ◐ Web 与页面
-   - FastAPI + `pages/` 十三张页面（含 holders-track）已完成；`/api/*` 接口实现 23/48（见 `CONTRACTS.md` 第 5 节实现状态）。
+   - FastAPI + `pages/` 十三张页面（含 holders-track）已完成；`/api/*` 接口实现 24/49（见 `CONTRACTS.md` 第 5 节实现状态）。
    - 静态资源本地化（ECharts），在线界面 `serve.py` 启动。charts 为可选页，未实现。
 
 6. ✓ Skill 化
-   - `SKILL.md` + 5 篇 `references/` 方法论 + 3 个提示词模板。
+   - `SKILL.md` + 5 篇 `references/` 方法论 + 6 个提示词模板（含大师观点基座与两份大师档案）。
    - 技能壳已软链接到 `~/.codex/skills/value-compass`。
 
 7. ◐ 测试与验收

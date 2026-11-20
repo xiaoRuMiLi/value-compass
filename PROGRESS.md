@@ -87,7 +87,7 @@ L5 skill 化 + 验收（串行收尾）
 |---|---|---|---|---|
 | W5.1 | SKILL.md + references 方法论 | 技能壳 | L4 | 已完成 |
 | W5.2 | 技能壳链接进 ~/.codex/skills | 可被 Codex 发现 | W5.1 | 已完成 |
-| W5.3 | 测试补全（单元 + 契约 + web API，54 例） | 茅台单股已验收；白酒行业批量待 L4 多股同步 | L4 | 已完成 |
+| W5.3 | 测试补全（单元 + 契约 + web API，62 例） | 茅台单股已验收；白酒行业批量待 L4 多股同步 | L4 | 已完成 |
 
 ## 备注
 
@@ -102,9 +102,10 @@ L5 skill 化 + 验收（串行收尾）
 对照代码与 CONTRACTS.md 逐项复核，修正 L4/L5 标记：
 
 - L4 六个单元中 W4.1、W4.3–W4.6 均已落地（13 个页面路由 + 静态托管 + 13 张页面及配套 JS/CSS），原"待办"标记过时，改为"已完成"。
-- W4.2 保持"进行中"：CONTRACTS 第 5 节定义 48 个 API 端点，当前实现 23 个（其中 20 个在契约内、3 个为契约外扩展：`/stock/{symbol}/analysis`、`/stock/{symbol}/calendar`、`/stocks`）。缺口集中在单数据源明细端点（sentiment/research/litigations/dividends/capital-flows 等）与部分分析端点（score/valuation/masters 等），其分析能力多数已由聚合端点 `/stock/{symbol}/analysis` 覆盖，但独立端点尚未暴露。
-- W5.3 测试数由 17 例增至 54 例：`test_analysis` 15 + `test_llm` 10 + `test_narrative` 7 + `test_registry` 4 + `test_storage` 3 + `test_web_api` 9 + `test_exceptions` 6（web API + provider 异常体系）。`python -m unittest discover -s tests` 全部通过。测试数只在本表维护，ROADMAP 引用此处，避免多处漂移。
+- W4.2 保持"进行中"：CONTRACTS 第 5 节定义 49 个 API 端点，当前实现 24 个（其中 21 个在契约内、3 个为契约外扩展：`/stock/{symbol}/analysis`、`/stock/{symbol}/calendar`、`/stocks`）。缺口集中在单数据源明细端点（sentiment/research/litigations/dividends/capital-flows 等）与部分分析端点（score/valuation/masters 等），其分析能力多数已由聚合端点 `/stock/{symbol}/analysis` 覆盖，但独立端点尚未暴露。
+- W5.3 测试数由 17 例增至 62 例：`test_analysis` 15 + `test_llm` 10 + `test_narrative` 13 + `test_registry` 4 + `test_storage` 3 + `test_web_api` 11 + `test_exceptions` 6（web API + provider 异常体系 + 大师叙述）。`python -m unittest discover -s tests` 全部通过。测试数只在本表维护，ROADMAP 引用此处，避免多处漂移。
 - 前端公共模块已抽取：`pages/static/js/api.js`（统一 fetch 封装 `VC.getJSON`）、`common.js`（代码符号归一化 `VC.normalize`），13 个页面脚本删除本地重复实现；`el` 因各页签名/默认值不同保留本地。CONVENTIONS 第 4 节已补充"数据形态边界"表，明确 dict 允许的边界（聚合出口/存储行）。
 - charts 页在 CONTRACTS 第 6 节标注为"可选"，实际未实现，不影响 W4.6 完成判定。
-- P2 内部治理（同日完成）：`services/narrative.py`（794 行）拆为 `narrative/` 子包（门面仅导出三个 generate 入口，内部按职责分为共享工具/数据加载/三类叙述）；provider 异常统一到 `ProviderError` 层次（Config/Request/Data/NotImplemented 四类，LlmConfigError 归入 Config 分支，不继承 builtin 异常类型）；SQLite 迁移加显式事务，失败时回滚并关闭连接，避免半迁移库。
+- P2 内部治理（同日完成）：`services/narrative.py`（794 行）拆为 `narrative/` 子包（门面仅导出三个 generate 入口，内部按职责分为共享工具/数据加载/三类叙述；后续大师叙述扩为四个入口）；provider 异常统一到 `ProviderError` 层次（Config/Request/Data/NotImplemented 四类，LlmConfigError 归入 Config 分支，不继承 builtin 异常类型）；SQLite 迁移加显式事务，失败时回滚并关闭连接，避免半迁移库。
 - P2 收尾（同日）：收窄 narrative 门面（不再 re-export 私有函数）、测试改为直接 import 子模块；移除异常的 KeyError/ValueError/NotImplementedError 兼容继承，避免宽泛 except 误吞；HttpClient 的 JSON 解析失败包装为 ProviderDataError。
+- 大师观点叙述（同日完成）：新增 `prompts/masters/_base.md` + `buffett.md` + `duan_yongping.md`（可人工修改）；`narrative/_data.py` 按年聚合年报与同年季报/中报摘要，`narrative/_masters.py` 逐位大师调用 LLM 并保留模板回退/TTL 缓存；新增 `/api/stock/{symbol}/masters-narrative?refresh=` 与 report 页大师卡片文字描述。narrative 门面现导出四个 generate 入口。

@@ -43,7 +43,11 @@ value-compass/
 ├── prompts/                          # 提示词模板（.md，可手工修改）
 │   ├── overview_narrative.md         # 个股概览叙述
 │   ├── score_narrative.md            # 财务五维评分解读
-│   └── valuation_narrative.md        # 估值模型批判性解读
+│   ├── valuation_narrative.md        # 估值模型批判性解读
+│   └── masters/                      # 大师观点叙述（基座 + 个人档案）
+│       ├── _base.md                  # 共用输出约束与任务说明
+│       ├── buffett.md                # 巴菲特观点档案
+│       └── duan_yongping.md          # 段永平观点档案
 │
 ├── scripts/                          # 稳定入口命令（面向人和 agent）
 │   ├── fetch_data.py                 # 只拉数并入库
@@ -81,12 +85,13 @@ value-compass/
 │   │   ├── analyze.py                # 分析编排
 │   │   ├── llm.py                    # 大模型调用薄封装（get_llm/chat/chat_json）
 │   │   └── narrative/                # 结构化结果 → 分段叙述（LLM 增强 + 模板回退 + 本地缓存）
-│   │       ├── __init__.py           # 门面：导出三个 generate_* 入口
+│   │       ├── __init__.py           # 门面：导出四个 generate_* 入口
 │   │       ├── _common.py            # 格式化 / 提示词输入 / 本地缓存
-│   │       ├── _data.py              # 补充数据加载（财务、治理、舆情等）
+│   │       ├── _data.py              # 补充数据加载（财务、治理、舆情、逐年财报摘要等）
 │   │       ├── _overview.py          # 个股概览叙述
 │   │       ├── _score.py             # 五维评分解读
-│   │       └── _valuation.py         # 估值模型解读
+│   │       ├── _valuation.py         # 估值模型解读
+│   │       └── _masters.py           # 大师观点解读（逐年摘要 + 大师档案 → LLM）
 │   ├── analysis/                     # 纯计算，不 import 任何具体数据源
 │   │   ├── financial.py              # 财务质量评分
 │   │   ├── comparison.py             # 横向对比（市占率、指标趋势、排名）
@@ -121,7 +126,7 @@ value-compass/
 │   │       └── api.py                # /api/* 数据接口
 │   └── utils/                        # 横切工具
 │       ├── symbols.py                # 代码/市场归一化
-│       ├── prompts.py                # 提示词模板加载（prompts/*.md）
+│       ├── prompts.py                # 提示词模板加载（prompts/*.md、prompts/masters/*.md）
 │       ├── logging.py
 │       ├── pdf.py                    # PDF 文本提取
 │       └── paths.py

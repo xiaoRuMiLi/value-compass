@@ -220,12 +220,19 @@
 
   function renderMasters(masters) {
     const box = document.getElementById("masters");
+    box.innerHTML = "";
     const labels = { buffett: "巴菲特", duan_yongping: "段永平" };
     for (const master of masters) {
       const card = el("div", "master-card");
+      card.id = `master-${master.master}`;
       card.appendChild(el("div", "master-head", `${labels[master.master] || master.master}：${master.verdict}（${master.score}）`));
       for (const signal of master.signals) {
         card.appendChild(el("div", "signal", `${signal.passed ? "✓" : "✗"} ${signal.name} — ${signal.detail || ""}`));
+      }
+      if (master.narrative) {
+        card.appendChild(el("div", "master-note", master.narrative));
+      } else {
+        card.appendChild(el("div", "master-note master-loading", "正在生成大师视角解读…"));
       }
       box.appendChild(card);
     }
@@ -323,6 +330,36 @@
       });
   }
 
+  function loadMastersNarrative() {
+    getJSON(`/api/stock/${symbol}/masters-narrative`)
+      .then((data) => {
+        for (const item of data.masters || []) {
+          const card = document.getElementById(`master-${item.master}`);
+          if (!card) continue;
+          let note = card.querySelector(".master-note");
+          if (!note) {
+            note = el("div", "master-note");
+            card.appendChild(note);
+          }
+          note.className = "master-note";
+          note.textContent = item.text || "暂无解读";
+          let source = card.querySelector(".master-source");
+          if (!source) {
+            source = el("span", "master-source");
+            card.appendChild(source);
+          }
+          source.textContent = item.source === "llm" ? "LLM 解读" : "模板解读";
+        }
+      })
+      .catch(() => {
+        for (const note of document.querySelectorAll("#masters .master-note")) {
+          if (note.classList.contains("master-loading")) {
+            note.textContent = "解读暂不可用";
+          }
+        }
+      });
+  }
+
   async function render() {
     const [analysis, kline, financials] = await Promise.all([
       getJSON(`/api/stock/${symbol}/analysis`),
@@ -347,7 +384,9 @@
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeValuationModal();
   });
-  render().catch((error) => {
-    console.error(error);
-  });
+  render()
+    .then(loadMastersNarrative)
+    .catch((error) => {
+      console.error(error);
+    });
 })();

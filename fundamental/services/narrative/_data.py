@@ -186,3 +186,115 @@ def _load_score_financials(symbol: str, db_path: Path | None = None) -> dict[str
         }
     finally:
         conn.close()
+
+
+_QUARTER_LABELS = {"Q1": "一季报", "H1": "中报", "Q3": "三季报"}
+
+
+def _pct(value: Any) -> float | None:
+    return round(float(value), 2) if isinstance(value, (int, float)) else None
+
+
+def _year_metric(row: Any, ocf_map: dict[str, Any]) -> dict[str, Any]:
+    ocf = ocf_map.get(row["report_date"])
+    if ocf is None:
+        ocf = row["ocf"]
+    net_profit = row["net_profit"]
+    deducted = row["net_profit_deducted"]
+    return {
+        "report_date": row["report_date"],
+        "report_type": str(row["report_type"]),
+        "revenue_yi": _pct(row["revenue"] / 1e8) if row["revenue"] is not None else None,
+        "net_profit_yi": _pct(net_profit / 1e8) if net_profit is not None else None,
+        "roe": _pct(row["roe"]),
+        "gross_margin": _pct(row["gross_margin"]),
+        "net_margin": _pct(row["net_margin"]),
+        "debt_ratio": _pct(row["debt_ratio"]),
+        "revenue_yoy": _pct(row["revenue_yoy"]),
+        "net_profit_yoy": _pct(row["net_profit_yoy"]),
+        "ocf_yi": _pct(ocf / 1e8) if ocf is not None else None,
+        "ocf_to_profit": round(ocf / net_profit, 2) if (ocf is not None and net_profit) else None,
+        "oneoff_ratio": (
+            round((net_profit - deducted) / net_profit * 100, 2)
+            if (net_profit is not None and deducted is not None and net_profit)
+            else None
+        ),
+        "audit_opinion": row["audit_opinion"],
+    }
+
+
+def _year_summary(year: dict[str, Any]) -> str:
+    annual = year.get("annual")
+    if annual:
+        parts = [
+            f"营收同比 {annual['revenue_yoy'] if annual['revenue_yoy'] is not None else '[数据缺失]'}%",
+            f"归母净利同比 {annual['net_profit_yoy'] if annual['net_profit_yoy'] is not None else '[数据缺失]'}%",
+            f"ROE {annual['roe'] if annual['roe'] is not None else '[数据缺失]'}%",
+            f"毛利率 {annual['gross_margin'] if annual['gross_margin'] is not None else '[数据缺失]'}%",
+            f"负债率 {annual['debt_ratio'] if annual['debt_ratio'] is not None else '[数据缺失]'}%",
+        ]
+        if annual.get("ocf_to_profit") is not None:
+            parts.append(f"经营现金流/净利润 {annual['ocf_to_profit']}")
+        summary = f"{year['year']} 年报：" + "、".join(parts) + "。"
+    else:
+        summary = f"{year['year']} 年报[数据缺失]。"
+
+    quarters = []
+    for item in year.get("quarterly", []):
+        label = _QUARTER_LABELS.get(item["report_type"], item["report_type"])
+        rev = item["revenue_yoy"] if item["revenue_yoy"] is not None else "[数据缺失]"
+        profit = item["net_profit_yoy"] if item["net_profit_yoy"] is not None else "[数据缺失]"
+        quarters.append(f"{label} 营收同比 {rev}%/净利同比 {profit}%")
+    if quarters:
+        summary += "同年" + "；".join(quarters) + "。"
+    return summary
+
+
+def _load_master_financials(symbol: str, db_path: Path | None = None) -> dict[str, Any]:
+    """按年汇总年报与同年季报/中报，供大师视角叙述使用。
+
+    输出 years[].annual 为年报关键指标，years[].quarterly 为同年季报口径，
+    years[].summary 是可直接读给的中文摘要，避免把原始报表行整段塞给模型。
+    """
+
+    conn = db.init_db(db_path)
+    try:
+        code, market = parse_symbol(symbol)
+        stock_id = repository.get_stock_id(conn, code, market)
+        if stock_id is None:
+            return {"years": []}
+        rows = repository.fetch_all(
+            conn,
+            "SELECT report_date, report_type, revenue, net_profit, net_profit_deducted, "
+            "gross_margin, net_margin, roe, debt_ratio, revenue_yoy, net_profit_yoy, "
+            "ocf, audit_opinion FROM financials WHERE stock_id = ? ORDER BY report_date ASC",
+            (stock_id,),
+        )
+        ocf_rows = repository.fetch_all(
+            conn,
+            "SELECT report_date, item_value FROM statement_items "
+            "WHERE stock_id = ? AND item_code = 'NETCASH_OPERATE' AND report_type = 'FY'",
+            (stock_id,),
+        )
+        ocf_map = {row["report_date"]: row["item_value"] for row in ocf_rows}
+
+        buckets: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            year = (row["report_date"] or "")[:4]
+            if not year:
+                continue
+            bucket = buckets.setdefault(
+                year, {"year": year, "annual": None, "quarterly": []}
+            )
+            metric = _year_metric(row, ocf_map)
+            if str(row["report_type"]) == "FY":
+                bucket["annual"] = metric
+            else:
+                bucket["quarterly"].append(metric)
+
+        years = [buckets[key] for key in sorted(buckets)][-5:]
+        for year in years:
+            year["summary"] = _year_summary(year)
+        return {"years": years}
+    finally:
+        conn.close()

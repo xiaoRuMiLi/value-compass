@@ -9,10 +9,20 @@ from unittest import mock
 
 import fundamental.services.narrative as narrative
 import fundamental.services.narrative._common as _common
+import fundamental.services.narrative._masters as _masters
 import fundamental.services.narrative._overview as _overview
 import fundamental.services.narrative._score as _score
 import fundamental.services.narrative._valuation as _valuation
-from fundamental.models import CompositeScore, DimensionScore, Market, Stock, ValuationResult
+from fundamental.models import (
+    ChatResult,
+    CompositeScore,
+    DimensionScore,
+    Market,
+    MasterVerdict,
+    Stock,
+    ValuationResult,
+)
+from fundamental.services.narrative._data import _year_metric, _year_summary
 from fundamental.services.narrative._overview import _render_template
 from fundamental.services.narrative._score import _score_facts, _score_template
 from fundamental.services.narrative._valuation import _valuation_facts, _valuation_template
@@ -209,6 +219,118 @@ class TestValuationNarrative(unittest.TestCase):
         self.assertIn("相对估值", [section["title"] for section in first["sections"]])
         self.assertEqual(second["generated_at"], first["generated_at"])
         self.assertEqual(fake_analyze.call_count, 2)
+
+
+class TestMastersNarrative(unittest.TestCase):
+    def _verdict(self) -> MasterVerdict:
+        return MasterVerdict(
+            symbol="000858.SZ",
+            master="buffett",
+            score=50.0,
+            verdict="回避",
+            signals=[
+                {"name": "ROE 连续 3 年 ≥ 15%", "passed": False, "detail": "6.89%"},
+                {"name": "毛利率 ≥ 30%", "passed": True, "detail": "77.54%"},
+            ],
+            narrative="旧模板",
+        )
+
+    def _result(self) -> dict:
+        return {
+            "stock": Stock("000858", Market.SZ, "五粮液"),
+            "snapshot": None,
+            "score": None,
+            "valuation": [],
+            "moat": None,
+            "cycle": None,
+            "red_flags": [],
+            "review": None,
+            "masters": [self._verdict()],
+        }
+
+    def _financials(self) -> dict:
+        return {
+            "years": [
+                {
+                    "year": "2025",
+                    "annual": None,
+                    "quarterly": [],
+                    "summary": "2025 年报：营收同比 -54.55%。",
+                }
+            ]
+        }
+
+    def test_year_summary_has_annual_and_quarter(self):
+        row = {
+            "report_date": "2025-03-31",
+            "report_type": "Q1",
+            "revenue": 100e8,
+            "net_profit": 20e8,
+            "net_profit_deducted": 19e8,
+            "gross_margin": 70.0,
+            "net_margin": 20.0,
+            "roe": 5.0,
+            "debt_ratio": 30.0,
+            "revenue_yoy": -10.0,
+            "net_profit_yoy": -15.0,
+            "ocf": None,
+            "audit_opinion": None,
+        }
+        metric = _year_metric(row, {})
+        summary = _year_summary(
+            {"year": "2025", "annual": metric, "quarterly": [metric]}
+        )
+        self.assertIn("2025 年报", summary)
+        self.assertIn("一季报", summary)
+        self.assertIn("-10.0%", summary)
+
+    def test_template_keeps_verdict_and_signals(self):
+        facts = _masters._master_facts(self._result(), self._financials(), self._verdict())
+        text = _masters._master_template(facts)
+        self.assertIn("巴菲特", text)
+        self.assertIn("回避", text)
+        self.assertIn("ROE 连续 3 年 ≥ 15%", text)
+        self.assertIn("建议", text)
+        self.assertNotIn("公式", text)
+
+    def test_system_prompt_includes_master_profile(self):
+        system = _masters._system_prompt("buffett")
+        self.assertIn("量化结论", system)
+        self.assertIn("长期持有者", system)
+        self.assertIn("巴菲特", system)
+
+    def test_generate_masters_narrative_and_cache(self):
+        fake_analyze = mock.MagicMock(return_value=self._result())
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            _common.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(_masters, "analyze_stock", fake_analyze), mock.patch.object(
+            _masters, "_load_master_financials", return_value=self._financials()
+        ), mock.patch.object(_masters, "has_live_llm", return_value=False):
+            first = narrative.generate_masters_narrative("000858.SZ")
+            second = narrative.generate_masters_narrative("000858.SZ")
+            third = narrative.generate_masters_narrative("000858.SZ", refresh=True)
+
+        self.assertEqual(first["source"], "template")
+        self.assertEqual(len(first["masters"]), 1)
+        self.assertIn("回避", first["masters"][0]["text"])
+        self.assertEqual(second["generated_at"], first["generated_at"])
+        self.assertEqual(third["masters"][0]["master"], "buffett")
+        self.assertEqual(fake_analyze.call_count, 2)
+
+    def test_llm_text_replaces_template(self):
+        llm_text = "从巴菲特视角看，护城河仍在，但量化结论维持回避，建议继续验证。"
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            _common.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(_masters, "analyze_stock", return_value=self._result()), mock.patch.object(
+            _masters, "_load_master_financials", return_value=self._financials()
+        ), mock.patch.object(_masters, "has_live_llm", return_value=True), mock.patch.object(
+            _masters, "chat", return_value=ChatResult(content=f"  {llm_text}  ")
+        ) as fake_chat:
+            output = narrative.generate_masters_narrative("000858.SZ")
+
+        self.assertEqual(output["source"], "llm")
+        self.assertEqual(output["masters"][0]["text"], llm_text)
+        self.assertEqual(fake_chat.call_count, 1)
 
 
 class TestPrompt(unittest.TestCase):

@@ -60,6 +60,10 @@ def _valuation_cache_path(symbol: str) -> Path:
     return _cache_dir() / f"valuation_{symbol}.json"
 
 
+def _masters_cache_path(symbol: str) -> Path:
+    return _cache_dir() / f"masters_{symbol}.json"
+
+
 def _read_cache(path: Path, ttl_days: float) -> dict[str, Any] | None:
     if not path.exists():
         return None

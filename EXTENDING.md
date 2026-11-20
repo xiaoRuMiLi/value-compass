@@ -123,10 +123,14 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
 
 ### 4.8 改提示词模板 / 概览缓存
 
-- 提示词模板在 `prompts/*.md`，由 `fundamental/utils/prompts.py` 的 `load_prompt(name)` 按名加载。
+- 提示词模板在 `prompts/*.md`，大师观点另有 `prompts/masters/_base.md` 与同名档案（如 `buffett.md`），
+  由 `fundamental/utils/prompts.py` 的 `load_prompt(name)` 按名加载。
   改文案直接编辑对应 `.md`，无需改代码；新增场景就加一个 `.md` 并在调用处 `load_prompt("<name>")`。
-- 个股概览叙述带本地缓存：结果存 `data/cache/narrative/{symbol}.json`，TTL 在
-  `config/default.toml` 的 `[narrative] cache_ttl_days`（默认 10 天）。接口加 `?refresh=1` 可强制刷新。
+- 新增大师时：`analysis/masters/` 加规则模型，`prompts/masters/` 加同名档案，
+  并在 `narrative/_masters.py` 的 `_MASTER_LABELS` 补中文标签。
+- 叙述类结果均带本地缓存：概览 `data/cache/narrative/{symbol}.json`、大师
+  `data/cache/narrative/masters_{symbol}.json`，TTL 在 `config/default.toml` 的
+  `[narrative] cache_ttl_days`（默认 10 天）。接口加 `?refresh=1` 可强制刷新。
 
 ## 5. 快速清单
 

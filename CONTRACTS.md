@@ -173,7 +173,7 @@ CycleAssessment(position, evidence, score)
 
 所有端点前缀 `/api`，返回 JSON。
 
-> 实现状态（2026-11-20 核对）：下表 48 个契约端点中，**20 个已实现、28 个未实现**（状态列标注）。
+> 实现状态（2026-11-20 核对）：下表 49 个契约端点中，**21 个已实现、28 个未实现**（状态列标注）。
 > 另有 3 个契约外扩展端点已实现：`/api/stock/{symbol}/analysis`（聚合分析，覆盖 score/valuation/masters/review/redflags/fraud/delisting/moat/cycle/return）、
 > `/api/stock/{symbol}/calendar`（个股权威事件日历）、`/api/stocks`（个股列表）。
 > 未实现端点中，多数分析能力已由聚合端点 `/analysis` 覆盖，但独立端点尚未暴露；
@@ -220,6 +220,7 @@ CycleAssessment(position, evidence, score)
 | GET | `/api/stock/{symbol}/overview-narrative?refresh=` | `{symbol, sections, sources, source, generated_at}`（LLM 增强 + 本地缓存，`refresh=1` 强制刷新） | ✅ 已实现 |
 | GET | `/api/stock/{symbol}/score-narrative?refresh=` | `{symbol, text, source, generated_at}`（五维评分解读，LLM + 缓存） | ✅ 已实现 |
 | GET | `/api/stock/{symbol}/valuation-narrative?refresh=` | `{symbol, text, source, generated_at}`（估值模型批判性解读，LLM + 缓存） | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/masters-narrative?refresh=` | `{symbol, masters[{master,label,verdict,score,text,source}], source, generated_at}`（大师观点 LLM 解读 + 缓存） | ✅ 已实现 |
 | GET | `/api/holders/track?name=&category=` | `list[HolderPosition]` | ✅ 已实现 |
 | GET | `/api/macro?codes=&start=&end=` | `list[MacroIndicator]` | ⬜ 未实现 |
 | GET | `/api/calendar?start=&end=` | 聚合事件（财报/解禁/分红/股东大会） | ⬜ 未实现 |

@@ -478,6 +478,30 @@ main {
   padding: 2px 0;
 }
 
+.master-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-left: 3px solid #2563eb;
+  border-radius: 4px;
+  background: #f8fafc;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #374151;
+  white-space: pre-wrap;
+}
+
+.master-loading {
+  color: #9ca3af;
+  border-left-color: #cbd5e1;
+}
+
+.master-source {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #9ca3af;
+}
+
 .muted {
   color: #4b5563;
 }

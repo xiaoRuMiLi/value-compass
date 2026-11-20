@@ -85,6 +85,26 @@ class TestApiRoutes(unittest.TestCase):
     def test_get_financials_empty_for_seeded_stock(self):
         self.assertEqual(api.get_financials("600519.SH"), [])
 
+    def test_get_masters_narrative_returns_payload(self):
+        payload = {
+            "symbol": "600519.SH",
+            "masters": [{"master": "buffett", "label": "巴菲特", "text": "解读", "source": "llm"}],
+            "source": "llm",
+            "generated_at": "2026-11-20T00:00:00+00:00",
+        }
+        with patch.object(api, "generate_masters_narrative", return_value=payload) as fake:
+            data = api.get_masters_narrative("600519.SH")
+        self.assertEqual(data, payload)
+        fake.assert_called_once_with("600519.SH", refresh=False)
+
+    def test_get_masters_narrative_error_raises_404(self):
+        with patch.object(
+            api, "generate_masters_narrative", return_value={"error": "暂无大师观点"}
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                api.get_masters_narrative("600519.SH")
+        self.assertEqual(ctx.exception.status_code, 404)
+
 
 class TestAppRoutes(unittest.TestCase):
     """验证 FastAPI app 已挂载关键路由与静态资源。"""
@@ -120,6 +140,7 @@ class TestAppRoutes(unittest.TestCase):
             "/api/stocks",
             "/api/stock/{symbol}/overview",
             "/api/stock/{symbol}/analysis",
+            "/api/stock/{symbol}/masters-narrative",
             "/api/compare",
             "/api/screener",
             "/report",
