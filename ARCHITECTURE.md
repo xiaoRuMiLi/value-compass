@@ -188,9 +188,12 @@ value-compass/
 └── .gitignore
 ```
 
-> 规划未落地项（见 ROADMAP.md）：`scripts/analyze.py`、`scripts/batch_analyze.py`、
-> `services/batch.py`、`analysis/score.py`、`utils/validation.py`、`pages/charts.html`、
-> `config/famous_traders.toml`、`pages/shared/`、`static/js/api.js`、`static/js/common.js`。
+> 规划项落地核对（2026-11-20）：上述目录结构中除以下各项外均已落地。
+>
+> - **未实现**：`scripts/analyze.py`、`scripts/batch_analyze.py`、`services/batch.py`（批量分析专用入口，批量能力暂由 `/api/compare`、`/api/screener` 提供）、`utils/validation.py`。
+> - **可选未实现**：`pages/charts.html`（CONTRACTS 第 6 节标注为可选；K 线已在 report 页内呈现）。
+> - **未落地但已由别处覆盖**：`analysis/score.py`（评分逻辑在 `analysis/financial.py`）、`config/famous_traders.toml`（牛散识别改用 `config/providers.toml` + `HolderCategory` 枚举）。
+> - **已知技术债**：`static/js/api.js`（统一 fetch 封装）、`static/js/common.js`（公共工具）未抽取，当前各页面脚本各自实现 `getJSON` 等工具函数；`pages/shared/` 未建立。详见 `PROGRESS.md` 备注。
 
 ## 4. 分层与依赖方向
 
@@ -377,11 +380,12 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 | 历年财务 | `financials.html` | 三大报表历年对比、净利润、经营/投资/筹资现金流、股权结构、主营构成 |
 | 行业地位 | `industry.html` | 行业内公司地位气泡图、护城河分布 |
 | 产品价格 | `products.html` | 商品/产品价格与股价归一化对比、相关性 |
-| 持仓追踪 | `holders.html` | 按牛散/机构名称追踪跨股持仓及增减方向 |
+| 股东名册 | `holders.html` | 个股十大流通股东及报告期变化 |
+| 持仓追踪 | `holders-track.html` | 按牛散/机构名称追踪跨股持仓及增减方向 |
 | 事件日历 | `calendar.html` | 聚合财报、解禁、分红、股东大会事件（股东大会来自公告） |
 | 财报体检 | `review.html` | 大白话财务汇总、疑点与关键点排查 |
 | 诚信档案 | `integrity.html` | 道德行为正负面记录（兑现/失信、违规、处罚、问询） |
-| 蜡烛图 | `charts.html` | 可选，后期加 |
+| 蜡烛图 | `charts.html` | 可选，未实现（K 线已在 report 页呈现） |
 
 ## 16. 增量与离线策略
 
@@ -392,6 +396,9 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 
 ## 17. 批量与行业分析
 
+> 状态：本节描述的是目标设计。`services/batch.py` / `scripts/batch_analyze.py` 尚未实现；
+> 当前批量能力由 `/api/compare`、`/api/screener` 提供（指定股票列表），按行业整批分析的入口待补。
+
 - 两种模式：指定一批股票（`--symbols`）或整个行业（`--industry`），由 `services/batch.py` 解析为股票列表后循环拉取。
 - 数据复用现有 provider + SQLite，不新增网络源：历年财报、市值、分红、估值、行业营收汇总。
 - `analysis/comparison.py` 计算横向对比指标：营收增速、市占率及变化、毛利率/净利率、ROE、分红比例、股息率、市值变化、估值、护城河分、安全边际、周期位置。
@@ -401,7 +408,7 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 |---|---|---|
 | 生意模式 | 公司概况 + 主营构成 + 毛利率/现金流 | 商业模式描述 + 定价权判断 |
 | 护城河 | `analysis/moat.py` | 护城河评级 |
-| 安全边际 | `analysis/valuation.py` | 安全边际、合理价格区间 |
+| 安全边际 | `analysis/valuation/` | 安全边际、合理价格区间 |
 | 行业发展空间 | 行业营收汇总 + 增速 | 行业天花板与成长性判断 |
 | 市场周期 | `analysis/cycle.py` + 产品价格 | 周期位置判断 |
 

@@ -17,8 +17,21 @@ def _resolve_api_key(api_key_env: str) -> str | None:
     return os.environ.get(api_key_env) if api_key_env else None
 
 
+def _setting(section: dict[str, Any], settings: Settings, name: str, default: Any) -> Any:
+    """按 专项配置 → 全局配置 → 默认值 的顺序取值。
+
+    用 ``is not None`` 而非 ``or`` 判断，避免把合法的 0 / 0.0 / False 当成缺失值
+    （例如 temperature=0 是常见的确定性输出配置，不能被回退成 0.2）。
+    """
+
+    for value in (section.get(name), settings.get(f"llm.{name}")):
+        if value is not None:
+            return value
+    return default
+
+
 def _build(settings: Settings) -> LlmPort:
-    provider_name = str(settings.get("llm.provider") or "mock")
+    provider_name = str(_setting({}, settings, "provider", "mock"))
     section = settings.get(f"llm.providers.{provider_name}")
     if not isinstance(section, dict):
         raise LlmConfigError(f"llm.toml 缺少 [llm.providers.{provider_name}] 配置")
@@ -38,12 +51,10 @@ def _build(settings: Settings) -> LlmPort:
     return provider_cls(
         base_url=str(section.get("base_url") or ""),
         api_key=api_key,
-        model=str(section.get("model") or settings.get("llm.model") or "gpt-4.1-mini"),
-        temperature=float(section.get("temperature") or settings.get("llm.temperature") or 0.2),
-        max_tokens=int(section.get("max_tokens") or settings.get("llm.max_tokens") or 2048),
-        timeout_seconds=float(
-            section.get("timeout_seconds") or settings.get("llm.timeout_seconds") or 120
-        ),
+        model=str(_setting(section, settings, "model", "gpt-4.1-mini")),
+        temperature=float(_setting(section, settings, "temperature", 0.2)),
+        max_tokens=int(_setting(section, settings, "max_tokens", 2048)),
+        timeout_seconds=float(_setting(section, settings, "timeout_seconds", 120)),
     )
 
 

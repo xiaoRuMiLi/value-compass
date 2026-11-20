@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from fundamental.config import Settings, load_settings
 from fundamental.models import ChatMessage
@@ -73,6 +74,53 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(settings.get("llm.provider"), "deepseek")
         self.assertEqual(settings.get("llm.providers.mock.adapter"), "mock")
         self.assertEqual(settings.get("llm.providers.deepseek.base_url"), "https://api.deepseek.com/v1")
+
+    def test_explicit_zero_not_overridden_by_default(self):
+        """显式配置的 0 / 0.0 / False 是合法值，不能被 or 回退成默认值。"""
+        settings = Settings(
+            {
+                "llm": {
+                    "provider": "deepseek",
+                    "temperature": 0,
+                    "max_tokens": 0,
+                    "timeout_seconds": 0,
+                    "providers": {
+                        "deepseek": {
+                            "adapter": "openai_compat",
+                            "base_url": "https://api.deepseek.com/v1",
+                            "api_key_env": "VC_TEST_ZERO_KEY",
+                            "model": "deepseek-chat",
+                        }
+                    },
+                }
+            }
+        )
+        with patch.dict("os.environ", {"VC_TEST_ZERO_KEY": "fake"}):
+            provider = get_llm(settings)
+        self.assertEqual(provider.temperature, 0.0)
+        self.assertEqual(provider.max_tokens, 0)
+        self.assertEqual(provider.timeout_seconds, 0.0)
+
+    def test_section_zero_beats_global_default(self):
+        """专项配置里的 0 应优先于全局默认值。"""
+        settings = Settings(
+            {
+                "llm": {
+                    "provider": "deepseek",
+                    "temperature": 0.2,
+                    "providers": {
+                        "deepseek": {
+                            "adapter": "openai_compat",
+                            "api_key_env": "VC_TEST_ZERO_KEY",
+                            "temperature": 0,
+                        }
+                    },
+                }
+            }
+        )
+        with patch.dict("os.environ", {"VC_TEST_ZERO_KEY": "fake"}):
+            provider = get_llm(settings)
+        self.assertEqual(provider.temperature, 0.0)
 
     def test_missing_key_raises(self):
         settings = Settings(

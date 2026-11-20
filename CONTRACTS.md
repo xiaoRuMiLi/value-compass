@@ -173,56 +173,63 @@ CycleAssessment(position, evidence, score)
 
 所有端点前缀 `/api`，返回 JSON。
 
-| 方法 | 路径 | 返回 |
-|---|---|---|
-| GET | `/api/stocks/search?q=` | `list[Stock]` |
-| GET | `/api/stock/{symbol}/overview` | `Stock + CompanyProfile + Snapshot` |
-| GET | `/api/stock/{symbol}/kline?start=&end=` | `list[KlineBar]`（前端派生复权价） |
-| GET | `/api/stock/{symbol}/valuations?start=&end=` | `list[ValuationPoint]`（含分析层计算的历史分位） |
-| GET | `/api/stock/{symbol}/financials?start=&end=&report_types=` | `list[FinancialReport]` |
-| GET | `/api/stock/{symbol}/statement?type=income|balance|cashflow&start=&end=` | `list[StatementItem]` |
-| GET | `/api/stock/{symbol}/revenue-composition?dimension=&start=&end=` | `list[RevenueComposition]` |
-| GET | `/api/stock/{symbol}/announcements?keyword=&start=&end=&page=&size=` | `Page[Announcement]` |
-| GET | `/api/stock/{symbol}/documents?doc_type=&start=&end=` | `list[Document]` |
-| GET | `/api/stock/{symbol}/holders?report_date=` | `list[CirculatingHolder]` |
-| GET | `/api/stock/{symbol}/peers` | `list[{symbol, name, industry}]`（同行业个股） |
-| GET | `/api/stock/{symbol}/fund-holdings?end_date=` | `list[FundHolding]` |
-| GET | `/api/stock/{symbol}/sentiment?start=&end=` | `list[Sentiment]` |
-| GET | `/api/stock/{symbol}/research?start=&end=` | `list[ResearchReport]` |
-| GET | `/api/stock/{symbol}/litigations?start=&end=` | `list[Litigation]` |
-| GET | `/api/stock/{symbol}/dividends?start=&end=` | `list[DividendRecord]` |
-| GET | `/api/stock/{symbol}/capital-flows?start=&end=` | `list[CapitalFlow]` |
-| GET | `/api/stock/{symbol}/return?start=&end=&reinvest=` | `ReturnResult` |
-| GET | `/api/stock/{symbol}/valuation?method=&params=` | `list[ValuationResult]` |
-| GET | `/api/stock/{symbol}/score` | `CompositeScore` |
-| GET | `/api/stock/{symbol}/masters?names=` | `list[MasterVerdict]` |
-| GET | `/api/stock/{symbol}/official-updates` | `list[OfficialUpdate]` |
-| GET | `/api/stock/{symbol}/products` | `list[StockProduct]` |
-| GET | `/api/stock/{symbol}/price-compare?product=&start=&end=` | `PriceCompare（价格序列 + 股价序列 + 相关性）` |
-| GET | `/api/stock/{symbol}/earnings-forecasts` | `list[EarningsForecast]` |
-| GET | `/api/stock/{symbol}/consensus` | `list[ConsensusEstimate]` |
-| GET | `/api/stock/{symbol}/report-calendar` | `list[ReportCalendarItem]` |
-| GET | `/api/stock/{symbol}/unlocks` | `list[Unlock]` |
-| GET | `/api/stock/{symbol}/pledges` | `list[Pledge]` |
-| GET | `/api/stock/{symbol}/corporate-actions` | `list[CorporateAction]` |
-| GET | `/api/stock/{symbol}/insider-trades` | `list[InsiderTrade]` |
-| GET | `/api/stock/{symbol}/shareholder-count` | `list[ShareholderCount]` |
-| GET | `/api/stock/{symbol}/northbound` | `list[NorthboundHolding]` |
-| GET | `/api/stock/{symbol}/integrity` | `list[IntegrityRecord]` |
-| GET | `/api/stock/{symbol}/review` | `FinancialReviewReport` |
-| GET | `/api/stock/{symbol}/overview-narrative?refresh=` | `{symbol, sections, sources, source, generated_at}`（LLM 增强 + 本地缓存，`refresh=1` 强制刷新） |
-| GET | `/api/stock/{symbol}/score-narrative?refresh=` | `{symbol, text, source, generated_at}`（五维评分解读，LLM + 缓存） |
-| GET | `/api/stock/{symbol}/valuation-narrative?refresh=` | `{symbol, text, source, generated_at}`（估值模型批判性解读，LLM + 缓存） |
-| GET | `/api/holders/track?name=&category=` | `list[HolderPosition]` |
-| GET | `/api/macro?codes=&start=&end=` | `list[MacroIndicator]` |
-| GET | `/api/calendar?start=&end=` | 聚合事件（财报/解禁/分红/股东大会） |
-| GET | `/api/industry?date=` | `list[IndustryBoard]` |
-| GET | `/api/industry/{industry}/peers` | `list[PeerPosition]` |
-| GET | `/api/industry/{industry}/report` | `IndustryReport` |
-| GET | `/api/hotspots?date=` | `list[Hotspot]` |
-| GET | `/api/compare?symbols=a,b,c` | 多股对比汇总 |
-| GET | `/api/screener?filters=` | `list[Stock + CompositeScore]` |
-| GET | `/api/batch/report?industry=&symbols=` | `IndustryReport` |
+> 实现状态（2026-11-20 核对）：下表 48 个契约端点中，**20 个已实现、28 个未实现**（状态列标注）。
+> 另有 3 个契约外扩展端点已实现：`/api/stock/{symbol}/analysis`（聚合分析，覆盖 score/valuation/masters/review/redflags/fraud/delisting/moat/cycle/return）、
+> `/api/stock/{symbol}/calendar`（个股权威事件日历）、`/api/stocks`（个股列表）。
+> 未实现端点中，多数分析能力已由聚合端点 `/analysis` 覆盖，但独立端点尚未暴露；
+> 单数据源明细端点（sentiment / research / litigations / dividends / capital-flows 等）需要补路由。
+> 本表为设计契约，实际可用端点以 `fundamental/web/routes/api.py` 为准。
+
+| 方法 | 路径 | 返回 | 实现状态 |
+|---|---|---|---|
+| GET | `/api/stocks/search?q=` | `list[Stock]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/overview` | `Stock + CompanyProfile + Snapshot` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/kline?start=&end=` | `list[KlineBar]`（前端派生复权价） | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/valuations?start=&end=` | `list[ValuationPoint]`（含分析层计算的历史分位） | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/financials?start=&end=&report_types=` | `list[FinancialReport]` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/statement?type=income|balance|cashflow&start=&end=` | `list[StatementItem]` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/revenue-composition?dimension=&start=&end=` | `list[RevenueComposition]` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/announcements?keyword=&start=&end=&page=&size=` | `Page[Announcement]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/documents?doc_type=&start=&end=` | `list[Document]` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/holders?report_date=` | `list[CirculatingHolder]` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/peers` | `list[{symbol, name, industry}]`（同行业个股） | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/fund-holdings?end_date=` | `list[FundHolding]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/sentiment?start=&end=` | `list[Sentiment]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/research?start=&end=` | `list[ResearchReport]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/litigations?start=&end=` | `list[Litigation]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/dividends?start=&end=` | `list[DividendRecord]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/capital-flows?start=&end=` | `list[CapitalFlow]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/return?start=&end=&reinvest=` | `ReturnResult` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/valuation?method=&params=` | `list[ValuationResult]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/score` | `CompositeScore` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/masters?names=` | `list[MasterVerdict]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/official-updates` | `list[OfficialUpdate]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/products` | `list[StockProduct]` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/price-compare?product=&start=&end=` | `PriceCompare（价格序列 + 股价序列 + 相关性）` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/earnings-forecasts` | `list[EarningsForecast]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/consensus` | `list[ConsensusEstimate]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/report-calendar` | `list[ReportCalendarItem]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/unlocks` | `list[Unlock]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/pledges` | `list[Pledge]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/corporate-actions` | `list[CorporateAction]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/insider-trades` | `list[InsiderTrade]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/shareholder-count` | `list[ShareholderCount]` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/northbound` | `list[NorthboundHolding]` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/integrity` | `list[IntegrityRecord]` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/review` | `FinancialReviewReport` | ⬜ 未实现 |
+| GET | `/api/stock/{symbol}/overview-narrative?refresh=` | `{symbol, sections, sources, source, generated_at}`（LLM 增强 + 本地缓存，`refresh=1` 强制刷新） | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/score-narrative?refresh=` | `{symbol, text, source, generated_at}`（五维评分解读，LLM + 缓存） | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/valuation-narrative?refresh=` | `{symbol, text, source, generated_at}`（估值模型批判性解读，LLM + 缓存） | ✅ 已实现 |
+| GET | `/api/holders/track?name=&category=` | `list[HolderPosition]` | ✅ 已实现 |
+| GET | `/api/macro?codes=&start=&end=` | `list[MacroIndicator]` | ⬜ 未实现 |
+| GET | `/api/calendar?start=&end=` | 聚合事件（财报/解禁/分红/股东大会） | ⬜ 未实现 |
+| GET | `/api/industry?date=` | `list[IndustryBoard]` | ✅ 已实现 |
+| GET | `/api/industry/{industry}/peers` | `list[PeerPosition]` | ⬜ 未实现 |
+| GET | `/api/industry/{industry}/report` | `IndustryReport` | ⬜ 未实现 |
+| GET | `/api/hotspots?date=` | `list[Hotspot]` | ⬜ 未实现 |
+| GET | `/api/compare?symbols=a,b,c` | 多股对比汇总 | ✅ 已实现 |
+| GET | `/api/screener?filters=` | `list[Stock + CompositeScore]` | ✅ 已实现 |
+| GET | `/api/batch/report?industry=&symbols=` | `IndustryReport` | ⬜ 未实现 |
 
 ## 6. 页面路由
 
