@@ -1,6 +1,6 @@
 (function () {
   const symbol = new URLSearchParams(window.location.search).get("symbol") || "600519.SH";
-  async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(`${r.status} ${url}`); return r.json(); }
+  const { getJSON } = window.VC;
   function el(tag, className, text) { const n = document.createElement(tag); if (className) n.className = className; n.textContent = text ?? ""; return n; }
   function pct(v) { return v == null ? "-" : `${(v * 100).toFixed(2)}%`; }
 

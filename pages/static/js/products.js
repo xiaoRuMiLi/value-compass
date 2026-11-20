@@ -1,6 +1,6 @@
 (function () {
   const symbol = new URLSearchParams(window.location.search).get("symbol") || "600019.SH";
-  async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(`${r.status} ${url}`); return r.json(); }
+  const { getJSON } = window.VC;
 
   function normalize(series) {
     const base = series[0]?.value || 1;

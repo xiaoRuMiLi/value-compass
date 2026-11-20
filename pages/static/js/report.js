@@ -1,11 +1,7 @@
 (function () {
   const symbol = new URLSearchParams(window.location.search).get("symbol") || "600519.SH";
 
-  async function getJSON(url) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`${response.status} ${url}`);
-    return response.json();
-  }
+  const { getJSON } = window.VC;
 
   function el(tag, className, text) {
     const node = document.createElement(tag);

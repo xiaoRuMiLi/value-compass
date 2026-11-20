@@ -29,10 +29,24 @@
 ## 4. Python 代码规范
 
 - 全量类型注解。
-- `models.py` 用 dataclass 定义数据模型，禁止用裸字典跨模块传数据。
+- `models.py` 用 dataclass 定义数据模型，禁止用裸字典跨模块传数据（边界见下）。
 - 导入顺序：标准库 → 第三方 → 本地包，分组空行。
 - provider 只依赖 `models` 和 `_shared`；analysis 只依赖 `models`。
 - 统一抛 `ProviderError`，日志统一走 `utils/logging.py`。
+
+### 数据形态边界（"禁止裸字典"的适用范围）
+
+"禁止裸字典"针对的是**业务实体在模块边界间传递**，按分层区分：
+
+| 边界 | 要求 | 说明 |
+|---|---|---|
+| provider → services | 必须 `models.py` 的 dataclass | 外部数据在此归一化，禁止第三方响应结构/私有 dict 外泄 |
+| analysis 入参/出参 | 必须 dataclass | 纯计算只认模型类型 |
+| services → web | 允许 `dict[str, Any]` | 聚合结果（如 `analyze_stock`、叙述层）字段多且异构，用 dict 作为 DTO，由 web 层直接序列化 |
+| web API 响应 | 必须 JSON 可序列化 | FastAPI 直接返回 dict/list，不再包一层模型 |
+| storage 行 → 上层 | 允许 `dict`（`sqlite3.Row`） | `repository.fetch_*` 返回行字典；进入 analysis/provider 前须转成 dataclass |
+
+要点：dict 只允许出现在**聚合出口与存储行**这两类边界；一旦数据要进入 provider/analysis 的领域逻辑，必须转成 dataclass。新增跨模块函数时，返回类型写 `dict[str, Any]` 需说明它是聚合 DTO 还是存储行，否则按 dataclass 处理。
 
 ## 5. 前端规范
 
@@ -58,6 +72,7 @@
 
 ## 8. 禁止事项
 
-- 禁止 provider 返回第三方类型或私有字典。
+- 禁止 provider 返回第三方类型或私有字典（必须归一化为 `models.py` 的 dataclass）。
 - 禁止 analysis 反向 import 具体数据源。
 - 禁止把评分、估值、结论落库（均为实时计算）。
+- 禁止在 provider/analysis 的领域逻辑内部用裸 dict 传递业务实体（聚合出口与存储行除外，见第 4 节边界表）。

@@ -1,9 +1,5 @@
 (function () {
-  async function getJSON(url) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`${response.status} ${url}`);
-    return response.json();
-  }
+  const { getJSON } = window.VC;
 
   function el(tag, text) {
     const node = document.createElement(tag);

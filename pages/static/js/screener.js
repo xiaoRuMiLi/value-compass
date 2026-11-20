@@ -1,5 +1,5 @@
 (function () {
-  async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(`${r.status} ${url}`); return r.json(); }
+  const { getJSON } = window.VC;
   function el(tag, text) { const n = document.createElement(tag); n.textContent = text ?? "-"; return n; }
   function fmtYi(v) { return v == null ? "-" : `${(v / 1e8).toFixed(0)} 亿`; }
   function fmt(v) { return v == null ? "-" : v.toFixed(2); }
