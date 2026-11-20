@@ -161,6 +161,27 @@ def _compute_fcf(statement_items: list[StatementItem]) -> float | None:
     return ocf - capex if capex is not None else ocf
 
 
+def _latest_income_value(items: list[StatementItem], name: str) -> float | None:
+    income = [item for item in items if item.statement_type == StatementType.INCOME]
+    if not income:
+        return None
+    latest_date = max(item.report_date for item in income)
+    for item in income:
+        if item.report_date == latest_date and item.item_name == name:
+            return item.item_value
+    return None
+
+
+def _selling_expense_ratio(statement_items: list[StatementItem]) -> float | None:
+    selling = _latest_income_value(statement_items, "销售费用")
+    revenue = _latest_income_value(statement_items, "营业总收入") or _latest_income_value(
+        statement_items, "营业收入"
+    )
+    if selling is None or not revenue:
+        return None
+    return selling / revenue * 100
+
+
 def analyze_stock(symbol: str, db_path: Path | None = None) -> dict[str, Any]:
     conn = db.init_db(db_path)
     try:
@@ -190,7 +211,13 @@ def analyze_stock(symbol: str, db_path: Path | None = None) -> dict[str, Any]:
         if latest_dps and price:
             dividend_yield = latest_dps / price * 100
 
-        score = financial_mod.score_financial(latest, dividend_yield, pe_ttm) if latest else None
+        score = (
+            financial_mod.score_financial(
+                latest, dividend_yield, pe_ttm, _selling_expense_ratio(statement_items)
+            )
+            if latest
+            else None
+        )
         ret = returns_mod.compute_return(
             kline, dividends, (date.today() - timedelta(days=365 * 5)).isoformat(), date.today().isoformat()
         )

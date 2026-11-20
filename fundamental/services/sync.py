@@ -48,6 +48,9 @@ def sync_stock(
 
     stock = quote.fetch_stock_info(symbol)
     stock_id = repository.get_or_create_stock(conn, stock)
+    if stock.industry:
+        industry_id = repository.get_or_create_industry(conn, stock.industry)
+        repository.set_stock_industry(conn, stock_id, industry_id, stock.industry, stock.sector)
     today = date.today().isoformat()
     stats: dict[str, int] = {}
 

@@ -108,10 +108,32 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
 同步改四处：`SCHEMA.md`、`fundamental/storage/schema.sql`、`fundamental/models.py`、`fundamental/services/sync.py`（写入）。
 注意 `db.py` 用 `SCHEMA_VERSION` 做迁移，加表后要 bump 版本号并处理旧库迁移。
 
+### 4.7 换大模型供应商 / 加大模型适配器
+
+换供应商：改 `config/llm.toml` 的 `[llm] provider`（`deepseek` / `openai` / `ollama` / `mock`），
+密钥放 `.env`（`DEEPSEEK_API_KEY` / `OPENAI_API_KEY`），或用环境变量 `LLM_PROVIDER` 覆盖。无需改代码。
+
+加新适配器：
+
+1. `fundamental/providers/llm/<adapter>.py` 加实现类，实现 `LlmPort`，用 `@register("llm", "<adapter>")` 注册。
+2. `fundamental/providers/llm/__init__.py` 加导入，保证注册到 registry。
+3. `config/llm.toml` 加 `[llm.providers.<name>]`（`adapter` / `base_url` / `api_key_env` / `model`）。
+
+调用入口统一 `from fundamental.services.llm import chat, chat_json, chat_optional`，上层不感知具体供应商。
+
+### 4.8 改提示词模板 / 概览缓存
+
+- 提示词模板在 `prompts/*.md`，由 `fundamental/utils/prompts.py` 的 `load_prompt(name)` 按名加载。
+  改文案直接编辑对应 `.md`，无需改代码；新增场景就加一个 `.md` 并在调用处 `load_prompt("<name>")`。
+- 个股概览叙述带本地缓存：结果存 `data/cache/narrative/{symbol}.json`，TTL 在
+  `config/default.toml` 的 `[narrative] cache_ttl_days`（默认 10 天）。接口加 `?refresh=1` 可强制刷新。
+
 ## 5. 快速清单
 
 - 改数据源：只动 provider 文件 + `providers.toml`。
 - 改分析：只动 `analysis/` + `models.py` + `analyze.py`。
 - 改展示：只动 `pages/` + `web/`。
 - 改存储：四处同步（SCHEMA/schema.sql/models/sync）。
+- 改大模型：只动 `providers/llm/` + `config/llm.toml`。
+- 改提示词：只动 `prompts/*.md`。
 - 每步后：验证 + 更新 `PROGRESS.md` + 提交推送。

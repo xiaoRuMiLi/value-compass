@@ -36,6 +36,25 @@ class TestFinancialScore(unittest.TestCase):
         self.assertLess(result.total, 50)
         self.assertEqual(result.rating, "回避")
 
+    def test_profitability_detail_shows_formula(self):
+        report = FinancialReport(
+            "2026-09-30", ReportType.Q3, revenue=100e8, net_profit=50e8,
+            net_profit_deducted=48e8, gross_margin=80, net_margin=50, roe=25,
+        )
+        result = score_financial(report, selling_expense_ratio=5.0)
+        dimension = result.dimensions[0]
+        self.assertEqual(dimension.dimension, "盈利能力")
+        self.assertIn("销售费用率", dimension.detail)
+        self.assertIn("min(净利率/20%,1)×30", dimension.detail)
+
+    def test_high_marketing_penalizes_profitability(self):
+        report = FinancialReport(
+            "2026-09-30", ReportType.Q3, revenue=100e8, net_profit=6e8,
+            net_profit_deducted=5e8, gross_margin=68, net_margin=6, roe=10,
+        )
+        result = score_financial(report, selling_expense_ratio=38.0)
+        self.assertLess(result.dimensions[0].score, 50)
+
 
 class TestReturn(unittest.TestCase):
     def test_no_change(self):

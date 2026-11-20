@@ -13,6 +13,11 @@ from fundamental.services.analyze import (
     price_compare,
     screen_stocks,
 )
+from fundamental.services.narrative import (
+    generate_overview_narrative,
+    generate_score_narrative,
+    generate_valuation_narrative,
+)
 from fundamental.storage import db, repository
 from fundamental.utils.symbols import parse_symbol
 
@@ -119,6 +124,52 @@ def get_kline(
 @router.get("/stock/{symbol}/analysis")
 def get_analysis(symbol: str) -> dict[str, Any]:
     result = analyze_stock(symbol)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.get("/stock/{symbol}/peers")
+def get_peers(symbol: str) -> list[dict[str, Any]]:
+    """返回与给定股票同行业的其他个股（一对多关系）。"""
+
+    conn = db.init_db()
+    try:
+        stock_id = _resolve_stock(conn, symbol)
+        rows = repository.fetch_all(
+            conn,
+            "SELECT s.code, s.market, s.name, s.industry FROM stocks s "
+            "WHERE s.industry_id = (SELECT industry_id FROM stocks WHERE id = ?) "
+            "AND s.id != ? ORDER BY s.code",
+            (stock_id, stock_id),
+        )
+        return [
+            {"symbol": f"{r['code']}.{r['market']}", "name": r["name"], "industry": r["industry"]}
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+@router.get("/stock/{symbol}/overview-narrative")
+def get_overview_narrative(symbol: str, refresh: bool = False) -> dict[str, Any]:
+    result = generate_overview_narrative(symbol, refresh=refresh)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.get("/stock/{symbol}/score-narrative")
+def get_score_narrative(symbol: str, refresh: bool = False) -> dict[str, Any]:
+    result = generate_score_narrative(symbol, refresh=refresh)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.get("/stock/{symbol}/valuation-narrative")
+def get_valuation_narrative(symbol: str, refresh: bool = False) -> dict[str, Any]:
+    result = generate_valuation_narrative(symbol, refresh=refresh)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result

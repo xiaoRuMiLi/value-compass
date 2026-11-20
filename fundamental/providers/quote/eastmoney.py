@@ -35,10 +35,18 @@ class EastmoneyQuoteProvider:
         code, market = parse_symbol(symbol)
         payload = self.client.get_json(
             _SNAPSHOT_URL,
-            params={"secid": _secid(market, code), "fields": "f57,f58", "fltt": "2"},
+            params={"secid": _secid(market, code), "fields": "f57,f58,f100,f127,f128", "fltt": "2"},
         )
         data = payload.get("data") or {}
-        return Stock(code=code, market=market, name=str(data.get("f58") or code))
+        industry = data.get("f100") or data.get("f127")
+        sector = data.get("f128") or data.get("f127")
+        return Stock(
+            code=code,
+            market=market,
+            name=str(data.get("f58") or code),
+            industry=str(industry) if industry else None,
+            sector=str(sector) if sector else None,
+        )
 
     def fetch_snapshot(self, symbol: str) -> Snapshot:
         code, market = parse_symbol(symbol)

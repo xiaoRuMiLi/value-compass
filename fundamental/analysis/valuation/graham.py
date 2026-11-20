@@ -22,6 +22,6 @@ def evaluate_graham(
         fair_value_high=round(graham_value * 1.2, 2),
         current_price=current_price,
         margin_of_safety=round(margin, 4),
-        assumptions={"formula": "sqrt(22.5 * EPS * BPS)"},
+        assumptions={"formula": "sqrt(22.5 × EPS × BPS)，区间取 ±20%"},
         inputs={"eps": eps, "bps": bps},
     )

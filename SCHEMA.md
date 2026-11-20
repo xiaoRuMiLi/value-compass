@@ -34,6 +34,21 @@
 
 ## 3. 表结构
 
+### industries
+
+行业主表，与 `stocks.industry_id` 形成一对多（一个行业 → 多只股票）。`UNIQUE(name, source)`
+保证同源行业不重复。
+
+```sql
+CREATE TABLE industries (
+  id INTEGER PRIMARY KEY,
+  code TEXT,
+  name TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'eastmoney',
+  UNIQUE(name, source)
+);
+```
+
 ### stocks
 
 ```sql
@@ -44,6 +59,7 @@ CREATE TABLE stocks (
   name TEXT NOT NULL,
   industry TEXT,
   sector TEXT,
+  industry_id INTEGER REFERENCES industries(id),
   list_date TEXT,
   is_st INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),

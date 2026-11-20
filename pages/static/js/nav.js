@@ -1,5 +1,15 @@
 (function () {
-  const SYMBOL_PATHS = ["/report", "/financials", "/review", "/integrity", "/calendar", "/calculator", "/products"];
+  const SYMBOL_PATHS = [
+    "/report",
+    "/financials",
+    "/review",
+    "/integrity",
+    "/calendar",
+    "/calculator",
+    "/products",
+    "/compare",
+    "/holders",
+  ];
   const SYMBOL_TABS = [
     ["/report", "报告"],
     ["/financials", "财务"],
@@ -10,11 +20,9 @@
     ["/products", "产品"],
   ];
   const MARKET_LINKS = [
-    ["/stocks", "个股库"],
     ["/industry", "行业"],
-    ["/compare", "对比"],
     ["/screener", "筛选"],
-    ["/holders", "持仓"],
+    ["/holders-track", "持仓追踪"],
   ];
 
   function normalize(code) {
@@ -47,7 +55,7 @@
   const currentPath = location.pathname;
   const isSymbolPage = SYMBOL_PATHS.includes(currentPath);
 
-  // 全局顶栏
+  // 顶部导航：品牌 + 搜索 + 市场级
   const top = document.createElement("nav");
   top.className = "topnav";
   const brand = link("/", "价值罗盘");
@@ -74,7 +82,41 @@
   }
   document.body.prepend(top);
 
-  // 个股标签栏（仅个股页）
+  // 左右布局容器
+  const app = document.createElement("div");
+  app.className = "app";
+  const sidebar = document.createElement("aside");
+  sidebar.className = "sidebar";
+  const content = document.createElement("div");
+  content.className = "content";
+
+  // 左侧栏：个股库
+  sidebar.appendChild(el("h3", null, "个股库"));
+  const stockList = document.createElement("div");
+  stockList.className = "stock-list";
+  stockList.appendChild(el("div", "stock-meta", "加载中…"));
+  sidebar.appendChild(stockList);
+  fetch("/api/stocks")
+    .then((response) => (response.ok ? response.json() : []))
+    .then((rows) => {
+      stockList.innerHTML = "";
+      for (const row of rows) {
+        const item = document.createElement("a");
+        item.href = `/report?symbol=${encodeURIComponent(row.symbol)}`;
+        if (isSymbolPage && row.symbol === symbol) item.className = "active";
+        item.appendChild(el("span", "stock-name", row.name));
+        item.appendChild(el("span", "stock-meta", row.price == null ? "-" : row.price.toFixed(2)));
+        stockList.appendChild(item);
+      }
+    })
+    .catch(() => {
+      stockList.innerHTML = "";
+    });
+
+  // 右侧内容：移动 main 进来
+  document.querySelectorAll("body > main").forEach((node) => content.appendChild(node));
+
+  // 个股信息条 + 标签行（个股页）
   if (isSymbolPage) {
     const bar = document.createElement("div");
     bar.className = "stockbar";
@@ -86,6 +128,8 @@
     info.appendChild(el("span", "stock-score", ""));
     bar.appendChild(info);
 
+    const tabsbar = document.createElement("div");
+    tabsbar.className = "stock-tabsbar";
     const tabs = document.createElement("div");
     tabs.className = "stock-tabs";
     for (const [path, name] of SYMBOL_TABS) {
@@ -93,8 +137,20 @@
       if (currentPath === path) item.className = "active";
       tabs.appendChild(item);
     }
-    bar.appendChild(tabs);
-    top.after(bar);
+    tabsbar.appendChild(tabs);
+    tabsbar.appendChild(el("div", "tab-sep"));
+    const tools = document.createElement("div");
+    tools.className = "stock-tabs";
+    for (const [path, name] of [
+      ["/compare", "对比"],
+      ["/holders", "持仓"],
+    ]) {
+      const item = link(`${path}?symbol=${encodeURIComponent(symbol)}`, name);
+      if (currentPath === path) item.className = "active";
+      tools.appendChild(item);
+    }
+    tabsbar.appendChild(tools);
+    content.prepend(bar, tabsbar);
 
     fetch(`/api/stock/${symbol}/analysis`)
       .then((response) => (response.ok ? response.json() : null))
@@ -113,4 +169,8 @@
       })
       .catch(() => {});
   }
+
+  app.appendChild(sidebar);
+  app.appendChild(content);
+  document.body.appendChild(app);
 })();

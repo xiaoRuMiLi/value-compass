@@ -18,6 +18,7 @@
 - 存储：SQLite 存结构化数据，本地文件系统存 PDF 等大文件。
 - 前端：ECharts（本地内置，离线可用）+ 原生 JavaScript。
 - 在线界面：FastAPI + uvicorn，本地运行。
+- 大模型：OpenAI 兼容 `/chat/completions` 轻适配，可切换 deepseek / openai / ollama / mock（离线）。
 - 可视化页面：标准交互页放 `pages/`，一次性生成页放 `generated/`。
 
 ## 3. 目录结构
@@ -25,8 +26,13 @@
 ```text
 value-compass/
 ├── SKILL.md                          # skill 入口：给 agent 的总指令与路由
-├── agents/
-│   └── openai.yaml                   # skill 的 UI 元数据
+├── README.md
+├── ARCHITECTURE.md                   # 架构与目录（本文档）
+├── CONTRACTS.md / SCHEMA.md          # 接口契约 / 表结构
+├── CONVENTIONS.md / EXTENDING.md     # 命名规范 / 扩展手册
+├── ROADMAP.md / PROGRESS.md          # 路线 / 进度
+├── ADR/                              # 架构决策记录
+│   └── ADR-001-llm-provider-abstraction.md
 ├── references/                       # 方法论，agent 按需加载，不常驻上下文
 │   ├── checklist.md                  # 财务质量检查清单
 │   ├── valuation.md                  # 估值方法说明
@@ -34,10 +40,13 @@ value-compass/
 │   ├── report-format.md              # 报告规范
 │   └── batch-analysis.md             # 批量/行业分析工作流
 │
+├── prompts/                          # 提示词模板（.md，可手工修改）
+│   ├── overview_narrative.md         # 个股概览叙述
+│   ├── score_narrative.md            # 财务五维评分解读
+│   └── valuation_narrative.md        # 估值模型批判性解读
+│
 ├── scripts/                          # 稳定入口命令（面向人和 agent）
 │   ├── fetch_data.py                 # 只拉数并入库
-│   ├── analyze.py                    # 拉数 + 计算 + 出报告
-│   ├── batch_analyze.py              # 批量/行业横向对比 + 出报告
 │   └── serve.py                      # 启动本地 web 界面
 │
 ├── fundamental/                      # 核心 Python 包
@@ -48,8 +57,7 @@ value-compass/
 │   │   ├── _shared/                  # 公共传输：HTTP、重试、限流、缓存
 │   │   ├── quote/                    # 实时行情 + 复权 K 线
 │   │   │   ├── port.py
-│   │   │   ├── eastmoney.py
-│   │   │   └── _test/
+│   │   │   └── eastmoney.py
 │   │   ├── financial/                # 财务指标、三大报表、主营构成
 │   │   ├── announcement/             # 公告 + 财报 PDF + 招股书
 │   │   ├── sentiment/                # 公众情绪（股吧）
@@ -65,12 +73,14 @@ value-compass/
 │   │   ├── forecast/                 # 业绩预告/一致预期/财报日历
 │   │   ├── governance/               # 公司行动/增减持/户数/质押/解禁
 │   │   ├── macro/                    # 宏观指标
-│   │   └── integrity/                # 诚信记录
+│   │   ├── integrity/                # 诚信记录
+│   │   └── llm/                      # 大模型（Ports & Adapters，可切换供应商）
 │   ├── services/                     # 编排层：取数 → 归一化 → 入库 → 计算
 │   │   ├── sync.py                   # 增量拉取与水位管理
 │   │   ├── archive.py                # 文档下载与本地存档
 │   │   ├── analyze.py                # 分析编排
-│   │   └── batch.py                  # 批量/行业分析编排
+│   │   ├── llm.py                    # 大模型调用薄封装（get_llm/chat/chat_json）
+│   │   └── narrative.py              # 结构化结果 → 分段叙述（LLM 增强 + 模板回退 + 本地缓存）
 │   ├── analysis/                     # 纯计算，不 import 任何具体数据源
 │   │   ├── financial.py              # 财务质量评分
 │   │   ├── comparison.py             # 横向对比（市占率、指标趋势、排名）
@@ -94,25 +104,24 @@ value-compass/
 │   │   │   ├── base.py               # MasterModel 接口
 │   │   │   ├── buffett.py            # 巴菲特
 │   │   │   └── duan_yongping.py      # 段永平
-│   │   ├── redflags.py               # 风险红旗
-│   │   └── score.py                  # 综合评分
+│   │   └── redflags.py               # 风险红旗
 │   ├── storage/                      # SQLite 与文件存档层
 │   │   ├── schema.sql                # 表结构
 │   │   ├── db.py                     # 连接与迁移
-│   │   ├── repository.py             # 数据访问
-│   │   └── archive.py                # 文件存档访问
+│   │   └── repository.py             # 数据访问
 │   ├── web/                          # 在线界面（FastAPI）
 │   │   ├── app.py
 │   │   └── routes/
-│   │       ├── api.py                # /api/* 数据接口
-│   │       └── pages.py              # 页面路由
+│   │       └── api.py                # /api/* 数据接口
 │   └── utils/                        # 横切工具
 │       ├── symbols.py                # 代码/市场归一化
-│       ├── validation.py             # 数据质量校验、跨源交叉验证
+│       ├── prompts.py                # 提示词模板加载（prompts/*.md）
 │       ├── logging.py
+│       ├── pdf.py                    # PDF 文本提取
 │       └── paths.py
 │
 ├── pages/                            # 标准交互页面，可共用、参数化
+│   ├── index.html                    # 首页（搜索入口）
 │   ├── report.html                   # 单股报告
 │   ├── compare.html                  # 多股横向对比
 │   ├── screener.html                 # 筛选
@@ -120,17 +129,16 @@ value-compass/
 │   ├── financials.html               # 历年财务全景
 │   ├── industry.html                 # 行业地位分布
 │   ├── products.html                 # 产品价格 vs 股价对比
-│   ├── holders.html                  # 牛散/机构持仓追踪
+│   ├── holders.html                  # 个股十大流通股东
+│   ├── holders-track.html            # 牛散/机构持仓追踪
 │   ├── calendar.html                 # 事件日历
 │   ├── review.html                   # 财报体检报告
 │   ├── integrity.html                # 诚信档案
-│   ├── charts.html                   # 蜡烛图大图（可选，后期加）
-│   ├── shared/                       # 共用片段：布局、组件
 │   └── static/
 │       ├── js/
 │       │   ├── vendor/echarts.min.js # 本地内置，离线可用
-│       │   ├── api.js                # 统一 API 客户端
-│       │   ├── common.js
+│       │   ├── nav.js                # 全局导航（顶栏 + 侧栏 + 个股标签）
+│       │   ├── home.js
 │       │   ├── report.js
 │       │   ├── compare.js
 │       │   ├── screener.js
@@ -139,23 +147,23 @@ value-compass/
 │       │   ├── industry.js
 │       │   ├── products.js
 │       │   ├── holders.js
+│       │   ├── holders-track.js
 │       │   ├── calendar.js
 │       │   ├── review.js
 │       │   └── integrity.js
 │       └── css/
 │           ├── base.css
+│           ├── home.css
 │           └── report.css
 │
 ├── generated/                        # 非标准、按临时要求生成的一次性展示 HTML
 │
 ├── data/
-│   ├── cache/                        # 下载的原始响应缓存（TTL，可审计）
+│   ├── cache/                        # 原始响应缓存 + 概览叙述缓存（TTL）
 │   ├── db/
 │   │   └── fundamental.db            # SQLite 主库
 │   └── archive/                      # 永久本地存档，不清除
-│       ├── documents/                # 年报/公告/招股书 PDF
-│       │   └── {code}/{year}/{doc_id}.pdf
-│       └── kline/                    # 蜡烛图离线快照（可选，默认走 SQLite）
+│       └── documents/                # 年报/公告/招股书 PDF（{code}/{year}/{doc_id}.pdf）
 │
 ├── config/                           # 配置文件夹，按序合并
 │   ├── default.toml                  # 默认配置
@@ -163,19 +171,26 @@ value-compass/
 │   ├── providers.toml                # 能力 → 源/备用/TTL/限流
 │   ├── products.toml                 # 股票↔商品映射（种子数据）
 │   ├── official.toml                 # 官网站点模板与选择器
-│   ├── famous_traders.toml           # 牛散名单（识别用）
+│   ├── llm.toml                      # 大模型供应商与参数
 │   └── masters/                      # 大师模型配置
 │       ├── buffett.toml              # 巴菲特行为逻辑、阈值、权重
 │       └── duan_yongping.toml        # 段永平行为逻辑、阈值、权重
 │
 ├── scratch/                          # 临时脚本（gitignore）
-├── tests/                            # 契约测试 + 单元测试 + fixtures
+├── tests/                            # 单元/契约测试
+│   ├── test_analysis.py
+│   ├── test_registry.py
+│   ├── test_llm.py
+│   └── test_narrative.py
 ├── .env                              # 密钥，gitignore
 ├── .env.example                      # 密钥模板，提交
 ├── pyproject.toml
-├── .gitignore
-└── README.md
+└── .gitignore
 ```
+
+> 规划未落地项（见 ROADMAP.md）：`scripts/analyze.py`、`scripts/batch_analyze.py`、
+> `services/batch.py`、`analysis/score.py`、`utils/validation.py`、`pages/charts.html`、
+> `config/famous_traders.toml`、`pages/shared/`、`static/js/api.js`、`static/js/common.js`。
 
 ## 4. 分层与依赖方向
 
@@ -225,6 +240,7 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 | 治理 | `governance` | 东财 | 公司行动、增减持、股东户数、质押、解禁 |
 | 宏观 | `macro` | 东财/新浪 | 无风险利率、CPI/PPI/PMI |
 | 诚信记录 | `integrity` | 东财/巨潮 | 道德行为文字描述：兑现/失信、违规、处罚、问询、财务重述 |
+| 大模型 | `llm` | OpenAI 兼容 `/chat/completions` | 文本对话、JSON 结构化输出；可切换 deepseek/openai/ollama/mock |
 
 ## 7. 估值方法清单
 
@@ -274,6 +290,7 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 - 加新能力：新建 `providers/<capability>/`，写 `port.py` + 至少一个实现 + config 一段。
 - 加新估值方法：在 `analysis/valuation/` 加一个文件，实现 `ValuationMethod`。
 - 加新大师：在 `analysis/masters/` 加一个文件 + `config/masters/` 加一个 toml。
+- 换大模型供应商：改 `config/llm.toml` 的 `[llm] provider`（或设 `LLM_PROVIDER` 环境变量），无需改代码；加新适配器在 `providers/llm/` 加文件并 `@register("llm", ...)`。
 - 加新页面：在 `pages/` 加 HTML + `static/js/` 加对应脚本 + `web/routes/pages.py` 加路由。
 
 ## 13. 数据源可用性（spike 实测，2026-11-11）
@@ -407,3 +424,4 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 - [ROADMAP.md](ROADMAP.md)：里程碑路线。
 - [PROGRESS.md](PROGRESS.md)：工作单元与进度表。
 - [EXTENDING.md](EXTENDING.md)：扩展操作手册。
+- [ADR/ADR-001-llm-provider-abstraction.md](ADR/ADR-001-llm-provider-abstraction.md)：大模型接入的架构决策记录。

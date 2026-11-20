@@ -41,11 +41,6 @@ def industry_page() -> FileResponse:
     return FileResponse(_PAGES_DIR / "industry.html")
 
 
-@app.get("/stocks")
-def stocks_page() -> FileResponse:
-    return FileResponse(_PAGES_DIR / "stocks.html")
-
-
 @app.get("/review")
 def review_page() -> FileResponse:
     return FileResponse(_PAGES_DIR / "review.html")
@@ -79,6 +74,11 @@ def screener_page() -> FileResponse:
 @app.get("/holders")
 def holders_page() -> FileResponse:
     return FileResponse(_PAGES_DIR / "holders.html")
+
+
+@app.get("/holders-track")
+def holders_track_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "holders-track.html")
 
 
 @app.get("/products")

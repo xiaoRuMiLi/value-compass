@@ -21,6 +21,10 @@ def evaluate_ddm(
         fair_value_high=round(fair_value * 1.2, 2),
         current_price=current_price,
         margin_of_safety=round(margin, 4),
-        assumptions={"growth": growth, "discount": discount},
+        assumptions={
+            "formula": "Gordon增长模型：DPS × (1+g) / (r-g)，区间取 ±20%",
+            "growth": growth,
+            "discount": discount,
+        },
         inputs={"dividend_per_share": dividend_per_share},
     )

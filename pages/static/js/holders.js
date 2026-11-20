@@ -1,29 +1,68 @@
 (function () {
-  async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(`${r.status} ${url}`); return r.json(); }
-  function el(tag, text) { const n = document.createElement(tag); n.textContent = text ?? "-"; return n; }
+  function normalize(code) {
+    const value = (code || "").trim().toUpperCase();
+    if (value.includes(".")) return value;
+    if (/^\d{6}$/.test(value)) {
+      if (value[0] === "6") return `${value}.SH`;
+      if ("03".includes(value[0])) return `${value}.SZ`;
+      if ("48".includes(value[0])) return `${value}.BJ`;
+    }
+    if (/^\d{1,5}$/.test(value)) return `${value.padStart(5, "0")}.HK`;
+    if (/^[A-Z]+$/.test(value)) return `${value}.US`;
+    return value;
+  }
 
-  async function render(name) {
-    const url = name ? `/api/holders/track?name=${encodeURIComponent(name)}` : "/api/holders/track";
-    const rows = await getJSON(url);
+  async function getJSON(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`${r.status} ${url}`);
+    return r.json();
+  }
+
+  function el(tag, text) {
+    const n = document.createElement(tag);
+    n.textContent = text ?? "-";
+    return n;
+  }
+
+  function changeText(r) {
+    if (r.is_new) return "新进";
+    if (r.change_ratio == null) return "-";
+    if (r.change_ratio > 0) return `+${r.change_ratio.toFixed(2)}%`;
+    if (r.change_ratio < 0) return `${r.change_ratio.toFixed(2)}%`;
+    return "不变";
+  }
+
+  const symbol = normalize(new URLSearchParams(location.search).get("symbol") || "600519");
+
+  async function render() {
+    const [rows, stocks] = await Promise.all([
+      getJSON(`/api/stock/${encodeURIComponent(symbol)}/holders`).catch(() => []),
+      getJSON("/api/stocks").catch(() => []),
+    ]);
+    const stock = stocks.find((s) => s.symbol === symbol);
+    document.getElementById("title").textContent = stock
+      ? `${stock.name} · 十大流通股东`
+      : "十大流通股东";
+
     const table = document.getElementById("table");
     table.innerHTML = "";
     const hr = document.createElement("tr");
-    ["报告期", "股东", "性质", "股票", "持股数（万股）", "占比%"].forEach((t) => hr.appendChild(el("th", t)));
+    ["报告期", "排名", "股东", "性质", "持股数（万股）", "占比%", "变动"].forEach((t) =>
+      hr.appendChild(el("th", t))
+    );
     table.appendChild(hr);
     for (const r of rows) {
       const tr = document.createElement("tr");
       tr.appendChild(el("td", r.report_date));
+      tr.appendChild(el("td", r.rank));
       tr.appendChild(el("td", r.holder_name));
       tr.appendChild(el("td", r.holder_category));
-      tr.appendChild(el("td", r.stock_name || r.code));
       tr.appendChild(el("td", r.hold_num == null ? "-" : (r.hold_num / 1e4).toFixed(0)));
       tr.appendChild(el("td", r.hold_ratio == null ? "-" : r.hold_ratio.toFixed(2)));
+      tr.appendChild(el("td", changeText(r)));
       table.appendChild(tr);
     }
   }
 
-  render();
-  document.getElementById("search").addEventListener("click", () => {
-    render(document.getElementById("name").value).catch(console.error);
-  });
+  render().catch(console.error);
 })();

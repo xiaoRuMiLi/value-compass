@@ -10,15 +10,25 @@
 </head>
 <body>
   <main>
-    <section class="panel"><h2>个股概览</h2><div id="tags" class="tags"></div></section>
+    <section class="panel">
+      <h2>个股概览</h2>
+      <div id="tags" class="tags"></div>
+      <div id="overviewNarrative" class="narrative">
+        <div class="narrative-loading">正在生成概览叙述…</div>
+      </div>
+      <p id="narrativeSources" class="narrative-sources"></p>
+    </section>
     <section class="panel">
       <h2>财务五维评分</h2>
       <div id="dimensions"></div>
+      <p id="scoreNarrative" class="score-narrative">正在生成五维解读…</p>
     </section>
 
     <section class="panel">
       <h2>估值</h2>
       <div id="valuation"></div>
+      <p id="valuationLoading" class="valuation-loading">正在生成估值解读…</p>
+      <div id="valuationOverall" class="valuation-overall"></div>
     </section>
 
     <section class="panel">
@@ -48,7 +58,19 @@
     </section>
   </main>
 
+  <div id="valuationModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3 id="valuationModalTitle"></h3>
+        <button id="valuationModalClose" class="modal-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div id="valuationModalBody" class="modal-body"></div>
+    </div>
+  </div>
+
   <script src="/static/js/vendor/echarts.min.js"></script>
+  <script src="/static/js/valuation-meta.js"></script>
   <script src="/static/js/report.js"></script>
 </body>
 </html>

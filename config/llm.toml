@@ -1,0 +1,31 @@
+# 大模型配置。切换供应商只改 [llm] provider 一行（或用环境变量 LLM_PROVIDER）。
+# 默认 deepseek：使用 .env 里的 DEEPSEEK_API_KEY；缺 key 或断网时，叙述类功能自动回退模板。
+# 想强制离线，改成 provider = "mock" 即可。
+
+[llm]
+provider = "deepseek"
+temperature = 0.2
+max_tokens = 2048
+timeout_seconds = 120
+
+[llm.providers.deepseek]
+adapter = "openai_compat"
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-chat"
+
+[llm.providers.openai]
+adapter = "openai_compat"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4.1-mini"
+
+[llm.providers.ollama]
+adapter = "openai_compat"
+base_url = "http://127.0.0.1:11434/v1"
+api_key_env = ""
+model = "qwen2.5:14b"
+
+[llm.providers.mock]
+adapter = "mock"
+model = "mock"

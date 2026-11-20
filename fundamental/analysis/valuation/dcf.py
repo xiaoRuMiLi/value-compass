@@ -31,6 +31,12 @@ def evaluate_dcf(
         fair_value_high=round(fair_value * 1.2, 2),
         current_price=current_price,
         margin_of_safety=round(margin, 4),
-        assumptions={"growth": growth, "discount": discount, "years": years, "terminal_growth": terminal_growth},
+        assumptions={
+            "formula": "两阶段FCFE：未来10年自由现金流折现 + 永续增长终值，区间取 ±20%",
+            "growth": growth,
+            "discount": discount,
+            "years": years,
+            "terminal_growth": terminal_growth,
+        },
         inputs={"fcf": fcf, "shares": shares},
     )

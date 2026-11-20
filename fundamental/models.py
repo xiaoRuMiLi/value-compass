@@ -687,3 +687,28 @@ class CycleAssessment:
     position: str
     evidence: list[str] = field(default_factory=list)
     score: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class ChatMessage:
+    """大模型对话消息，role 取 system / user / assistant。"""
+
+    role: str
+    content: str
+
+
+@dataclass(frozen=True)
+class ChatUsage:
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class ChatResult:
+    """大模型文本回复。"""
+
+    content: str
+    model: Optional[str] = None
+    finish_reason: Optional[str] = None
+    usage: Optional[ChatUsage] = None

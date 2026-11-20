@@ -7,10 +7,16 @@ from pathlib import Path
 
 from fundamental.utils import paths
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _MIGRATIONS = {
     1: ["ALTER TABLE snapshots ADD COLUMN pct_change REAL"],
+    2: [
+        "CREATE TABLE industries ("
+        "id INTEGER PRIMARY KEY, code TEXT, name TEXT NOT NULL, "
+        "source TEXT NOT NULL DEFAULT 'eastmoney', UNIQUE(name, source))",
+        "ALTER TABLE stocks ADD COLUMN industry_id INTEGER REFERENCES industries(id)",
+    ],
 }
 
 

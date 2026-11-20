@@ -55,6 +55,9 @@ NorthboundHolding(trade_date, hold_shares, hold_ratio, change_shares, change_rat
 IntegrityRecord(record_date, behavior_type, category, title, description, severity, source, source_url)
 SyncState(provider, capability, stock_id, data_type, last_synced_at, watermark, status)
 Page[T](items, total, page, size)
+ChatMessage(role, content)
+ChatUsage(prompt_tokens, completion_tokens, total_tokens)
+ChatResult(content, model, finish_reason, usage)
 ```
 
 ## 3. Provider Port 接口
@@ -129,7 +132,15 @@ MacroPort            capability="macro"
 
 IntegrityPort        capability="integrity"
   fetch_integrity_records(symbol, start=None, end=None) -> list[IntegrityRecord]
+
+LlmPort              capability="llm"
+  chat(messages, *, temperature=None, max_tokens=None) -> ChatResult
+  chat_json(messages, *, temperature=None, max_tokens=None) -> Any   # 解析后的 JSON
 ```
+
+大模型不写入 SQLite，也不走 `providers.toml`：供应商与参数在 `config/llm.toml`，统一经
+`fundamental/services/llm.py` 的 `get_llm()` / `chat()` / `chat_json()` 调用；`chat_optional()`
+失败返回 `None`，供叙述增强场景降级。异常 `LlmError` / `LlmConfigError` 均为 `ProviderError` 子类。
 
 ## 4. 分析计算模型（analysis/）
 
@@ -174,6 +185,7 @@ CycleAssessment(position, evidence, score)
 | GET | `/api/stock/{symbol}/announcements?keyword=&start=&end=&page=&size=` | `Page[Announcement]` |
 | GET | `/api/stock/{symbol}/documents?doc_type=&start=&end=` | `list[Document]` |
 | GET | `/api/stock/{symbol}/holders?report_date=` | `list[CirculatingHolder]` |
+| GET | `/api/stock/{symbol}/peers` | `list[{symbol, name, industry}]`（同行业个股） |
 | GET | `/api/stock/{symbol}/fund-holdings?end_date=` | `list[FundHolding]` |
 | GET | `/api/stock/{symbol}/sentiment?start=&end=` | `list[Sentiment]` |
 | GET | `/api/stock/{symbol}/research?start=&end=` | `list[ResearchReport]` |
@@ -198,6 +210,9 @@ CycleAssessment(position, evidence, score)
 | GET | `/api/stock/{symbol}/northbound` | `list[NorthboundHolding]` |
 | GET | `/api/stock/{symbol}/integrity` | `list[IntegrityRecord]` |
 | GET | `/api/stock/{symbol}/review` | `FinancialReviewReport` |
+| GET | `/api/stock/{symbol}/overview-narrative?refresh=` | `{symbol, sections, sources, source, generated_at}`（LLM 增强 + 本地缓存，`refresh=1` 强制刷新） |
+| GET | `/api/stock/{symbol}/score-narrative?refresh=` | `{symbol, text, source, generated_at}`（五维评分解读，LLM + 缓存） |
+| GET | `/api/stock/{symbol}/valuation-narrative?refresh=` | `{symbol, text, source, generated_at}`（估值模型批判性解读，LLM + 缓存） |
 | GET | `/api/holders/track?name=&category=` | `list[HolderPosition]` |
 | GET | `/api/macro?codes=&start=&end=` | `list[MacroIndicator]` |
 | GET | `/api/calendar?start=&end=` | 聚合事件（财报/解禁/分红/股东大会） |
@@ -231,3 +246,4 @@ CycleAssessment(position, evidence, score)
 - Port 只返回 `models` 类型；复权价派生逻辑放在 `analysis`，不放在 provider。
 - `fetch_kline` 返回不复权 + `adj_factor`；前/后复权由 `analysis.return` 或前端按因子派生。
 - 评分、估值、回报均为实时计算，通过 `/api/*` 返回，不落库。
+- 大模型经 `providers/llm`（Ports & Adapters）+ `config/llm.toml` 接入，默认 `mock` 离线可用；真实模型只用于叙述增强，失败回退模板，不阻塞主流程。

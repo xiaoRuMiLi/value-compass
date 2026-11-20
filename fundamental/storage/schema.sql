@@ -1,5 +1,13 @@
 -- value-compass 数据库结构，与 SCHEMA.md 保持一致。
 
+CREATE TABLE industries (
+  id INTEGER PRIMARY KEY,
+  code TEXT,
+  name TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'eastmoney',
+  UNIQUE(name, source)
+);
+
 CREATE TABLE stocks (
   id INTEGER PRIMARY KEY,
   code TEXT NOT NULL,
@@ -7,6 +15,7 @@ CREATE TABLE stocks (
   name TEXT NOT NULL,
   industry TEXT,
   sector TEXT,
+  industry_id INTEGER REFERENCES industries(id),
   list_date TEXT,
   is_st INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),

@@ -1,0 +1,196 @@
+"""概览叙述单元测试：分段渲染、模板回退、本地缓存与提示词加载。"""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import fundamental.services.narrative as narrative
+from fundamental.models import CompositeScore, DimensionScore, Market, Stock, ValuationResult
+from fundamental.utils.prompts import load_prompt
+
+
+def _make_facts() -> dict:
+    return {
+        "name": "测试股份",
+        "industry": "白酒",
+        "business": None,
+        "score_total": 65.6,
+        "score_rating": "观望",
+        "dimensions": [{"name": "盈利能力", "score": 100.0, "weight": 25}],
+        "moat": {"rating": "宽", "evidence": ["毛利率均值 89.2%"]},
+        "cycle": {"position": "下行", "evidence": ["近 3 年净利同比: -4.5%"]},
+        "fraud": {"score": 50.0, "signals": ["增收不增利"]},
+        "delisting": {"score": 0.0, "triggers": []},
+        "valuation": [
+            {"method": "dcf", "fair_value_low": 100.0, "fair_value_high": 200.0, "margin_of_safety": 0.1}
+        ],
+        "review_summary": "",
+        "integrity_summary": "诚信记录 0 条",
+        "red_flags": [],
+        "masters": [{"master": "buffett", "verdict": "持有"}],
+        "latest_financials": {
+            "report_date": "2026-09-30",
+            "revenue": 100e8,
+            "net_profit": 20e8,
+            "roe": 20.0,
+            "gross_margin": 60.0,
+            "net_margin": 30.0,
+            "revenue_yoy": 5.0,
+            "net_profit_yoy": 3.0,
+            "debt_ratio": 30.0,
+        },
+        "revenue_region": [{"item": "国内", "ratio": 90.0}],
+        "revenue_products": [{"item": "白酒", "ratio": 80.0}],
+        "insider_trades": [{"direction": "buy"}],
+        "pledge_count": 0,
+        "integrity_records": [],
+        "announcements": [],
+        "litigations": [],
+        "sentiment": None,
+        "research_reports": [],
+        "capital_flows": [],
+    }
+
+
+class TestRenderTemplate(unittest.TestCase):
+    def test_renders_ordered_sections(self):
+        sections = narrative._render_template(_make_facts())
+        self.assertEqual(
+            [s["title"] for s in sections],
+            ["企业基本信息", "护城河", "经营与周期", "估值与安全边际", "风险与治理"],
+        )
+        joined = "".join(s["content"] for s in sections)
+        self.assertIn("测试股份", joined)
+        self.assertIn("现金流折现", joined)
+        self.assertIn("安全边际 10.00%", joined)
+        self.assertIn("增持 1 条", joined)
+
+
+class TestGenerateOverviewNarrative(unittest.TestCase):
+    def _result(self):
+        return {
+            "stock": Stock(code="600519", market=Market.SH, name="贵州茅台"),
+            "snapshot": None,
+            "score": None,
+            "moat": None,
+            "cycle": None,
+            "fraud": None,
+            "delisting": None,
+            "valuation": [],
+            "review": None,
+            "red_flags": [],
+            "masters": [],
+        }
+
+    def test_template_fallback_and_cache(self):
+        fake_analyze = mock.MagicMock(return_value=self._result())
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            narrative.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(narrative, "analyze_stock", fake_analyze), mock.patch.object(
+            narrative, "_load_extra", return_value={"latest_financials": None}
+        ), mock.patch.object(narrative, "has_live_llm", return_value=False):
+            first = narrative.generate_overview_narrative("600519.SH")
+            second = narrative.generate_overview_narrative("600519.SH")
+            third = narrative.generate_overview_narrative("600519.SH", refresh=True)
+
+        self.assertEqual(first["source"], "template")
+        self.assertGreaterEqual(len(first["sections"]), 5)
+        self.assertEqual(second["generated_at"], first["generated_at"])
+        self.assertEqual(fake_analyze.call_count, 2)
+
+
+class TestScoreNarrative(unittest.TestCase):
+    def _score(self):
+        return CompositeScore(
+            total=65.6,
+            rating="观望",
+            dimensions=[
+                DimensionScore("盈利能力", 97.1, 25, "净利率 50.94% → 30.0/30"),
+                DimensionScore("成长能力", 9.0, 25, "营收同比 1.82%"),
+            ],
+            red_flags=[],
+        )
+
+    def test_score_template(self):
+        text = narrative._score_template(narrative._score_facts(self._score()))
+        self.assertIn("观望", text)
+        self.assertIn("盈利能力", text)
+        self.assertIn("成长能力", text)
+
+    def test_generate_score_narrative_and_cache(self):
+        fake_analyze = mock.MagicMock(return_value={"score": self._score()})
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            narrative.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(narrative, "analyze_stock", fake_analyze), mock.patch.object(
+            narrative, "_load_score_financials", return_value={}
+        ), mock.patch.object(
+            narrative, "has_live_llm", return_value=False
+        ):
+            first = narrative.generate_score_narrative("600519.SH")
+            second = narrative.generate_score_narrative("600519.SH")
+            third = narrative.generate_score_narrative("600519.SH", refresh=True)
+
+        self.assertEqual(first["source"], "template")
+        self.assertIn("观望", first["text"])
+        self.assertEqual(second["generated_at"], first["generated_at"])
+        self.assertEqual(fake_analyze.call_count, 2)
+
+
+class TestValuationNarrative(unittest.TestCase):
+    def _result(self):
+        return {
+            "stock": Stock("600519", Market.SH, "贵州茅台"),
+            "snapshot": None,
+            "valuation": [
+                ValuationResult(
+                    "relative", 100.0, 120.0, 110.0, 0.05,
+                    assumptions={"formula": "历史PE中位数×EPS"}, inputs={"eps": 10},
+                ),
+                ValuationResult(
+                    "dcf", 90.0, 130.0, 110.0, 0.1,
+                    assumptions={"formula": "两阶段FCFE", "growth": 0.1, "discount": 0.09},
+                    inputs={"fcf": 1e9, "shares": 1e8},
+                ),
+            ],
+        }
+
+    def test_valuation_template(self):
+        facts = narrative._valuation_facts(self._result(), {})
+        sections = narrative._valuation_template(facts)
+        titles = [section["title"] for section in sections]
+        self.assertIn("相对估值", titles)
+        self.assertIn("现金流折现", titles)
+        self.assertIn("综合判断", titles)
+        joined = "".join(section["content"] for section in sections)
+        self.assertIn("历史PE中位数×EPS", joined)
+
+    def test_generate_valuation_narrative_and_cache(self):
+        fake_analyze = mock.MagicMock(return_value=self._result())
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            narrative.paths, "cache_dir", return_value=Path(tmp)
+        ), mock.patch.object(narrative, "analyze_stock", fake_analyze), mock.patch.object(
+            narrative, "_load_score_financials", return_value={}
+        ), mock.patch.object(narrative, "has_live_llm", return_value=False):
+            first = narrative.generate_valuation_narrative("600519.SH")
+            second = narrative.generate_valuation_narrative("600519.SH")
+            third = narrative.generate_valuation_narrative("600519.SH", refresh=True)
+
+        self.assertEqual(first["source"], "template")
+        self.assertGreaterEqual(len(first["sections"]), 2)
+        self.assertIn("相对估值", [section["title"] for section in first["sections"]])
+        self.assertEqual(second["generated_at"], first["generated_at"])
+        self.assertEqual(fake_analyze.call_count, 2)
+
+
+class TestPrompt(unittest.TestCase):
+    def test_load_overview_prompt(self):
+        text = load_prompt("overview_narrative")
+        self.assertIn("护城河", text)
+        self.assertIn("sections", text)
+
+
+if __name__ == "__main__":
+    unittest.main()

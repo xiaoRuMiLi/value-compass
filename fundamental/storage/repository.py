@@ -38,6 +38,31 @@ def get_or_create_stock(conn: sqlite3.Connection, stock: Stock) -> int:
     return int(cursor.lastrowid)
 
 
+def get_or_create_industry(
+    conn: sqlite3.Connection, name: str, code: str | None = None, source: str = "eastmoney"
+) -> int:
+    """按名称幂等获取行业主表 id，形成行业 → 多股的一对多关系。"""
+
+    row = conn.execute(
+        "SELECT id FROM industries WHERE name = ? AND source = ?", (name, source)
+    ).fetchone()
+    if row:
+        return int(row["id"])
+    cursor = conn.execute(
+        "INSERT INTO industries (code, name, source) VALUES (?, ?, ?)", (code, name, source)
+    )
+    return int(cursor.lastrowid)
+
+
+def set_stock_industry(
+    conn: sqlite3.Connection, stock_id: int, industry_id: int, industry: str, sector: str | None
+) -> None:
+    conn.execute(
+        "UPDATE stocks SET industry_id = ?, industry = ?, sector = ? WHERE id = ?",
+        (industry_id, industry, sector, stock_id),
+    )
+
+
 def insert_many(
     conn: sqlite3.Connection,
     table: str,

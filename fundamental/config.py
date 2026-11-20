@@ -15,11 +15,14 @@ _CONFIG_ORDER = (
     "products.toml",
     "official.toml",
     "famous_traders.toml",
+    "llm.toml",
 )
 
 _ENV_OVERRIDES = {
     "VALUE_COMPASS_HOST": ("web", "host"),
     "VALUE_COMPASS_PORT": ("web", "port"),
+    "LLM_PROVIDER": ("llm", "provider"),
+    "LLM_MODEL": ("llm", "model"),
 }
 
 

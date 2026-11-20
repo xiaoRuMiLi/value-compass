@@ -29,6 +29,10 @@ def evaluate_relative(
         fair_value_high=round(fair_high, 2),
         current_price=current_price,
         margin_of_safety=round(margin, 4),
-        assumptions={"median_pe": round(median_pe, 2), "pe_percentile": round(percentile, 4)},
+        assumptions={
+            "formula": "合理价 = 历史PE中位数 × EPS；区间取20%与80%分位PE × EPS",
+            "median_pe": round(median_pe, 2),
+            "pe_percentile": round(percentile, 4),
+        },
         inputs={"eps": eps, "current_pe": current_pe},
     )
