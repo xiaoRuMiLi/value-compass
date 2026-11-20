@@ -12,7 +12,7 @@ from fundamental.utils import paths
 _NARRATIVE_VERSION = 3
 
 # 大师档案/输入结构升级时递增，只让大师解读缓存失效，不影响其他叙述缓存。
-_MASTERS_PROMPT_VERSION = 2
+_MASTERS_PROMPT_VERSION = 3
 
 
 def _plain(value: Any) -> Any:

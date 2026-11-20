@@ -59,10 +59,10 @@ value-compass/
 │   ├── providers/                    # 数据提供者，按能力分域（Ports & Adapters）
 │   │   ├── registry.py               # 能力 → 默认源/备用源/优先级
 │   │   ├── _shared/                  # 公共传输：HTTP、重试、限流、缓存
-│   │   ├── quote/                    # 实时行情 + 复权 K 线
+│   │   ├── quote/                    # 实时行情 + 复权 K 线（含港股估值快照）
 │   │   │   ├── port.py
-│   │   │   └── eastmoney.py
-│   │   ├── financial/                # 财务指标、三大报表、主营构成
+│   │   │   └── eastmoney.py          # 港股走 RPT_HKF10_FN_MAININDICATOR 取 PE_TTM/PB_TTM
+│   │   ├── financial/                # 财务指标、三大报表、主营构成（港股走 HKF10 主要指标）
 │   │   ├── announcement/             # 公告 + 财报 PDF + 招股书
 │   │   ├── sentiment/                # 公众情绪（股吧）
 │   │   ├── holding/                  # 股东 / 机构 / 基金持仓

@@ -108,6 +108,38 @@ class EastmoneyQuoteProvider:
         code, market = parse_symbol(symbol)
         secucode = f"{code}.{market.value}"
         points: list[ValuationPoint] = []
+        if market == Market.HK:
+            # 港股 PE_TTM/PB_TTM 随主要指标按报告期披露，取最近若干期作为估值快照。
+            payload = self.client.get_json(
+                _VALUATION_URL,
+                params={
+                    "reportName": "RPT_HKF10_FN_MAININDICATOR",
+                    "columns": "ALL",
+                    "filter": f'(SECUCODE="{secucode}")',
+                    "pageNumber": "1",
+                    "pageSize": "500",
+                    "sortTypes": "-1",
+                    "sortColumns": "STD_REPORT_DATE",
+                    "source": "F10",
+                    "client": "PC",
+                },
+                ttl=3600,
+            )
+            for row in (payload.get("result") or {}).get("data") or []:
+                trade_date = str(row.get("STD_REPORT_DATE") or "")[:10]
+                if start and trade_date < start:
+                    continue
+                if end and trade_date > end:
+                    continue
+                points.append(
+                    ValuationPoint(
+                        trade_date=trade_date,
+                        pe_ttm=to_float(row.get("PE_TTM")),
+                        pb_mrq=to_float(row.get("PB_TTM")),
+                        total_market_cap=to_float(row.get("TOTAL_MARKET_CAP")),
+                    )
+                )
+            return points
         page = 1
         while True:
             payload = self.client.get_json(

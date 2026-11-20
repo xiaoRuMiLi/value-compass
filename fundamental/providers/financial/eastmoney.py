@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from fundamental.models import (
     AuditOpinion,
     FinancialReport,
+    Market,
     ReportType,
     RevenueComposition,
     RevenueDimension,
@@ -118,6 +119,33 @@ def _chunks(values: list[str], size: int) -> Iterator[list[str]]:
         yield values[index : index + size]
 
 
+# 港股主要指标报表：东财对港股用独立数据集，字段与 A 股不同。
+_HK_MAINFIN_REPORT = "RPT_HKF10_FN_MAININDICATOR"
+_HK_DATE_TYPE = {"001": ReportType.FY, "003": ReportType.Q1, "002": ReportType.H1, "004": ReportType.Q3}
+_HK_FIELDS = {
+    "revenue": "OPERATE_INCOME",
+    "net_profit": "HOLDER_PROFIT",  # 归母净利润
+    "gross_margin": "GROSS_PROFIT_RATIO",
+    "net_margin": "NET_PROFIT_RATIO",
+    "roe": "ROE_AVG",
+    "roic": "ROIC_YEARLY",
+    "debt_ratio": "DEBT_ASSET_RATIO",
+    "current_ratio": "CURRENT_RATIO",
+    "ocf": "NETCASH_OPERATE",
+    "eps": "BASIC_EPS",
+    "bps": "BPS",
+    "revenue_yoy": "OPERATE_INCOME_YOY",
+    "net_profit_yoy": "HOLDER_PROFIT_YOY",
+}
+
+
+def _hk_report_type(row: dict) -> ReportType:
+    by_code = _HK_DATE_TYPE.get(str(row.get("DATE_TYPE_CODE") or ""))
+    if by_code:
+        return by_code
+    return _report_type(str(row.get("STD_REPORT_DATE") or "")[:10])
+
+
 @register("financial", "eastmoney")
 class EastmoneyFinancialProvider:
     def __init__(self, client: HttpClient | None = None) -> None:
@@ -133,6 +161,8 @@ class EastmoneyFinancialProvider:
         report_types: list[str] | None = None,
     ) -> list[FinancialReport]:
         code, market = parse_symbol(symbol)
+        if market == Market.HK:
+            return self._fetch_hk_financials(code, start, end, report_types)
         secucode = f"{code}.{market.value}"
         wanted = {ReportType(t).value for t in report_types} if report_types else None
         results: list[FinancialReport] = []
@@ -180,6 +210,62 @@ class EastmoneyFinancialProvider:
                         revenue_yoy=to_float(row.get("TOTALOPERATEREVETZ")),
                         net_profit_yoy=to_float(row.get("PARENTNETPROFITTZ")),
                         audit_opinion=_audit_opinion(row.get("OPINION_TYPE")),
+                    )
+                )
+            if len(rows) < 500:
+                break
+            page += 1
+        return results
+
+    def _fetch_hk_financials(
+        self,
+        code: str,
+        start: str | None = None,
+        end: str | None = None,
+        report_types: list[str] | None = None,
+    ) -> list[FinancialReport]:
+        """港股财务主要指标（东财 RPT_HKF10_FN_MAININDICATOR）。
+
+        港股多数公司只披露年报与中报；季报口径的 ROE 为年化值（ROE_YEARLY），
+        年报则用 ROE_AVG（=ROE_YEARLY），可直接映射到 FinancialReport.roe。
+        """
+        secucode = f"{code}.HK"
+        wanted = {ReportType(t).value for t in report_types} if report_types else None
+        results: list[FinancialReport] = []
+        page = 1
+        while True:
+            payload = self.client.get_json(
+                _MAINFINA_URL,
+                params={
+                    "reportName": _HK_MAINFIN_REPORT,
+                    "columns": "ALL",
+                    "filter": f'(SECUCODE="{secucode}")',
+                    "pageNumber": str(page),
+                    "pageSize": "500",
+                    "sortTypes": "-1",
+                    "sortColumns": "STD_REPORT_DATE",
+                    "source": "F10",
+                    "client": "PC",
+                },
+                ttl=3600,
+            )
+            rows = (payload.get("result") or {}).get("data") or []
+            if not rows:
+                break
+            for row in rows:
+                report_date = str(row.get("STD_REPORT_DATE") or "")[:10]
+                report_type = _hk_report_type(row)
+                if start and report_date < start:
+                    continue
+                if end and report_date > end:
+                    continue
+                if wanted and report_type.value not in wanted:
+                    continue
+                results.append(
+                    FinancialReport(
+                        report_date=report_date,
+                        report_type=report_type,
+                        **{field: to_float(row.get(source)) for field, source in _HK_FIELDS.items()},
                     )
                 )
             if len(rows) < 500:
