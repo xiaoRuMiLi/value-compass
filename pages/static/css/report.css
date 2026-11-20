@@ -442,6 +442,42 @@ main {
   color: #64748b;
 }
 
+.vp-sellside,
+.vp-citations {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.vp-ss-summary {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #4b5563;
+}
+
+.vp-ss-chips {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #1d4ed8;
+}
+
+.vp-cite-link,
+.vp-cite-line {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #64748b;
+  text-decoration: none;
+}
+
+.vp-cite-link:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
 .vp-card,
 .vp-reinvest {
   margin-top: 10px;

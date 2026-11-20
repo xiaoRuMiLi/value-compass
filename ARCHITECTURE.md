@@ -67,7 +67,9 @@ value-compass/
 │   │   ├── announcement/             # 公告 + 财报 PDF + 招股书
 │   │   ├── sentiment/                # 公众情绪（股吧）
 │   │   ├── holding/                  # 股东 / 机构 / 基金持仓
-│   │   ├── research/                 # 研报
+│   │   ├── research/                 # 个股研报（评级/目标价/EPS 预测）
+│   │   ├── industry_research/        # 行业研报（东财 qType=1，按行业代码）
+│   │   ├── survey/                   # 机构调研纪要（东财 RPT_ORG_SURVEY，带正文）
 │   │   ├── industry/                 # 行业动态
 │   │   ├── litigation/               # 诉讼
 │   │   ├── dividend/                 # 历史分红送配
@@ -92,8 +94,8 @@ value-compass/
 │   │       ├── _overview.py          # 个股概览叙述
 │   │       ├── _score.py             # 五维评分解读
 │   │       ├── _valuation.py         # 估值模型解读
-│   │       ├── _masters.py           # 大师观点解读（基本面 + 行业/同业 + 财报 + 估值 + 档案 → LLM）
-│   │       └── _valuation_params.py  # 估值参数校准（LLM 给保守 g/r → 边界钳制 → 公式重算 + 10 年复投 + 综合合理价区间）
+│   │       ├── _masters.py           # 大师观点解读（基本面 + 行业/同业 + 财报 + 估值 + 档案 + 情报资料 → LLM）
+│   │       └── _valuation_params.py  # 估值参数校准（LLM 保守 g/r → 钳制 → 重算 + 复投 + 合理价区间 + 引用清单/卖方分歧度）
 │   ├── analysis/                     # 纯计算，不 import 任何具体数据源
 │   │   ├── financial.py              # 财务质量评分
 │   │   ├── comparison.py             # 横向对比（市占率、指标趋势、排名）
@@ -132,6 +134,7 @@ value-compass/
 │       ├── logging.py
 │       ├── pdf.py                    # PDF 文本提取
 │       ├── research_text.py          # 东财研报正文与元数据抓取（schema 版本/TTL/按篇复用/失败降级）
+│       ├── intel.py                  # 统一情报门面：个股研报 + 行业研报 + 机构调研（分类型 TTL 缓存/失败降级）
 │       └── paths.py
 │
 ├── pages/                            # 标准交互页面，可共用、参数化
@@ -173,7 +176,7 @@ value-compass/
 ├── generated/                        # 非标准、按临时要求生成的一次性展示 HTML
 │
 ├── data/
-│   ├── cache/                        # 原始响应缓存 + 叙述缓存 + 研报资料缓存（TTL/版本号）
+│   ├── cache/                        # 原始响应缓存 + 叙述缓存 + 研报/情报资料缓存（TTL/版本号）
 │   ├── db/
 │   │   └── fundamental.db            # SQLite 主库
 │   └── archive/                      # 永久本地存档，不清除
@@ -245,7 +248,9 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 | 公告与报告 | `announcement` | 巨潮、东财 | 公告、财报 PDF、招股书 |
 | 公众情绪 | `sentiment` | 股吧 | 帖子、阅读/回复数 |
 | 持仓 | `holding` | 东财、天天基金 | 十大流通股东（牛散/机构）、基金持仓 |
-| 研报 | `research` | 东财 | 研报、评级 |
+| 研报 | `research` | 东财 | 研报、评级、目标价、今/明/后三年 EPS 预测 |
+| 行业研报 | `industry_research` | 东财 | 按行业代码的行业策略/跟踪研报（qType=1） |
+| 机构调研 | `survey` | 东财 | 投资者关系活动记录、调研问答正文（RPT_ORG_SURVEY） |
 | 行业动态 | `industry` | 东财 | 行业板块、资金流 |
 | 诉讼 | `litigation` | 巨潮 | 诉讼/仲裁公告 |
 | 分红送配 | `dividend` | 东财 | 每股分红、送转、除权除息日 |

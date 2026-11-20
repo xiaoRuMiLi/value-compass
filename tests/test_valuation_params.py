@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -14,10 +14,12 @@ import fundamental.services.narrative._valuation_params as vp
 import fundamental.utils.research_text as rt
 from fundamental.services.narrative._valuation_params import (
     _dividend_reinvestment,
+    _citations,
     _fallback_params,
     _normalize_params,
     _overall_range,
     _recompute,
+    _sellside_sentiment,
 )
 
 
@@ -117,6 +119,56 @@ class TestRecompute(unittest.TestCase):
         self.assertIsNone(_overall_range({"ddm": {"fair_value_low": 10, "fair_value_high": 5}}))
 
 
+class TestSellsideAndCitations(unittest.TestCase):
+    def test_summarizes_ratings_changes_and_targets(self):
+        today = date.today().isoformat()
+        reports = [
+            {
+                "date": today,
+                "rating": "buy",
+                "rating_change": "maintain",
+                "target_price": 50.0,
+            },
+            {
+                "date": today,
+                "rating": "overweight",
+                "rating_change": "upgrade",
+                "target_price": 60.0,
+            },
+            {"date": "2020-01-01", "rating": "buy", "rating_change": "downgrade"},
+        ]
+        result = vp._sellside_sentiment(reports)
+        self.assertEqual(result["total"], 3)
+        self.assertEqual(result["recent_count"], 2)
+        self.assertEqual(result["rating_distribution"]["buy"], 2)
+        self.assertEqual(result["rating_changes"]["upgrade"], 1)
+        self.assertEqual(result["target_price_low"], 50.0)
+        self.assertEqual(result["target_price_high"], 60.0)
+        self.assertIn("买入", result["summary"])
+
+    def test_empty_reports_are_explicit(self):
+        result = _sellside_sentiment([])
+        self.assertEqual(result["total"], 0)
+        self.assertIn("暂无研报覆盖", result["summary"])
+
+    def test_citations_cover_all_kinds(self):
+        intel = {
+            "company_reports": [
+                {"date": "2026-11-03", "org": "东海证券", "title": "公司简评", "url": "http://a"}
+            ],
+            "industry_reports": [
+                {"date": "2026-11-18", "org": "华宝证券", "title": "行业跟踪", "url": "http://b"}
+            ],
+            "surveys": [
+                {"date": "2026-11-11", "org": "招商银行", "title": "业绩交流会", "url": ""}
+            ],
+        }
+        citations = _citations(intel)
+        self.assertEqual([item["kind"] for item in citations], ["个股研报", "行业研报", "机构调研"])
+        self.assertEqual(citations[0]["url"], "http://a")
+        self.assertEqual(citations[-1]["url"], "")
+
+
 class TestDividendReinvestment(unittest.TestCase):
     def test_compounds_dividends(self):
         r = _dividend_reinvestment(dps=2.0, price=40.0, growth=0.03, years=10)
@@ -153,7 +205,7 @@ class TestGenerateValuationParams(unittest.TestCase):
         ), mock.patch.object(vp, "analyze_stock", return_value=self._result()), mock.patch.object(
             vp, "_load_score_financials", return_value={"annual_growth": [{"net_profit_yoy": 8}]}
         ), mock.patch.object(vp, "_load_master_context", return_value={}), mock.patch.object(
-            vp, "load_research_digest", return_value=[]
+            vp, "load_intel_digest", return_value={"company_reports": []}
         ), mock.patch.object(vp, "has_live_llm", return_value=False):
             out = vp.generate_valuation_params("600519.SH", refresh=True)
 
@@ -172,7 +224,9 @@ class TestGenerateValuationParams(unittest.TestCase):
         ), mock.patch.object(vp, "analyze_stock", return_value=self._result()), mock.patch.object(
             vp, "_load_score_financials", return_value={}
         ), mock.patch.object(vp, "_load_master_context", return_value={}), mock.patch.object(
-            vp, "load_research_digest", return_value=[{"date": "x", "org": "y", "title": "z", "content": "c"}]
+            vp, "load_intel_digest", return_value={
+                "company_reports": [{"date": "x", "org": "y", "title": "z", "content": "c"}]
+            }
         ), mock.patch.object(vp, "has_live_llm", return_value=True), mock.patch.object(
             vp, "chat_json", return_value=llm_out
         ) as fake_chat:
@@ -192,7 +246,7 @@ class TestGenerateValuationParams(unittest.TestCase):
         ), mock.patch.object(vp, "analyze_stock", return_value=self._result()), mock.patch.object(
             vp, "_load_score_financials", return_value={}
         ), mock.patch.object(vp, "_load_master_context", return_value={}), mock.patch.object(
-            vp, "load_research_digest", return_value=[]
+            vp, "load_intel_digest", return_value={"company_reports": []}
         ), mock.patch.object(vp, "has_live_llm", return_value=False):
             first = vp.generate_valuation_params("600519.SH", refresh=True)
             cache_path = vp._valuation_params_cache_path("600519.SH")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from fundamental.models import Rating, ResearchReport
+from fundamental.models import Rating, RatingChange, ResearchReport
 from fundamental.providers._shared import HttpClient, RateLimiter, ResponseCache
 from fundamental.providers._shared.convert import to_float
 from fundamental.providers.registry import register
@@ -30,6 +30,20 @@ def _to_rating(value: object) -> Rating | None:
         if word in value:
             return rating
     return None
+
+
+def _to_rating_change(current: object, previous: object) -> RatingChange | None:
+    """东财 emRatingValue 数值越大越乐观，与上期比较得出评级变动。"""
+
+    now = to_float(current)
+    before = to_float(previous)
+    if now is None or before is None:
+        return None
+    if now > before:
+        return RatingChange.UPGRADE
+    if now < before:
+        return RatingChange.DOWNGRADE
+    return RatingChange.MAINTAIN
 
 
 def _eps_forecast(row: dict[str, object]) -> dict[str, float]:
@@ -89,6 +103,9 @@ class EastmoneyResearchProvider:
                         org_name=row.get("orgSName") or row.get("orgName"),
                         analyst=row.get("researcher") or None,
                         rating=_to_rating(row.get("emRatingName")),
+                        rating_change=_to_rating_change(
+                            row.get("emRatingValue"), row.get("lastEmRatingValue")
+                        ),
                         target_price=to_float(row.get("indvAimPriceT"))
                         or to_float(row.get("indvAimPriceL")),
                         title=str(row.get("title") or ""),
@@ -97,6 +114,7 @@ class EastmoneyResearchProvider:
                         else None,
                         info_code=info_code or None,
                         industry_name=row.get("indvInduName") or None,
+                        industry_code=str(row.get("indvInduCode") or "") or None,
                         eps_forecast=_eps_forecast(row),
                     )
                 )

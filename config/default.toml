@@ -13,5 +13,13 @@ cache_ttl_days = 7
 max_reports = 4
 chars_per_report = 1200
 
+[intel]
+industry_ttl_days = 3
+survey_ttl_days = 30
+industry_limit = 3
+survey_limit = 3
+industry_chars = 800
+survey_chars = 1000
+
 [logging]
 level = "INFO"

@@ -363,6 +363,38 @@
       box.appendChild(hero);
     }
 
+    const sellside = data.sellside;
+    if (sellside && sellside.total) {
+      const card = el("div", "vp-sellside");
+      card.appendChild(el("div", "vp-card-head", "卖方观点与分歧度"));
+      if (sellside.summary) card.appendChild(el("div", "vp-ss-summary", sellside.summary));
+      const ratingNames = { buy: "买入", overweight: "增持", neutral: "中性", underweight: "减持", sell: "卖出" };
+      const dist = sellside.rating_distribution || {};
+      const chips = Object.keys(dist).map((key) => `${ratingNames[key] || key} ${dist[key]} 家`);
+      if (chips.length) card.appendChild(el("div", "vp-ss-chips", chips.join(" · ")));
+      box.appendChild(card);
+    }
+
+    const citations = data.citations || [];
+    if (citations.length) {
+      const card = el("div", "vp-citations");
+      card.appendChild(el("div", "vp-card-head", `参考资料（${citations.length} 条，可点击溯源）`));
+      for (const item of citations) {
+        const meta = `${item.kind} · ${item.date} · ${item.org || "未知机构"}`;
+        const label = `${meta} · ${item.title}`;
+        if (item.url) {
+          const link = el("a", "vp-cite-link", label);
+          link.href = item.url;
+          link.target = "_blank";
+          link.rel = "noopener";
+          card.appendChild(link);
+        } else {
+          card.appendChild(el("div", "vp-cite-line", label));
+        }
+      }
+      box.appendChild(card);
+    }
+
     const names = { ddm: "股利折现", dcf: "现金流折现" };
     for (const method of ["ddm", "dcf"]) {
       const p = params[method];
@@ -427,6 +459,7 @@
   function loadMastersNarrative() {
     getJSON(`/api/stock/${symbol}/masters-narrative`)
       .then((data) => {
+        const intelCount = data.intel_count || 0;
         for (const item of data.masters || []) {
           const card = document.getElementById(`master-${item.master}`);
           if (!card) continue;
@@ -442,7 +475,9 @@
             source = el("span", "master-source");
             card.appendChild(source);
           }
-          source.textContent = item.source === "llm" ? "LLM 解读" : "模板解读";
+          source.textContent =
+            (item.source === "llm" ? "LLM 解读" : "模板解读") +
+            (intelCount ? ` · 参考 ${intelCount} 条资料` : "");
         }
       })
       .catch(() => {

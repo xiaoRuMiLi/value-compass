@@ -315,7 +315,22 @@ class ResearchReport:
     source_url: Optional[str] = None
     info_code: Optional[str] = None
     industry_name: Optional[str] = None
+    industry_code: Optional[str] = None
     eps_forecast: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SurveyRecord:
+    """机构调研/投资者关系活动记录（公开纪要）。"""
+
+    publish_date: Optional[str] = None
+    company: Optional[str] = None
+    title: str = ""
+    content: str = ""
+    participants: Optional[str] = None
+    way: Optional[str] = None
+    source_url: Optional[str] = None
+    source_key: Optional[str] = None
 
 
 @dataclass(frozen=True)

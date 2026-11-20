@@ -10,6 +10,7 @@ from fundamental.models import ChatMessage
 from fundamental.providers.llm.port import LlmConfigError, LlmError
 from fundamental.services.analyze import analyze_stock
 from fundamental.services.llm import chat, has_live_llm
+from fundamental.utils.intel import load_intel_digest
 from fundamental.utils.prompts import load_prompt
 
 from ._common import (
@@ -34,11 +35,36 @@ def _value(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+def _intel_facts(intel: dict[str, Any] | None) -> dict[str, Any]:
+    """把情报资料压成适合 prompt 的摘录，控制体量并明确使用边界。"""
+
+    intel = intel or {}
+
+    def brief(key: str, chars: int, limit: int = 2) -> list[dict[str, Any]]:
+        return [
+            {
+                "date": item.get("date") or "",
+                "org": item.get("org") or "",
+                "title": item.get("title") or "",
+                "excerpt": (item.get("content") or "")[:chars],
+            }
+            for item in (intel.get(key) or [])[:limit]
+        ]
+
+    return {
+        "company_reports": brief("company_reports", 320),
+        "industry_reports": brief("industry_reports", 320),
+        "surveys": brief("surveys", 400),
+        "note": "卖方研报与调研纪要代表第三方观点，非公司已实现事实；不得据此改写量化结论。",
+    }
+
+
 def _master_facts(
     result: dict[str, Any],
     financials: dict[str, Any],
     verdict: Any,
     context: dict[str, Any] | None = None,
+    intel: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     context = context or {}
     basics = context.get("company_basics") or {}
@@ -106,6 +132,7 @@ def _master_facts(
         },
         "red_flags": [flag.description for flag in (result.get("red_flags") or [])],
         "review_summary": _value(review, "summary") or "",
+        "intel": _intel_facts(intel),
     }
 
 
@@ -152,6 +179,17 @@ def _master_template(facts: dict[str, Any]) -> str:
     market = facts.get("market_valuation")
     if market and market.get("summary"):
         parts.append(market["summary"])
+
+    intel = facts.get("intel") or {}
+    reports = intel.get("company_reports") or []
+    if reports:
+        first = reports[0]
+        parts.append(
+            f"近期卖方观点可参考{first.get('org') or '券商'}《{first.get('title') or '研报'}》，属第三方判断。"
+        )
+    surveys = intel.get("surveys") or []
+    if surveys:
+        parts.append(f"公开调研记录显示公司近期有{surveys[0].get('title') or '投资者关系活动'}，管理层表述仍需验证。")
 
     moat_rating = (facts.get("moat") or {}).get("rating")
     if moat_rating:
@@ -227,9 +265,10 @@ def generate_masters_narrative(
 
     financials = _load_master_financials(symbol, db_path)
     context = _load_master_context(symbol, db_path)
+    intel = load_intel_digest(symbol, refresh=refresh)
     masters: list[dict[str, Any]] = []
     for verdict in verdicts:
-        facts = _master_facts(result, financials, verdict, context)
+        facts = _master_facts(result, financials, verdict, context, intel)
         text, source = _master_finalize(facts)
         masters.append(
             {
@@ -247,6 +286,10 @@ def generate_masters_narrative(
         "source": "llm" if any(item["source"] == "llm" for item in masters) else "template",
         "generated_at": _now(),
         "masters_version": _MASTERS_PROMPT_VERSION,
+        "intel_count": sum(
+            len(intel.get(key) or [])
+            for key in ("company_reports", "industry_reports", "surveys")
+        ),
     }
     _write_cache(cache_path, output)
     return output

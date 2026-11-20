@@ -31,7 +31,7 @@ class TestRegistry(unittest.TestCase):
     def test_all_capabilities_registered(self):
         capabilities = registry.registered_capabilities()
         self.assertIn("llm", capabilities)
-        self.assertEqual(len(capabilities), 18)
+        self.assertEqual(len(capabilities), 20)
 
     def test_primary_source_from_config(self):
         settings = load_settings()

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +16,8 @@ from fundamental.models import ChatMessage
 from fundamental.providers.llm.port import LlmConfigError, LlmError
 from fundamental.services.analyze import analyze_stock
 from fundamental.services.llm import chat_json, has_live_llm
+from fundamental.utils.intel import load_intel_digest
 from fundamental.utils.prompts import load_prompt
-from fundamental.utils.research_text import load_research_digest
 
 from ._common import (
     _build_prompt,
@@ -34,9 +35,17 @@ _TERMINAL_MIN, _TERMINAL_MAX = 0.0, 0.04
 _GAP = 0.02  # discount - growth 的最小间距
 
 # 校准逻辑升级时递增，让缓存失效。
-_VALUATION_PARAMS_VERSION = 2
+_VALUATION_PARAMS_VERSION = 3
 
 _METHOD_LABELS = {"ddm": "股利折现", "dcf": "现金流折现"}
+_RATING_LABELS = {
+    "buy": "买入",
+    "overweight": "增持",
+    "neutral": "中性",
+    "underweight": "减持",
+    "sell": "卖出",
+}
+_CHANGE_LABELS = {"upgrade": "上调", "downgrade": "下调", "maintain": "维持"}
 
 
 def _num(value: Any, default: float) -> float:
@@ -167,7 +176,8 @@ def _valuation_facts(
     result: dict[str, Any],
     financials: dict[str, Any],
     context: dict[str, Any],
-    research: list[dict[str, str]],
+    research: list[dict[str, Any]],
+    intel: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     snapshot = result.get("snapshot")
     price = snapshot.price if snapshot else None
@@ -197,6 +207,27 @@ def _valuation_facts(
         "dividend_history": financials.get("dividend_history", []),
         "model_inputs": {"dps": dps, "fcf": fcf, "shares": shares, "price": price},
         "research_reports": research,
+        "sellside": _sellside_sentiment(research),
+        "intel": {
+            "industry_reports": [
+                {
+                    "date": item.get("date") or "",
+                    "org": item.get("org") or "",
+                    "title": item.get("title") or "",
+                    "excerpt": (item.get("content") or "")[:300],
+                }
+                for item in (intel or {}).get("industry_reports", [])[:2]
+            ],
+            "surveys": [
+                {
+                    "date": item.get("date") or "",
+                    "org": item.get("org") or "",
+                    "title": item.get("title") or "",
+                    "excerpt": (item.get("content") or "")[:400],
+                }
+                for item in (intel or {}).get("surveys", [])[:2]
+            ],
+        },
     }
 
 
@@ -244,6 +275,86 @@ def _overall_range(calibrated: dict[str, Any]) -> dict[str, Any] | None:
         "methods": methods,
         "note": note,
     }
+
+
+def _sellside_sentiment(
+    reports: list[dict[str, Any]] | None, window_days: int = 30
+) -> dict[str, Any]:
+    """卖方分歧度：评级分布、目标价区间与近期评级变动（数据缺失则明确标注）。"""
+
+    reports = reports or []
+    distribution: dict[str, int] = {}
+    changes = {"upgrade": 0, "downgrade": 0, "maintain": 0}
+    targets: list[float] = []
+    recent = 0
+    today = date.today()
+    for report in reports:
+        rating = report.get("rating")
+        if isinstance(rating, str) and rating:
+            distribution[rating] = distribution.get(rating, 0) + 1
+        change = report.get("rating_change")
+        if isinstance(change, str) and change in changes:
+            changes[change] += 1
+        target = report.get("target_price")
+        if isinstance(target, (int, float)) and target > 0:
+            targets.append(float(target))
+        raw_date = str(report.get("date") or "")[:10]
+        try:
+            if (today - date.fromisoformat(raw_date)).days <= window_days:
+                recent += 1
+        except ValueError:
+            pass
+
+    if not reports:
+        summary = "暂无研报覆盖，卖方观点数据不足。"
+    else:
+        parts = [f"研报共 {len(reports)} 篇，近 {window_days} 天 {recent} 篇"]
+        top = sorted(distribution.items(), key=lambda item: -item[1])[:2]
+        if top:
+            parts.append(
+                "评级分布："
+                + "、".join(f"{_RATING_LABELS.get(key, key)}{value}家" for key, value in top)
+            )
+        moves = [f"{_CHANGE_LABELS[key]}{value}家" for key, value in changes.items() if value]
+        if moves:
+            parts.append("评级变动：" + "、".join(moves))
+        if targets:
+            parts.append(f"目标价 {min(targets):.2f}~{max(targets):.2f} 元")
+        summary = "；".join(parts) + "。卖方观点仅供参考，可能偏乐观。"
+
+    return {
+        "total": len(reports),
+        "recent_count": recent,
+        "window_days": window_days,
+        "rating_distribution": distribution,
+        "rating_changes": changes,
+        "target_price_low": round(min(targets), 2) if targets else None,
+        "target_price_high": round(max(targets), 2) if targets else None,
+        "summary": summary,
+    }
+
+
+def _citations(intel: dict[str, Any] | None) -> list[dict[str, str]]:
+    """汇总可溯源的参考资料清单（日期/机构/标题/原文链接）。"""
+
+    groups = (
+        ("个股研报", "company_reports"),
+        ("行业研报", "industry_reports"),
+        ("机构调研", "surveys"),
+    )
+    citations: list[dict[str, str]] = []
+    for kind, key in groups:
+        for item in ((intel or {}).get(key) or [])[:4]:
+            citations.append(
+                {
+                    "kind": kind,
+                    "date": str(item.get("date") or ""),
+                    "org": str(item.get("org") or ""),
+                    "title": str(item.get("title") or ""),
+                    "url": str(item.get("url") or ""),
+                }
+            )
+    return citations[:10]
 
 
 def _recompute(facts: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
@@ -332,10 +443,13 @@ def generate_valuation_params(
 
     financials = _load_score_financials(symbol, db_path)
     context = _load_master_context(symbol, db_path)
-    research = load_research_digest(symbol, limit=research_limit, refresh=refresh)
-    facts = _valuation_facts(result, financials, context, research)
+    intel = load_intel_digest(symbol, refresh=refresh, research_limit=research_limit)
+    research = intel.get("company_reports") or []
+    facts = _valuation_facts(result, financials, context, research, intel)
 
     output = _finalize(facts)
+    output["sellside"] = _sellside_sentiment(research)
+    output["citations"] = _citations(intel)
     output["symbol"] = symbol
     output["generated_at"] = _now()
     output["params_version"] = _VALUATION_PARAMS_VERSION

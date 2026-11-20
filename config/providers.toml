@@ -17,6 +17,12 @@ primary = "eastmoney"
 [providers.research]
 primary = "eastmoney"
 
+[providers.industry_research]
+primary = "eastmoney"
+
+[providers.survey]
+primary = "eastmoney"
+
 [providers.industry]
 primary = "eastmoney"
 

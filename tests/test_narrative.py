@@ -285,6 +285,48 @@ class TestMastersNarrative(unittest.TestCase):
             "market_valuation": {"summary": "PE(TTM) 23.36 倍，PB 2.4 倍。"},
         }
 
+    def test_facts_include_intel_excerpts(self):
+        intel = {
+            "company_reports": [
+                {
+                    "date": "2026-11-03",
+                    "org": "东海证券",
+                    "title": "公司简评",
+                    "content": "研报正文内容" * 60,
+                }
+            ],
+            "surveys": [
+                {
+                    "date": "2026-11-11",
+                    "org": "招商银行",
+                    "title": "业绩交流会（2026-11-11）",
+                    "content": "调研纪要内容" * 80,
+                }
+            ],
+        }
+        facts = _masters._master_facts(
+            self._result(), self._financials(), self._verdict(), self._context(), intel
+        )
+        self.assertEqual(facts["intel"]["company_reports"][0]["org"], "东海证券")
+        self.assertEqual(len(facts["intel"]["company_reports"][0]["excerpt"]), 320)
+        self.assertEqual(len(facts["intel"]["surveys"][0]["excerpt"]), 400)
+
+    def test_template_mentions_third_party_views(self):
+        intel = {
+            "company_reports": [
+                {
+                    "date": "2026-11-03",
+                    "org": "东海证券",
+                    "title": "公司简评",
+                    "content": "研报正文内容",
+                }
+            ]
+        }
+        facts = _masters._master_facts(
+            self._result(), self._financials(), self._verdict(), self._context(), intel
+        )
+        self.assertIn("第三方判断", _masters._master_template(facts))
+
     def test_year_summary_has_annual_and_quarter(self):
         row = {
             "report_date": "2025-03-31",
@@ -375,6 +417,7 @@ class TestMastersNarrative(unittest.TestCase):
         ), mock.patch.object(_masters, "analyze_stock", fake_analyze), mock.patch.object(
             _masters, "_load_master_financials", return_value=self._financials()
         ), mock.patch.object(_masters, "_load_master_context", return_value=self._context()
+        ), mock.patch.object(_masters, "load_intel_digest", return_value={}
         ), mock.patch.object(_masters, "has_live_llm", return_value=False):
             first = narrative.generate_masters_narrative("000858.SZ")
             second = narrative.generate_masters_narrative("000858.SZ")
@@ -394,6 +437,7 @@ class TestMastersNarrative(unittest.TestCase):
         ), mock.patch.object(_masters, "analyze_stock", return_value=self._result()), mock.patch.object(
             _masters, "_load_master_financials", return_value=self._financials()
         ), mock.patch.object(_masters, "_load_master_context", return_value=self._context()
+        ), mock.patch.object(_masters, "load_intel_digest", return_value={}
         ), mock.patch.object(_masters, "has_live_llm", return_value=True), mock.patch.object(
             _masters, "chat", return_value=ChatResult(content=f"  {llm_text}  ")
         ) as fake_chat:
@@ -409,6 +453,8 @@ class TestMastersNarrative(unittest.TestCase):
         ), mock.patch.object(_masters, "analyze_stock", return_value=self._result()), mock.patch.object(
             _masters, "_load_master_financials", return_value=self._financials()
         ), mock.patch.object(_masters, "_load_master_context", return_value=self._context()), mock.patch.object(
+            _masters, "load_intel_digest", return_value={}
+        ), mock.patch.object(
             _masters, "has_live_llm", return_value=False
         ):
             first = narrative.generate_masters_narrative("000858.SZ")

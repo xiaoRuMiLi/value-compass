@@ -115,6 +115,12 @@ def _read_any_cache(path: Path) -> list[dict[str, Any]] | None:
     return [item for item in reports if isinstance(item, dict)]
 
 
+def read_research_cache(path: Path, ttl_days: float) -> list[dict[str, Any]] | None:
+    """供情报资料门面复用的带 TTL 缓存读取。"""
+
+    return _read_cache(path, ttl_days)
+
+
 def _clean(text: str) -> str:
     text = _TAG_RE.sub("", text)
     text = html.unescape(text)
@@ -131,6 +137,12 @@ def _extract_body(page_html: str) -> str:
     paragraphs = [p for p in paragraphs if len(p) > 8]
     # 去掉重复的标题行（正文第一段常是「招商银行(600036)」这类）
     return "\n".join(paragraphs)
+
+
+def extract_report_body(page_html: str) -> str:
+    """供其他研报类资料模块复用的正文抽取。"""
+
+    return _extract_body(page_html)
 
 
 def _fetch_recent_reports(symbol: str, limit: int) -> list[dict[str, Any]]:
@@ -152,6 +164,7 @@ def _fetch_recent_reports(symbol: str, limit: int) -> list[dict[str, Any]]:
             "rating": r.rating.value if r.rating else "",
             "target_price": r.target_price,
             "industry": r.industry_name or "",
+            "industry_code": r.industry_code or "",
             "eps_forecast": dict(r.eps_forecast or {}),
             "content": "",
         }
