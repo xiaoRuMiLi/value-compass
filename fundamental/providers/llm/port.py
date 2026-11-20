@@ -5,14 +5,14 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from fundamental.models import ChatMessage, ChatResult
-from fundamental.providers import ProviderError
+from fundamental.providers import ProviderConfigError, ProviderError
 
 
 class LlmError(ProviderError):
     """大模型调用失败（网络、限流、服务端错误等）。"""
 
 
-class LlmConfigError(ProviderError):
+class LlmConfigError(ProviderConfigError):
     """大模型配置错误（缺少 API Key、未知 provider 等）。"""
 
 

@@ -4,7 +4,7 @@
 
 - 阶段：主体功能已实现并跑通，处于**收尾与一致性治理**阶段。
 - 落地情况：L1 地基（6 单元）、L2 providers（17 能力）、L3 analysis（11 模块）、L5 skill 化（3 单元）均已完成；L4 web 与页面中 W4.1、W4.3–W4.6 已完成，W4.2 API 接口组进行中（契约 48 端点已实现 23，详见 `PROGRESS.md`）。
-- 测试：`tests/` 下 53 例（analysis / llm / narrative / registry / storage / web_api / exceptions），`python -m unittest discover -s tests` 全部通过。茅台单股已验收；白酒行业批量待批量分析入口（`services/batch.py`）落地。
+- 测试：`python -m unittest discover -s tests` 全部通过，用例数与分布见 `PROGRESS.md` 的 W5.3。茅台单股已验收；白酒行业批量待批量分析入口（`services/batch.py`）落地。
 - 新增能力：大模型叙述增强（LLM 接入 + 模板回退 + 本地缓存），见 `ADR/ADR-001` 与 `ARCHITECTURE.md`。
 - 三份基线文档已封版并交叉核对：`ARCHITECTURE.md`、`SCHEMA.md`、`CONTRACTS.md`；实现与契约的偏差以 `PROGRESS.md` 及各文档内的"实现状态"小节为准。
 - 数据源：东财、巨潮、新浪期货已实测可用；股吧/天天基金需 HTML 解析；官网需模板适配；其余新增源待实现时统一验证。
@@ -35,7 +35,7 @@
    - 技能壳已软链接到 `~/.codex/skills/value-compass`。
 
 7. ◐ 测试与验收
-   - 单元/契约测试 53 例全部通过（analysis / llm / narrative / registry / storage / web_api / exceptions）。
+   - 单元/契约测试全部通过（用例数与分布见 `PROGRESS.md` 的 W5.3）。
    - 茅台单股已验收；白酒行业批量的专用入口（`services/batch.py` / `scripts/batch_analyze.py`）尚未落地，批量能力目前通过 `/api/compare`、`/api/screener` 提供。
 
 ## 工作约定

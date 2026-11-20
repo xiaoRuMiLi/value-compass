@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 import requests
 
-from fundamental.providers import ProviderRequestError
+from fundamental.providers import ProviderDataError, ProviderRequestError
 from fundamental.providers._shared.cache import ResponseCache
 from fundamental.providers._shared.rate_limit import RateLimiter
 
@@ -39,6 +39,13 @@ class HttpClient:
     def get(self, url: str, params: Optional[dict] = None, headers: Optional[dict] = None) -> requests.Response:
         return self._request("GET", url, params=params, headers=headers)
 
+    @staticmethod
+    def _parse_json(response: requests.Response, url: str) -> Any:
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ProviderDataError(f"上游响应不是合法 JSON: {url}") from exc
+
     def get_json(
         self,
         url: str,
@@ -51,10 +58,10 @@ class HttpClient:
             cached = self.cache.get(cache_key, ttl)
             if cached is not None:
                 return cached
-            data = self.get(url, params=params, headers=headers).json()
+            data = self._parse_json(self.get(url, params=params, headers=headers), url)
             self.cache.set(cache_key, data, ttl)
             return data
-        return self.get(url, params=params, headers=headers).json()
+        return self._parse_json(self.get(url, params=params, headers=headers), url)
 
     def get_text(
         self,

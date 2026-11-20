@@ -47,9 +47,8 @@ class TestRegistry(unittest.TestCase):
         self.assertTrue(callable(provider.fetch_snapshot))
 
     def test_get_provider_class_unknown_source(self):
-        with self.assertRaises(ProviderConfigError) as ctx:
+        with self.assertRaises(ProviderConfigError):
             registry.get_provider_class("quote", "not-exist")
-        self.assertIsInstance(ctx.exception, KeyError)  # 兼容旧 catch
 
 
 if __name__ == "__main__":

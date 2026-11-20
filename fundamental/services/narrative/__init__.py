@@ -6,13 +6,9 @@ _overview / _score / _valuation（三类叙述的事实构建、渲染与生成�
 
 from __future__ import annotations
 
-from ._overview import _render_template, generate_overview_narrative
-from ._score import _score_facts, _score_template, generate_score_narrative
-from ._valuation import (
-    _valuation_facts,
-    _valuation_template,
-    generate_valuation_narrative,
-)
+from ._overview import generate_overview_narrative
+from ._score import generate_score_narrative
+from ._valuation import generate_valuation_narrative
 
 __all__ = [
     "generate_overview_narrative",

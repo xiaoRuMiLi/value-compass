@@ -13,6 +13,9 @@ import fundamental.services.narrative._overview as _overview
 import fundamental.services.narrative._score as _score
 import fundamental.services.narrative._valuation as _valuation
 from fundamental.models import CompositeScore, DimensionScore, Market, Stock, ValuationResult
+from fundamental.services.narrative._overview import _render_template
+from fundamental.services.narrative._score import _score_facts, _score_template
+from fundamental.services.narrative._valuation import _valuation_facts, _valuation_template
 from fundamental.utils.prompts import load_prompt
 
 
@@ -61,7 +64,7 @@ def _make_facts() -> dict:
 
 class TestRenderTemplate(unittest.TestCase):
     def test_renders_ordered_sections(self):
-        sections = narrative._render_template(_make_facts())
+        sections = _render_template(_make_facts())
         self.assertEqual(
             [s["title"] for s in sections],
             ["企业基本信息", "护城河", "经营与周期", "估值与安全边际", "风险与治理"],
@@ -119,7 +122,7 @@ class TestScoreNarrative(unittest.TestCase):
         )
 
     def test_score_template(self):
-        text = narrative._score_template(narrative._score_facts(self._score()))
+        text = _score_template(_score_facts(self._score()))
         self.assertIn("观望", text)
         self.assertIn("盈利能力", text)
         self.assertIn("成长能力", text)
@@ -162,8 +165,8 @@ class TestValuationNarrative(unittest.TestCase):
         }
 
     def test_valuation_template(self):
-        facts = narrative._valuation_facts(self._result(), {})
-        sections = narrative._valuation_template(facts)
+        facts = _valuation_facts(self._result(), {})
+        sections = _valuation_template(facts)
         titles = [section["title"] for section in sections]
         self.assertIn("相对估值", titles)
         self.assertIn("现金流折现", titles)
