@@ -330,6 +330,84 @@
       });
   }
 
+  function renderValuationParams(data) {
+    const box = document.getElementById("valuationParams");
+    box.innerHTML = "";
+    const title = el("div", "vp-title", "估值参数校准（结合财报与研报，动态调整假设）");
+    box.appendChild(title);
+
+    const source = el(
+      "span",
+      "vp-source",
+      data.source === "llm"
+        ? `LLM 校准 · 参考 ${data.research_count || 0} 篇研报`
+        : "模板校准（未启用 LLM）"
+    );
+    box.appendChild(source);
+
+    const params = data.params || {};
+    const cal = data.calibrated || {};
+    const names = { ddm: "股利折现", dcf: "现金流折现" };
+    for (const method of ["ddm", "dcf"]) {
+      const p = params[method];
+      const v = cal[method] || {};
+      if (!p) continue;
+      const card = el("div", "vp-card");
+      const head = el("div", "vp-card-head", names[method]);
+      card.appendChild(head);
+
+      const paramParts = [];
+      paramParts.push(`增长 g ${(p.growth * 100).toFixed(1)}%`);
+      paramParts.push(`折现 r ${(p.discount * 100).toFixed(1)}%`);
+      if (p.terminal_growth != null) {
+        paramParts.push(`永续 ${(p.terminal_growth * 100).toFixed(1)}%`);
+      }
+      card.appendChild(el("div", "vp-params", paramParts.join(" · ")));
+
+      const range =
+        v.fair_value_low == null
+          ? "暂无数据（缺少自由现金流等输入）"
+          : `${v.fair_value_low} ~ ${v.fair_value_high} 元`;
+      card.appendChild(el("div", "vp-range", `校准后合理区间：${range}`));
+      card.appendChild(el("div", "vp-margin", `安全边际 ${fmtPct(v.margin_of_safety)}`));
+      if (p.rationale) {
+        card.appendChild(el("div", "vp-rationale", p.rationale));
+      }
+      box.appendChild(card);
+    }
+
+    const reinvest = cal.dividend_reinvestment;
+    if (reinvest) {
+      const ri = el("div", "vp-reinvest");
+      ri.appendChild(el("div", "vp-card-head", `10 年股息复投预期（按 g ${(reinvest.growth * 100).toFixed(1)}%）`));
+      const lines = [
+        `期初买入 1 股 → 10 年后约 ${reinvest.ending_shares} 股`,
+        `期末股价约 ${reinvest.ending_price} 元，持仓市值约 ${reinvest.ending_value} 元`,
+        `累计收到股息约 ${reinvest.total_dividend} 元`,
+        `总回报约 ${fmtPct(reinvest.total_return)}，年化约 ${fmtPct(reinvest.annualized)}`,
+      ];
+      for (const line of lines) ri.appendChild(el("div", "vp-ri-line", line));
+      box.appendChild(ri);
+    }
+
+    if (params.summary) {
+      box.appendChild(el("div", "vp-summary", params.summary));
+    }
+    box.appendChild(
+      el("div", "vp-disclaimer", "参数为模型估计，仅作估值敏感性参考，不构成投资建议。")
+    );
+  }
+
+  function loadValuationParams() {
+    const box = document.getElementById("valuationParams");
+    getJSON(`/api/stock/${symbol}/valuation-params`)
+      .then((data) => renderValuationParams(data))
+      .catch(() => {
+        box.innerHTML = "";
+        box.appendChild(el("p", "muted", "估值参数校准暂不可用"));
+      });
+  }
+
   function loadMastersNarrative() {
     getJSON(`/api/stock/${symbol}/masters-narrative`)
       .then((data) => {
@@ -376,6 +454,7 @@
 
   loadNarrative();
   loadScoreNarrative();
+  loadValuationParams();
   loadValuationNarrative();
   document
     .getElementById("valuationModalClose")

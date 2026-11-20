@@ -378,6 +378,98 @@ main {
   color: #9ca3af;
 }
 
+/* 估值参数校准对照区 */
+.val-params-panel {
+  margin: 14px 0 6px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #2563eb;
+  border-radius: 6px;
+}
+
+.val-params-loading {
+  margin: 0;
+  font-size: 13px;
+  color: #9ca3af;
+}
+
+.vp-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e3a8a;
+}
+
+.vp-source {
+  display: inline-block;
+  margin: 4px 0 10px;
+  font-size: 11px;
+  color: #64748b;
+  background: #eef2ff;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.vp-card,
+.vp-reinvest {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.vp-card-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.vp-params {
+  font-size: 12px;
+  color: #2563eb;
+  margin-bottom: 6px;
+}
+
+.vp-range {
+  font-size: 13px;
+  color: #111827;
+  font-weight: 500;
+}
+
+.vp-margin {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.vp-rationale {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #4b5563;
+}
+
+.vp-ri-line {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #374151;
+}
+
+.vp-summary {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: #4b5563;
+}
+
+.vp-disclaimer {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #9ca3af;
+}
+
 .valuation-overall {
   margin: 14px 0 0;
   line-height: 1.8;

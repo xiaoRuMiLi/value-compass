@@ -44,6 +44,7 @@ value-compass/
 │   ├── overview_narrative.md         # 个股概览叙述
 │   ├── score_narrative.md            # 财务五维评分解读
 │   ├── valuation_narrative.md        # 估值模型批判性解读
+│   ├── valuation_params.md           # 估值参数校准（LLM 结合财报/研报给保守 g/r）
 │   └── masters/                      # 大师观点叙述（基座 + 个人档案，可人工编辑）
 │       ├── _base.md                  # 共用约束 + 输入字段说明（行业/同业/最新财报/市场估值）
 │       ├── buffett.md                # 巴菲特档案（致股东的信主题提炼：护城河/股东盈余/资本配置）
@@ -85,13 +86,14 @@ value-compass/
 │   │   ├── analyze.py                # 分析编排
 │   │   ├── llm.py                    # 大模型调用薄封装（get_llm/chat/chat_json）
 │   │   └── narrative/                # 结构化结果 → 分段叙述（LLM 增强 + 模板回退 + 本地缓存）
-│   │       ├── __init__.py           # 门面：导出四个 generate_* 入口
+│   │       ├── __init__.py           # 门面：导出五个 generate_* 入口
 │   │       ├── _common.py            # 格式化 / 提示词输入 / 本地缓存
 │   │       ├── _data.py              # 补充数据加载（逐年财报摘要、行业行情/同业对比、主营构成、最近一期财报、市场估值）
 │   │       ├── _overview.py          # 个股概览叙述
 │   │       ├── _score.py             # 五维评分解读
 │   │       ├── _valuation.py         # 估值模型解读
-│   │       └── _masters.py           # 大师观点解读（基本面 + 行业/同业 + 财报 + 估值 + 档案 → LLM）
+│   │       ├── _masters.py           # 大师观点解读（基本面 + 行业/同业 + 财报 + 估值 + 档案 → LLM）
+│   │       └── _valuation_params.py  # 估值参数校准（LLM 给保守 g/r → 边界钳制 → 复用公式重算 + 10 年复投）
 │   ├── analysis/                     # 纯计算，不 import 任何具体数据源
 │   │   ├── financial.py              # 财务质量评分
 │   │   ├── comparison.py             # 横向对比（市占率、指标趋势、排名）
@@ -129,6 +131,7 @@ value-compass/
 │       ├── prompts.py                # 提示词模板加载（prompts/*.md、prompts/masters/*.md）
 │       ├── logging.py
 │       ├── pdf.py                    # PDF 文本提取
+│       ├── research_text.py          # 东财研报正文抓取（供估值参数校准，带缓存/降级）
 │       └── paths.py
 │
 ├── pages/                            # 标准交互页面，可共用、参数化

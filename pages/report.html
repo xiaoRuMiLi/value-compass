@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>value-compass</title>
   <link rel="stylesheet" href="/static/css/base.css">
-  <link rel="stylesheet" href="/static/css/report.css?v=20261120">
+  <link rel="stylesheet" href="/static/css/report.css?v=20261120b">
   <script src="/static/js/api.js"></script>
   <script src="/static/js/common.js"></script>
   <script src="/static/js/nav.js" defer></script>
@@ -29,6 +29,9 @@
     <section class="panel">
       <h2>估值</h2>
       <div id="valuation"></div>
+      <div id="valuationParams" class="val-params-panel">
+        <p class="val-params-loading">正在校准估值参数（结合财报与研报）…</p>
+      </div>
       <p id="valuationLoading" class="valuation-loading">正在生成估值解读…</p>
       <div id="valuationOverall" class="valuation-overall"></div>
     </section>
@@ -73,6 +76,6 @@
 
   <script src="/static/js/vendor/echarts.min.js"></script>
   <script src="/static/js/valuation-meta.js"></script>
-  <script src="/static/js/report.js?v=20261120"></script>
+  <script src="/static/js/report.js?v=20261120b"></script>
 </body>
 </html>

@@ -105,6 +105,25 @@ class TestApiRoutes(unittest.TestCase):
                 api.get_masters_narrative("600519.SH")
         self.assertEqual(ctx.exception.status_code, 404)
 
+    def test_get_valuation_params_returns_payload(self):
+        payload = {
+            "symbol": "600519.SH",
+            "params": {"ddm": {"growth": 0.03, "discount": 0.09}},
+            "source": "llm",
+        }
+        with patch.object(api, "generate_valuation_params", return_value=payload) as fake:
+            data = api.get_valuation_params("600519.SH", refresh=True)
+        self.assertEqual(data, payload)
+        fake.assert_called_once_with("600519.SH", refresh=True)
+
+    def test_get_valuation_params_error_raises_404(self):
+        with patch.object(
+            api, "generate_valuation_params", return_value={"error": "股票不存在"}
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                api.get_valuation_params("000000.SH")
+        self.assertEqual(ctx.exception.status_code, 404)
+
 
 class TestAppRoutes(unittest.TestCase):
     """验证 FastAPI app 已挂载关键路由与静态资源。"""
@@ -141,6 +160,7 @@ class TestAppRoutes(unittest.TestCase):
             "/api/stock/{symbol}/overview",
             "/api/stock/{symbol}/analysis",
             "/api/stock/{symbol}/masters-narrative",
+            "/api/stock/{symbol}/valuation-params",
             "/api/compare",
             "/api/screener",
             "/report",

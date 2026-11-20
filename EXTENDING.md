@@ -138,8 +138,16 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
 - 大师缓存有独立版本 `narrative/_common.py` 的 `_MASTERS_PROMPT_VERSION`：改档案或 facts 结构后
   递增，旧解读自动失效，其他三类叙述缓存不受影响；也可用 `?refresh=1` 强制刷新。
 - 叙述类结果均带本地缓存：概览 `data/cache/narrative/{symbol}.json`、大师
-  `data/cache/narrative/masters_{symbol}.json`，TTL 在 `config/default.toml` 的
-  `[narrative] cache_ttl_days`（默认 10 天）。接口加 `?refresh=1` 可强制刷新。
+  `data/cache/narrative/masters_{symbol}.json`、估值参数 `data/cache/narrative/valuation_params_{symbol}.json`，
+  TTL 在 `config/default.toml` 的 `[narrative] cache_ttl_days`（默认 10 天）。接口加 `?refresh=1` 可强制刷新。
+- 估值参数校准：默认 DDM/DCF 的 g/r 在 `analysis/valuation/ddm.py`、`dcf.py` 里写死，仅作基准；
+  `narrative/_valuation_params.py` 用 LLM 读财报/分红/行业/研报后给保守参数，经边界钳制（g −0.05~0.12、
+  r 0.07~0.14、r−g≥0.02）后复用同一公式重算，另给 10 年股息复投预期。提示词在 `prompts/valuation_params.md`，
+  改参数口径或输出结构后递增 `narrative/_common.py` 的 `_VALUATION_PARAMS_VERSION` 使缓存失效。
+  研报正文由 `utils/research_text.py` 抓取（东财详情页 `#ctx-content`，缓存于 `data/cache/research/`，
+  失败降级为空列表，绝不打断主流程）；无 LLM 时回退到由历史净利增速推导的保守参数。
+  新端点 `/api/stock/{symbol}/valuation-params?refresh=`；报告页在原默认估值下方新增「参数校准」对照区块，
+  两者并存、默认估值不动。
 
 ## 5. 快速清单
 

@@ -18,6 +18,7 @@ from fundamental.services.narrative import (
     generate_overview_narrative,
     generate_score_narrative,
     generate_valuation_narrative,
+    generate_valuation_params,
 )
 from fundamental.storage import db, repository
 from fundamental.utils.symbols import parse_symbol
@@ -171,6 +172,14 @@ def get_score_narrative(symbol: str, refresh: bool = False) -> dict[str, Any]:
 @router.get("/stock/{symbol}/valuation-narrative")
 def get_valuation_narrative(symbol: str, refresh: bool = False) -> dict[str, Any]:
     result = generate_valuation_narrative(symbol, refresh=refresh)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.get("/stock/{symbol}/valuation-params")
+def get_valuation_params(symbol: str, refresh: bool = False) -> dict[str, Any]:
+    result = generate_valuation_params(symbol, refresh=refresh)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result

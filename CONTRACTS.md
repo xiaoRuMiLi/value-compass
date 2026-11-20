@@ -174,8 +174,9 @@ CycleAssessment(position, evidence, score)
 所有端点前缀 `/api`，返回 JSON。
 
 > 实现状态（2026-11-20 核对）：下表 49 个契约端点中，**21 个已实现、28 个未实现**（状态列标注）。
-> 另有 3 个契约外扩展端点已实现：`/api/stock/{symbol}/analysis`（聚合分析，覆盖 score/valuation/masters/review/redflags/fraud/delisting/moat/cycle/return）、
-> `/api/stock/{symbol}/calendar`（个股权威事件日历）、`/api/stocks`（个股列表）。
+> 另有 4 个契约外扩展端点已实现：`/api/stock/{symbol}/analysis`（聚合分析，覆盖 score/valuation/masters/review/redflags/fraud/delisting/moat/cycle/return）、
+> `/api/stock/{symbol}/calendar`（个股权威事件日历）、`/api/stocks`（个股列表）、
+> `/api/stock/{symbol}/valuation-params?refresh=`（LLM 结合财报/研报校准 DDM/DCF 参数并重算，含 10 年股息复投预期）。
 > 未实现端点中，多数分析能力已由聚合端点 `/analysis` 覆盖，但独立端点尚未暴露；
 > 单数据源明细端点（sentiment / research / litigations / dividends / capital-flows 等）需要补路由。
 > 本表为设计契约，实际可用端点以 `fundamental/web/routes/api.py` 为准。
