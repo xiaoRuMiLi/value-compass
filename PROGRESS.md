@@ -74,12 +74,12 @@ L5 skill 化 + 验收（串行收尾）
 
 | 编号 | 模块 | 输入 | 输出 | 依赖 | 状态 |
 |---|---|---|---|---|---|
-| W4.1 | web 骨架 + 路由 | FastAPI | app.py、routes/、静态托管 | L1 | 待办 |
-| W4.2 | API 接口组 | L2/L3 | /api/* 全部端点（见 CONTRACTS 第 5 节） | L2、L3 | 待办 |
-| W4.3 | 页面组 A（report/financials/industry） | API | 三张页面 | W4.2 | 待办 |
-| W4.4 | 页面组 B（compare/screener/calculator） | API | 三张页面 | W4.2 | 待办 |
-| W4.5 | 页面组 C（products/holders/calendar） | API | 三张页面 | W4.2 | 待办 |
-| W4.6 | 页面组 D（review/integrity/charts） | API | 三张页面 | W4.2 | 待办 |
+| W4.1 | web 骨架 + 路由 | FastAPI | app.py、routes/、静态托管 | L1 | 已完成 |
+| W4.2 | API 接口组 | L2/L3 | /api/* 全部端点（见 CONTRACTS 第 5 节） | L2、L3 | 进行中 |
+| W4.3 | 页面组 A（report/financials/industry） | API | 三张页面 | W4.2 | 已完成 |
+| W4.4 | 页面组 B（compare/screener/calculator） | API | 三张页面 | W4.2 | 已完成 |
+| W4.5 | 页面组 C（products/holders/calendar） | API | 三张页面 + holders-track（反向持仓追踪） | W4.2 | 已完成 |
+| W4.6 | 页面组 D（review/integrity/charts） | API | review、integrity 两页（charts 为契约可选页，未实现） | W4.2 | 已完成 |
 
 ## L5 skill 化与验收（串行收尾）
 
@@ -87,11 +87,21 @@ L5 skill 化 + 验收（串行收尾）
 |---|---|---|---|---|
 | W5.1 | SKILL.md + references 方法论 | 技能壳 | L4 | 已完成 |
 | W5.2 | 技能壳链接进 ~/.codex/skills | 可被 Codex 发现 | W5.1 | 已完成 |
-| W5.3 | 测试补全（单元 + 契约，17 例） | 茅台单股已验收；白酒行业批量待 L4 多股同步 | L4 | 已完成 |
+| W5.3 | 测试补全（单元 + 契约，35 例） | 茅台单股已验收；白酒行业批量待 L4 多股同步 | L4 | 已完成 |
 
 ## 备注
 
 - 数据源验证 spike 已完成（2026-11-11），完整清单见 ARCHITECTURE.md 第 13 节。
 - 三项待定，实现对应 provider 时再定：股权质押、公司行动（增发/回购/可转债/股权激励）、无风险利率。
-- `analysis/return.py` 因与 Python 关键字冲突已改名 `returns.py`；现金流量表"购建固定资产"字段在多期请求中缺失，DCF 的 capex 暂用 OCF 代理，待补单期请求。
+- `analysis/return.py` 因与 Python 关键字冲突已改名 `returns.py`。
+- DCF 的 FCF 由 `services/analyze._compute_fcf` 计算：当现金流量表含 `CONSTRUCT_LONG_ASSET`（购建固定资产等）时用 `OCF - capex`；该字段在多期请求中可能缺失，此时回退为 OCF 代理。若要精确 FCF 仍待补单期请求。
 - 本环境 git 推送需先 `Remove-Item Env:GIT_SSH_COMMAND`，再设 `GIT_SSH=C:\Windows\System32\OpenSSH\ssh.exe`。
+
+### 进度核对（2026-11-20）
+
+对照代码与 CONTRACTS.md 逐项复核，修正 L4/L5 标记：
+
+- L4 六个单元中 W4.1、W4.3–W4.6 均已落地（13 个页面路由 + 静态托管 + 13 张页面及配套 JS/CSS），原"待办"标记过时，改为"已完成"。
+- W4.2 保持"进行中"：CONTRACTS 第 5 节定义 48 个 API 端点，当前实现 23 个（其中 20 个在契约内、3 个为契约外扩展：`/stock/{symbol}/analysis`、`/stock/{symbol}/calendar`、`/stocks`）。缺口集中在单数据源明细端点（sentiment/research/litigations/dividends/capital-flows 等）与部分分析端点（score/valuation/masters 等），其分析能力多数已由聚合端点 `/stock/{symbol}/analysis` 覆盖，但独立端点尚未暴露。
+- W5.3 测试数由 17 例增至 35 例（test_analysis 15 + test_llm 8 + test_narrative 7 + test_registry 4 + test_storage 1），`python -m unittest discover -s tests` 全部通过。
+- charts 页在 CONTRACTS 第 6 节标注为"可选"，实际未实现，不影响 W4.6 完成判定。
