@@ -174,9 +174,10 @@ CycleAssessment(position, evidence, score)
 所有端点前缀 `/api`，返回 JSON。
 
 > 实现状态（2026-11-20 核对）：下表 49 个契约端点中，**21 个已实现、28 个未实现**（状态列标注）。
-> 另有 4 个契约外扩展端点已实现：`/api/stock/{symbol}/analysis`（聚合分析，覆盖 score/valuation/masters/review/redflags/fraud/delisting/moat/cycle/return）、
+> 另有 5 个契约外扩展端点已实现：`/api/stock/{symbol}/analysis`（聚合分析，覆盖 score/valuation/masters/review/redflags/fraud/delisting/moat/cycle/return）、
 > `/api/stock/{symbol}/calendar`（个股权威事件日历）、`/api/stocks`（个股列表）、
-> `/api/stock/{symbol}/valuation-params?refresh=`（LLM 结合财报/研报/行业研报/机构调研校准 DDM/DCF 参数并重算，含 10 年股息复投预期、综合合理价区间、可溯源引用清单与卖方分歧度）。
+> `/api/stock/{symbol}/valuation-params?refresh=`（LLM 结合财报/研报/行业研报/机构调研校准 DDM/DCF 参数并重算，含 10 年股息复投预期、综合合理价区间、可溯源引用清单与卖方分歧度）、
+> `/api/stock/{symbol}/financial-forensics?refresh=`（财报深度体检：确定性取证扫描 + LLM 逐条剖析，见下表）。
 > 未实现端点中，多数分析能力已由聚合端点 `/analysis` 覆盖，但独立端点尚未暴露；
 > 单数据源明细端点（sentiment / research / litigations / dividends / capital-flows 等）需要补路由。
 > 本表为设计契约，实际可用端点以 `fundamental/web/routes/api.py` 为准。
@@ -222,6 +223,7 @@ CycleAssessment(position, evidence, score)
 | GET | `/api/stock/{symbol}/score-narrative?refresh=` | `{symbol, text, source, generated_at}`（五维评分解读，LLM + 缓存） | ✅ 已实现 |
 | GET | `/api/stock/{symbol}/valuation-narrative?refresh=` | `{symbol, text, source, generated_at}`（估值模型批判性解读，LLM + 缓存） | ✅ 已实现 |
 | GET | `/api/stock/{symbol}/masters-narrative?refresh=` | `{symbol, masters[{master,label,verdict,score,text,source}], source, generated_at, intel_count}`（大师观点 LLM 解读，已注入研报/行业研报/机构调研资料 + 缓存） | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/financial-forensics?refresh=` | `{symbol, source, generated_at, forensics_version, company, scan{signals[],anomalies[],evidence{},coverage{},summary{},window{}}, verdict{level,headline,essence}, analyses[{id,substance,benign,risk,judgement,confidence,action,analyzed}], cross_checks[], caveats[], citations[]}`（契约外扩展：财报深度体检。事实由代码确定性计算，LLM 只做逐条解释；judgement 取 `confirmed/suspicious/normal/unverifiable`，模板回退时全为 `unverifiable`；`coverage.skipped` 列出因数据缺失未执行的检查） | ✅ 已实现 |
 | GET | `/api/holders/track?name=&category=` | `list[HolderPosition]` | ✅ 已实现 |
 | GET | `/api/macro?codes=&start=&end=` | `list[MacroIndicator]` | ⬜ 未实现 |
 | GET | `/api/calendar?start=&end=` | 聚合事件（财报/解禁/分红/股东大会） | ⬜ 未实现 |

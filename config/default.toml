@@ -13,6 +13,16 @@ score_max_tokens = 1200
 valuation_max_tokens = 1600
 masters_max_tokens = 1800
 valuation_params_max_tokens = 2000
+forensics_max_tokens = 3000
+
+[forensics]
+# 财报体检结论窗口：近 N 个报告期（全历史仅作为波动基线，不逐期产出结论）
+lookback_periods = 12
+# 事件类证据（监管/诚信/公告/预告/内部人交易）只看近 N 年
+recent_years = 6
+# 单次交给 LLM 剖析的风险点/异常波动上限；超出的部分仍保留在 scan 中供前端展示
+max_signals = 16
+max_anomalies = 24
 
 [research]
 cache_ttl_days = 7

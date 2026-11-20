@@ -14,6 +14,7 @@ from fundamental.services.analyze import (
     screen_stocks,
 )
 from fundamental.services.narrative import (
+    generate_financial_forensics,
     generate_masters_narrative,
     generate_overview_narrative,
     generate_score_narrative,
@@ -188,6 +189,16 @@ def get_valuation_params(symbol: str, refresh: bool = False) -> dict[str, Any]:
 @router.get("/stock/{symbol}/masters-narrative")
 def get_masters_narrative(symbol: str, refresh: bool = False) -> dict[str, Any]:
     result = generate_masters_narrative(symbol, refresh=refresh)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.get("/stock/{symbol}/financial-forensics")
+def get_financial_forensics(symbol: str, refresh: bool = False) -> dict[str, Any]:
+    """财报深度体检：确定性取证扫描 + LLM 逐条剖析（契约外扩展端点）。"""
+
+    result = generate_financial_forensics(symbol, refresh=refresh)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result

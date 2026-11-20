@@ -507,6 +507,19 @@
   loadScoreNarrative();
   loadValuationParams();
   loadValuationNarrative();
+  if (window.VC.loadForensics) {
+    const forensicsBox = document.getElementById("forensics");
+    window.VC.loadForensics(forensicsBox, symbol);
+    const refreshBtn = document.getElementById("forensicsRefresh");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", () => {
+        refreshBtn.disabled = true;
+        window.VC.loadForensics(forensicsBox, symbol, { refresh: true }).finally(() => {
+          refreshBtn.disabled = false;
+        });
+      });
+    }
+  }
   document
     .getElementById("valuationModalClose")
     .addEventListener("click", closeValuationModal);
