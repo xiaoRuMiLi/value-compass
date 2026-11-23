@@ -52,7 +52,8 @@ value-compass/
 │
 ├── scripts/                          # 稳定入口命令（面向人和 agent）
 │   ├── fetch_data.py                 # 只拉数并入库
-│   └── serve.py                      # 启动本地 web 界面
+│   ├── serve.py                      # 启动本地 web 界面
+│   └── verify_capability.py          # 对比能力基线，校验改动后无降级（--record 录基线）
 │
 ├── fundamental/                      # 核心 Python 包
 │   ├── __init__.py
@@ -97,6 +98,10 @@ value-compass/
 │   │       ├── _valuation.py         # 估值模型解读
 │   │       ├── _masters.py           # 大师观点解读（基本面 + 行业/同业 + 财报 + 估值 + 档案 + 情报资料 → LLM）
 │   │       ├── _valuation_params.py  # 估值参数校准（LLM 保守 g/r → 钳制 → 重算 + 复投 + 合理价区间 + 引用清单/卖方分歧度）
+│   │       ├── _evidence.py          # 财报原文证据检索（关键词 / 解释句切片 / 繁体同义词）
+│   │       ├── _source_guard.py      # 原文前置守卫：不足则自动补档多期，再进入扫描
+│   │       ├── _report_mining.py     # 逐段通读多期财报原文，产 summaries / new_findings / 逐信号证据
+│   │       ├── _report_facts.py      # 从年报原文抽结构化事实卡（客户集中度 / 关联方 / 研发资本化 / 审计等）
 │   │       └── _forensics.py         # 财报深度体检（确定性取证扫描 → LLM 逐条剖析 → 结构化报告，含趋势型风险点）
 │   ├── analysis/                     # 纯计算，不 import 任何具体数据源
 │   │   ├── financial.py              # 财务质量评分
@@ -117,7 +122,8 @@ value-compass/
 │   │   ├── fraud_score.py            # 造假预警（M-score 等）
 │   │   ├── financial_review.py       # 财报体检/大白话汇总（原轻量版，保留）
 │   │   ├── forensics.py              # 财报取证扫描：多期风险点/异常波动/证据/覆盖度（纯确定性，不下结论）
-│   │   ├── forensics_config.py       # 触发阈值配置对象（纯 dataclass，不读配置文件）
+│   │   ├── forensic_patterns.py      # 财务戏法线索检查（11 项 / 4 类），出参 FraudPatternScan dataclass
+│   │   ├── forensics_config.py       # ForensicsConfig + FraudPatternConfig（纯 dataclass，不读配置文件）
 │   │   ├── integrity.py              # 诚信记录挖掘
 │   │   ├── masters/                  # 大师模型（可插拔）
 │   │   │   ├── base.py               # MasterModel 接口
@@ -193,7 +199,7 @@ value-compass/
 │   ├── products.toml                 # 股票↔商品映射（种子数据）
 │   ├── official.toml                 # 官网站点模板与选择器
 │   ├── llm.toml                      # 大模型供应商与参数
-│   ├── forensics.toml                # 财报体检窗口参数与全部触发阈值（改后缓存按指纹自动失效）
+│   ├── forensics.toml                # 财报体检窗口参数与全部触发阈值（含 fraud_patterns 子表；改后缓存按指纹自动失效）
 │   └── masters/                      # 大师模型配置
 │       ├── buffett.toml              # 巴菲特行为逻辑、阈值、权重
 │       └── duan_yongping.toml        # 段永平行为逻辑、阈值、权重
@@ -203,7 +209,12 @@ value-compass/
 │   ├── test_analysis.py
 │   ├── test_registry.py
 │   ├── test_llm.py
-│   └── test_narrative.py
+│   ├── test_narrative.py
+│   ├── test_fraud_patterns.py        # 财务戏法检查（准确度 / 配置化 / 出参契约）
+│   ├── test_report_facts.py          # 财报原文结构化事实卡抽取
+│   ├── test_forensic_markers.py      # 前端 K 线事件带与判定依据渲染（Node vm）
+│   ├── test_source_guard.py          # 原文前置守卫与壳文档过滤
+│   └── baselines/                    # capability_baseline.json（能力回归基线快照）
 ├── .env                              # 密钥，gitignore
 ├── .env.example                      # 密钥模板，提交
 ├── pyproject.toml
@@ -450,7 +461,12 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 - `analysis/financial_review.py` 面向不会读财报的用户，把三大报表和核心指标翻译成大白话汇总，并输出疑点与关键点清单（原轻量版，report 页仍保留为折叠的「原始量化疑点清单」）。
 - **深度体检**为双层：`analysis/forensics.py`（纯确定性）负责「算出风险点」，`services/narrative/_forensics.py` 负责「让 LLM 逐条解释」。前者从多期财报、利润表科目、K 线、诚信/公告、业绩预告、内部人交易与质押、情报资料归纳信号与异常波动，输出精确数值/期次/阈值/证据引用 + `coverage`（含因数据缺失跳过的检查）；后者用 `prompts/financial_forensics.md` 生成逐条剖析、综合判断、交叉印证与免责，并对 LLM 输出做枚举降级与缺失补齐。铁律：**数字由代码算、判断由 LLM 做、不下造假定性结论、第三方观点须标注来源**；"未检出"不等于"没问题"。
 - 口径防护：Q1/H1/Q3 累计值按同报告期同比对齐；MAD 离群基线也按报告期类型分组（Q1 只与历年 Q1 比），避免累计口径混比把 MAD 撑歪；率类异常以自身历史离群为主，避免银行/港股行业属性误判；全历史仅作波动基线，结论窗口默认近 12 期；东财预告金额字段口径混杂，按公告正文过滤并留容差；连续多期同类信号聚合为趋势型风险点（保留逐期 `occurrences`）；同一报告期多个费用科目同步异动合并为一条「费用与成本结构同步异动」，明细仍逐条留在 `anomalies`。
-- **阈值全部配置化**：扫描器 `analysis/forensics.py` 不含任何硬编码判定值，全部经 `ForensicsConfig`（`analysis/forensics_config.py` 纯 dataclass）注入；`services/forensics_config.py` 负责把 `config/forensics.toml` 的 `[forensics]` / `[forensics.thresholds]` 读成该对象（非法值逐项回退默认值）。窗口参数、离群倍数、各率类百分点阈值、预告容差、质押/减持门槛、聚合门限、风险等级门槛与线索关键词都在这一份文件里，调大数值＝触发更少。报告响应带 `thresholds` 与 `thresholds_fingerprint`，前端可折叠展示「本次生效的触发阈值」，便于确认配置已生效。
+- **阈值全部配置化**：主扫描 `analysis/forensics.py` 与财务戏法检查 `analysis/forensic_patterns.py` 都不含硬编码判定值，分别经 `ForensicsConfig` 与 `FraudPatternConfig`（同在 `analysis/forensics_config.py`，纯 dataclass）注入；`services/forensics_config.py` 负责把 `config/forensics.toml` 的 `[forensics]` / `[forensics.thresholds]` / `[forensics.thresholds.fraud_patterns]` 读成该对象（非法值逐项回退默认值）。戏法阈值单独成子表，避免把主扫描的 50+ 字段继续撑长；两个配置对象一并纳入 `fingerprint()`，任一阈值改动即让体检缓存自动重算。报告响应带 `thresholds` 与 `thresholds_fingerprint`，前端可折叠展示「本次生效的触发阈值」。
+- **原文前置守卫**：`services/narrative/_source_guard.py` 在扫描之前检查本地可读原文（PDF 必须已抽出非空正文文本，披露提示公告壳不算），要求至少 `min_source_documents` 份、覆盖 `min_source_years` 个年份；不足则复用归档服务按市场自动补档（A 股巨潮 / 港股披露易），失败写 `status=error` 与原因而不静默降级。报告回传 `source_guard{before,after,downloaded}`。
+- **原文取证与通读**：`_evidence.py` 做关键词/解释句检索（含繁体同义词），`_report_mining.py` 逐段通读最近 3 份季报 + 2 份年报，产出分段摘要、逐信号原文证据与 `new_findings`（规则扫描未覆盖的线索）；两者交错保留名额，避免当期摘录挤掉历史关键原文。
+- **财报原文结构化事实卡**：`_report_facts.py` 从最近 3 份年报正文按章节表头抽确定性数字（前五名客户/供应商占比、关联方销售、非经常性损益合计、研发资本化率、会计政策变更、合并范围新增主体、审计意见、股份回购），只抽取不判断，抽不到写 `missing_facts`。同一报告期若 `documents` 表只登记了业绩公告壳，则按文本体积从磁盘补读完整年报。
+- **财务戏法检查**：`analysis/forensic_patterns.py` 以 11 项组合条件扫描虚增利润/收入质量、财务洗澡、关联交易、会计估计与资本运作四类线索，输出 `FraudPatternScan`（含 `FraudPattern` 列表）dataclass。刻意**不并入 `scan.signals`**：作为报告并列字段 `fraud_patterns` 输出，不占 `max_signals` 名额、不进 `analyses` 逐条剖析数组，因此既有 25 条规则与 LLM 剖析链路零改动；services 层在报告出口用 `dataclasses.asdict` 转 dict，Web API 与前端结构不变。准确度靠组合条件、同报告期同比、结论窗口（全历史只作基数）与 `coverage` 三分（已执行未触发 / 制度不适用 / 数据不足）；只输出待核查线索，绝不下「财务造假」定性结论。
+- **能力回归基线**：`scripts/verify_capability.py` + `tests/baselines/capability_baseline.json` 固化两份线上体检报告的关键指标（原文取证、信号数、剖析完整率、K 线事件点、source_guard），只允许变多不允许变少；原有风险点按标题判定、关键原文证据用容错正则，避免 signal 重编号与 LLM 措辞差异误报降级。
 - 汇总整合 `redflags.py`、`fraud_score.py`、`delisting.py` 的结论，做多期交叉检查：营收 vs 现金流、利润 vs 应收账款、毛利率异常、审计意见、财务重述。
 - `analysis/integrity.py` 从公告中挖掘言行不一与坑害投资者行为：承诺未兑现、违规担保、资金占用、处罚、问询函、财务重述、误导性披露。
 - `integrity` 能力拉取监管处罚、问询、承诺履行等数据，存 `integrity_records` 表，用文字描述正面与负面的道德行为；结果在 `integrity.html` 展示，并汇总进 `review.html`。

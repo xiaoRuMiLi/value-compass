@@ -154,22 +154,30 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
 改 `config/forensics.toml`，不要改代码。`analysis/forensics.py` 里没有任何硬编码判定值，全部经
 `ForensicsConfig` 注入；字段含义与调参方向写在配置文件每个分组的注释里，原则是**数值调大＝触发更少**。
 
-- `[forensics]`：结论窗口期数、事件证据年限、送入 LLM 的信号/波动上限。
-- `[forensics.thresholds]`：离群倍数、各率类百分点阈值、预告容差、质押/减持门槛、聚合门限、风险等级门槛与线索关键词。
+- `[forensics]`：结论窗口期数、事件证据年限、送入 LLM 的信号/波动上限、原文守卫下限与补档份数。
+- `[forensics.thresholds]`：离群倍数、各率类百分点阈值、预告容差、质押/减持门槛、聚合门限、风险等级门槛与线索关键词（主扫描 `analysis/forensics.py`）。
+- `[forensics.thresholds.fraud_patterns]`：财务戏法检查 11 项的全部判定值，独立子表，对应 `FraudPatternConfig`。同样遵循「调大＝触发更少」，并随 `ForensicsConfig.fingerprint()` 一起让缓存自动重算。
 - 嫌风险点太多：调大 `net_margin_pp` / `roe_pp` / `expense_ratio_pp` / `revenue_yoy_swing_pp`；
   或把 `rate_require_outlier` 改成四项全开（率类异动还必须偏离自身同口径历史波动）。
+- 嫌戏法线索太敏感：调大子表里的 `ar_divergence_pp` / `big_bath_rebound_pct` / `top5_customer_pct` 等；
+  调小 `cash_conversion_low` 可让「净现比持续偏低」更少触发。
 - 嫌条目太碎：调小 `consolidate_min_occurrences`（同类信号 2 期即合并成趋势型风险点），
   或调小 `expense_cluster_min_items`（同报告期多个科目异动合并成一条）；两者都保留逐期/逐科目明细，不丢信息。
 - 关闭降噪：`consolidate_min_occurrences = 0`、`expense_cluster_min_items = 0`。
 - 生效方式：报告缓存记录 `thresholds_fingerprint`，改完即自动重算，无需清缓存；也可点页面「重新分析」或用 `?refresh=true`。
   体检区底部的「本次生效的触发阈值」折叠面板可用来核对配置文件是否已被读取。
-- 新增阈值字段：`analysis/forensics_config.py` 加字段与 `from_mapping()` 的 `pick(...)`（带非法值兜底），
-  `config/forensics.toml` 加默认值，`analysis/forensics.py` 用 `cfg.xxx` 判定并写进 `trigger` 文案；
-  不要在扫描器里留第二份硬编码，也不要让 `analysis` 层反过来读配置文件。
+- 新增主扫描阈值字段：`analysis/forensics_config.py` 的 `ForensicsConfig` 加字段与 `from_mapping()` 的 `pick(...)`（带非法值兜底），
+  `config/forensics.toml` 的 `[forensics.thresholds]` 加默认值，`analysis/forensics.py` 用 `cfg.xxx` 判定并写进 `trigger` 文案。
+- 新增财务戏法检查项：在 `analysis/forensic_patterns.py` 加一个 `_check_*(...) -> tuple[FraudPattern | None, dict | None]`，
+  注册进 `scan_fraud_patterns()` 的 `checks` 列表；阈值加到 `FraudPatternConfig` 字段与 `[forensics.thresholds.fraud_patterns]` 子表
+  （`from_mapping()` 会按字段类型自动逐项兜底，无需手写 `pick`）；前端 `forensics.js` 的 `FACT_LABELS` 补中文标签。
+  组合条件、同报告期同比、结论窗口与 `coverage` 三分沿用现有约定，不要退回单点异动报警。
+- 两个扫描器都**不要**留第二份硬编码，也**不要**让 `analysis` 层反过来读配置文件；配置对象由 services 层注入。
+  `analysis` 出参走 `models.py` 的 dataclass，services 层在报告出口 `dataclasses.asdict` 转 dict 后再交给 Web 层。
 
 ## 6. 快速清单
 
-- 调财报体检阈值：只动 `config/forensics.toml`。
+- 调财报体检阈值（主扫描 + 财务戏法）：只动 `config/forensics.toml`，含 `[forensics.thresholds.fraud_patterns]` 子表。
 - 改数据源：只动 provider 文件 + `providers.toml`。
 - 改分析：只动 `analysis/` + `models.py` + `analyze.py`。
 - 改展示：只动 `pages/` + `web/`。
