@@ -211,6 +211,19 @@ const dedup = VC.renderPatternFacts(
 assert.strictEqual(flatten(dedup).indexOf('同一段原文'), -1);
 // 空 facts 优雅降级，不抛异常
 assert.ok(flatten(VC.renderPatternFacts({}, new Set())).indexOf('已展示在卡片正文中') >= 0);
+// 阈值里的嵌套子表（fraud_patterns）必须逐行展开，不能渲染成 [object Object]
+const thNode = VC.renderThresholds({
+  thresholds_fingerprint: 'abc123',
+  thresholds: {
+    lookback_periods: 12,
+    rate_require_outlier: ['debt_ratio'],
+    fraud_patterns: { cash_conversion_low: 0.7, ar_divergence_pp: 30.0 },
+  },
+});
+const thText = flatten(thNode);
+assert.ok(thText.indexOf('fraud_patterns.cash_conversion_low') >= 0, thText);
+assert.ok(thText.indexOf('0.7') >= 0, thText);
+assert.strictEqual(thText.indexOf('[object Object]'), -1, thText);
 console.log('MARKER_LOGIC_OK');
 """
 
@@ -220,11 +233,11 @@ class StaticWiringTests(unittest.TestCase):
         html = _REPORT_HTML.read_text(encoding="utf-8")
         self.assertIn('id="klineMarkerLegend"', html)
         self.assertIn("财报关键点事件带", html)
-        self.assertIn('src="/static/js/forensics.js?v=20261123d"', html)
-        self.assertIn('src="/static/js/report.js?v=20261123d"', html)
+        self.assertIn('src="/static/js/forensics.js?v=20261123e"', html)
+        self.assertIn('src="/static/js/report.js?v=20261123e"', html)
 
     def test_review_page_uses_same_asset_version(self):
-        self.assertIn("?v=20261123d", _REVIEW_HTML.read_text(encoding="utf-8"))
+        self.assertIn("?v=20261123e", _REVIEW_HTML.read_text(encoding="utf-8"))
 
     def test_fraud_patterns_are_wired_and_styled(self):
         js = _FORENSICS_JS.read_text(encoding="utf-8")

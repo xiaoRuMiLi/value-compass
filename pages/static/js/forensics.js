@@ -520,6 +520,18 @@
     for (const key of Object.keys(thresholds)) {
       if (["risk_title_keywords", "negative_view_keywords", "regulatory_severe_categories", "capital_action_keywords"].includes(key)) continue;
       const value = thresholds[key];
+      // 嵌套子表（如 [forensics.thresholds.fraud_patterns]）逐行展开，
+      // 参数名带前缀与 config/forensics.toml 的键一一对应，便于核对是否生效；
+      // 直接 String(value) 会渲染成 [object Object]。
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        for (const sub of Object.keys(value)) {
+          const subRow = el("tr");
+          subRow.appendChild(el("td", null, `${key}.${sub}`));
+          subRow.appendChild(el("td", null, String(value[sub])));
+          tbody.appendChild(subRow);
+        }
+        continue;
+      }
       const shown = Array.isArray(value) ? (value.length ? value.join("、") : "（未启用）") : String(value);
       const tr = el("tr");
       tr.appendChild(el("td", null, THRESHOLD_LABELS[key] || key));
@@ -700,6 +712,7 @@
   // 暴露纯函数便于回归测试（不改写后端结论，仅前端展示格式化）
   VC.formatFactValue = fmtFact;
   VC.renderPatternFacts = renderPatternFacts;
+  VC.renderThresholds = renderThresholds;
 
   function latestFact(facts, key) {
     const list = (facts && facts[key]) || [];

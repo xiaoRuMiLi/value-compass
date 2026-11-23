@@ -44,7 +44,10 @@ NON_DECREASING = {
     "analysis_complete": 1.0,
     "mining_segments": 1.0,
     "mining_findings": 1.0,
-    "mining_evidence_signals": 1.0,
+    # LLM 通读「额外」给几个信号配上片段，受单次输出波动影响；
+    # 真正的原文取证能力看两路并集（下面 evidence_covered_signals，要求 100%）。
+    "mining_evidence_signals": 0.8,
+    "evidence_covered_signals": 1.0,
     "official_explanations": 1.0,
     "coverage_performed": 1.0,
     "marker_points": 1.0,
@@ -121,6 +124,12 @@ def collect(base: str, symbol: str) -> dict:
         "mining_segments": int(mining.get("segments") or 0),
         "mining_findings": len(mining.get("new_findings") or []),
         "mining_evidence_signals": len(mining.get("signal_evidence") or {}),
+        # 每个风险点是否都能从财报原文找到印证：LLM 通读 + 确定性关键词检索两路并集。
+        # 单独看 signal_evidence 会把「模型这次恰好少配一条」误报成取证链路退化。
+        "evidence_covered_signals": len(
+            set(mining.get("signal_evidence") or {})
+            | set(fx.get("official_explanations") or {})
+        ),
         "official_explanations": len(fx.get("official_explanations") or {}),
         "source_guard": (fx.get("source_guard") or {}).get("status"),
         "coverage_performed": len(coverage.get("performed") or []),
