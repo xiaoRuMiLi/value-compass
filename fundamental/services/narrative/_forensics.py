@@ -63,14 +63,14 @@ from ._common import (
 
 # 提示词/输出结构升级时递增，使旧报告缓存失效。
 # 阈值改动不改变版本号，而是由 thresholds_fingerprint 让缓存自动失效。
-_FORENSICS_VERSION = 19
+_FORENSICS_VERSION = 20
 
 _logger = get_logger(__name__)
 
 # 喂给最终 LLM 的新线索条数上限（控制上下文预算，全文仍写进 output 供前端展示）
 _MAX_MINING_FINDINGS_IN_FACTS = 5
 # 财务戏法线索注入总纲的条数上限；完整结果作为报告并列字段供前端逐条查看
-_MAX_FRAUD_PATTERNS_IN_FACTS = 5
+_MAX_FRAUD_PATTERNS_IN_FACTS = 3
 
 _JUDGEMENTS = {"confirmed", "suspicious", "normal", "unverifiable"}
 _CONFIDENCES = {"high", "medium", "low"}
@@ -327,6 +327,8 @@ def _facts(
             "覆盖虚增利润/收入质量、财务洗澡、关联交易、会计估计四类；"
             "verdict.essence 需纳入其中最实质的 1~2 条并解释因果链（谁导致谁、具体科目与金额），"
             "但绝不能据此下「财务造假/粉饰/操纵」定性结论；未触发的检查不等于没有问题。"
+            "无论新增多少线索，essence 都必须保留至少一处公司财报原文里的具体科目与金额"
+            "（来自 official_explanations），并注明报告期；不得用新增线索替换掉原有的原文取证。"
         ),
         "company": {"symbol": symbol, "name": inputs["name"], "industry": inputs["industry"]},
         "fraud_patterns": {

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -25,10 +26,14 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "tests" / "baselines" / "capability_baseline.json"
 SYMBOLS = ("300308.SZ", "00700.HK")
 
-# 两只在人工核对中确认过的「财报原文证据」短语：一旦消失，说明原文取证链路退化
-KEY_PHRASES = {
-    "300308.SZ": ("13.87", "汇兑"),
-    "00700.HK": ("1,066", "視同處置"),
+# 两只在人工核对中确认过的「财报原文证据」：一旦总纲不再引用，说明原文取证退化。
+# 用正则而非精确字符串：LLM 会写「1066亿元 / 1,066 亿」「视同处置 / 視同處置」
+# 「汇兑 / 匯兌」，这些只是简繁与千分位差异，不是能力退化。
+KEY_PATTERNS = {
+    "300308.SZ": re.compile(r"13[.,]?87\s*亿|[汇匯]兑|H\s*股募资|公允价值变动损失"),
+    "00700.HK": re.compile(
+        r"1,?066\s*亿|1066\s*亿|[視视]同[處处]置\s*美[團团]|溢利其他项目|营业利润以下"
+    ),
 }
 
 # 这些指标只能 >= 基线（ratio 为允许的最低比例）
@@ -97,9 +102,17 @@ def collect(base: str, symbol: str) -> dict:
         "forensics_version": fx.get("forensics_version"),
         "verdict_level": verdict.get("level"),
         "essence_chars": len(essence),
-        "key_phrase_hit": any(p in essence for p in KEY_PHRASES[symbol]),
+        "key_phrase_hit": bool(KEY_PATTERNS[symbol].search(essence)),
+        "key_phrase_sample": (
+            KEY_PATTERNS[symbol].search(essence).group(0)
+            if KEY_PATTERNS[symbol].search(essence) else ""
+        ),
+        "essence_cites_source": bool(re.search(r"原文|据公司|财报", essence)),
         "signal_count": len(signals),
         "signal_ids": [s.get("id") for s in signals],
+        # 信号 id 是生成顺序的产物：新增一条检查会让后续全部重新编号。
+        # 判定「原有风险点是否消失」必须按标题，否则会把编号变化误报成能力降级。
+        "signal_titles": [s.get("title") for s in signals],
         "analysis_count": len(analyses),
         "analysis_complete": sum(
             1 for a in analyses
@@ -124,12 +137,21 @@ def compare(symbol: str, base_data: dict, now: dict) -> list[str]:
     if now.get("source") != "llm":
         problems.append(f"source: llm -> {now.get('source')} (LLM 解读退化)")
     if not now.get("key_phrase_hit"):
-        problems.append("关键财报原文证据短语消失 (原文取证链路退化)")
+        problems.append("总纲不再引用关键财报原文证据 (原文取证链路退化)")
+    if not now.get("essence_cites_source"):
+        problems.append("总纲未标注财报原文出处")
     if now.get("source_guard") not in ("ok", "repaired"):
         problems.append(f"source_guard: {now.get('source_guard')}")
-    missing = set(base_data.get("signal_ids") or []) - set(now.get("signal_ids") or [])
+    # 优先按标题判定；旧基线若只有 id，退回 id 判定并提示口径较脆
+    base_titles = base_data.get("signal_titles")
+    if base_titles:
+        missing = set(base_titles) - set(now.get("signal_titles") or [])
+        label = "原有风险点（按标题）消失"
+    else:
+        missing = set(base_data.get("signal_ids") or []) - set(now.get("signal_ids") or [])
+        label = "原有风险信号 id 消失"
     if missing:
-        problems.append("原有风险信号消失: " + ", ".join(sorted(missing)))
+        problems.append(f"{label}: " + ", ".join(sorted(str(x) for x in missing)))
     return problems
 
 

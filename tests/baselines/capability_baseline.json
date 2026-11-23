@@ -29,7 +29,21 @@
       "official_explanations": 12,
       "source_guard": "ok",
       "coverage_performed": 7,
-      "marker_points": 13
+      "marker_points": 13,
+      "signal_titles": [
+        "监管与诚信记录线索",
+        "ROE 显著变化",
+        "业绩方向与股价反应背离",
+        "利润增速显著背离营收",
+        "异常突击分红",
+        "异常资本支出",
+        "扩充股本",
+        "毛利率异动",
+        "营业成本率异动",
+        "营收增速骤变",
+        "第三方资料出现负面表述",
+        "跨界投资"
+      ]
     },
     "00700.HK": {
       "source": "llm",
@@ -53,7 +67,14 @@
       "official_explanations": 5,
       "source_guard": "ok",
       "coverage_performed": 4,
-      "marker_points": 10
+      "marker_points": 10,
+      "signal_titles": [
+        "ROE 显著变化",
+        "业绩方向与股价反应背离",
+        "净利率异动",
+        "利润增速显著背离营收",
+        "毛利率异动"
+      ]
     }
   }
 }

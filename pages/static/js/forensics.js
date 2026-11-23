@@ -532,6 +532,158 @@
     return wrap;
   }
 
+  function latestFact(facts, key) {
+    const list = (facts && facts[key]) || [];
+    return list.length ? list[0] : null;
+  }
+
+  function renderFraudPatterns(data) {
+    const fraud = data.fraud_patterns;
+    const facts = data.report_facts;
+    if (!fraud && !facts) return null;
+    const patterns = (fraud && fraud.patterns) || [];
+    const summary = (fraud && fraud.summary) || {};
+    const cov = (fraud && fraud.coverage) || {};
+
+    const wrap = el("div", "fx-fraud");
+    wrap.appendChild(
+      sectionTitle("财务戏法检查", "确定性线索 · 组合条件判定 · 不构成造假认定")
+    );
+
+    const meta = el("div", "fx-fraud-summary");
+    meta.appendChild(
+      el("span", "fx-fraud-count",
+        `共 ${summary.pattern_count === undefined ? patterns.length : summary.pattern_count} 条线索`
+        + `（高 ${summary.high || 0} / 中 ${summary.medium || 0} / 低 ${summary.low || 0}）`)
+    );
+    meta.appendChild(
+      el("span", "fx-fraud-window",
+        `结论窗口 ${cov.window_from || "-"} ~ ${cov.window_to || "-"} · 仅近 ${cov.window_periods || 12} 期参与判定`)
+    );
+    wrap.appendChild(meta);
+
+    if (!patterns.length) {
+      wrap.appendChild(
+        el("p", "fx-fraud-empty",
+          "本次未触发财务戏法线索。这不代表「没有问题」——展开下方覆盖度可看到已执行但未触发、制度不适用与数据不足的检查项。")
+      );
+    }
+
+    for (const p of patterns) {
+      const sev = SEVERITY[p.severity] || SEVERITY.medium;
+      const item = el("div", `fx-fraud-item fx-fraud-${sev.cls}`);
+      const head = el("div", "fx-fraud-head");
+      head.appendChild(chip(p.category || "线索", "plain"));
+      head.appendChild(chip(`${sev.label}关注`, sev.cls));
+      head.appendChild(el("span", "fx-fraud-period", p.period || "-"));
+      head.appendChild(el("span", "fx-fraud-confidence", CONFIDENCE[p.confidence] || ""));
+      head.appendChild(el("span", "fx-fraud-id", p.id || ""));
+      item.appendChild(head);
+      item.appendChild(el("div", "fx-fraud-title", p.title || ""));
+      item.appendChild(el("p", "fx-fraud-exp", p.explanation || ""));
+      for (const e of p.evidence || []) {
+        if (!e.quote) continue;
+        item.appendChild(
+          el("div", "fx-fraud-ev",
+            `据${e.source || "财报原文"}（${e.period || "-"}）：${e.quote}`)
+        );
+      }
+      const fd = el("details", "fx-fraud-facts");
+      fd.appendChild(el("summary", null, "展开判定依据（确定性数值）"));
+      fd.appendChild(
+        el("pre", "fx-fraud-json", JSON.stringify(p.facts || {}, null, 2).slice(0, 4000))
+      );
+      item.appendChild(fd);
+      if (p.action) item.appendChild(el("div", "fx-fraud-action", `下一步：${p.action}`));
+      item.appendChild(el("div", "fx-fraud-disclaimer", p.disclaimer || ""));
+      wrap.appendChild(item);
+    }
+
+    if (facts && !facts.error) {
+      const card = el("div", "fx-fraud-source");
+      card.appendChild(el("div", "fx-block-label", "财报原文结构化事实卡（本次抽取）"));
+      const grid = el("div", "fx-fraud-grid");
+      const rows = [
+        ["前五名客户占比", "top5_customer_pct", "%"],
+        ["关联方销售占比", "related_party_sales_pct", "%"],
+        ["前五名供应商占比", "top5_supplier_pct", "%"],
+        ["研发资本化率", "rd_capitalization_pct", "%"],
+        ["非经常性损益合计", "nonrecurring_total", " 元"],
+      ];
+      for (const [label, key, unit] of rows) {
+        const f = latestFact(facts, key);
+        if (!f || f.value === undefined || f.value === null) continue;
+        const cell = el("div", "fx-fraud-grid-cell");
+        cell.appendChild(el("div", "fx-fraud-grid-label", label));
+        cell.appendChild(el("div", "fx-fraud-grid-value", `${f.value}${unit}（${f.period}）`));
+        grid.appendChild(cell);
+      }
+      const cons = latestFact(facts, "consolidation_change");
+      if (cons) {
+        const cell = el("div", "fx-fraud-grid-cell");
+        cell.appendChild(el("div", "fx-fraud-grid-label", "合并范围变化"));
+        cell.appendChild(
+          el("div", "fx-fraud-grid-value",
+            cons.applicable
+              ? `适用 · 新增 ${cons.entity_count || 0} 家（${cons.period}）`
+              : `不适用（${cons.period}）`)
+        );
+        grid.appendChild(cell);
+      }
+      const buyback = latestFact(facts, "share_buyback");
+      if (buyback) {
+        const cell = el("div", "fx-fraud-grid-cell");
+        cell.appendChild(el("div", "fx-fraud-grid-label", "股份回购"));
+        cell.appendChild(el("div", "fx-fraud-grid-value", `${buyback.value} ${buyback.unit || ""}（${buyback.period}）`));
+        grid.appendChild(cell);
+      }
+      card.appendChild(grid);
+      const docs = facts.source_docs || [];
+      if (docs.length) {
+        card.appendChild(
+          el("div", "fx-fraud-source-docs", `取自：${docs.map((d) => d.report_label).join(" / ")}`)
+        );
+      }
+      wrap.appendChild(card);
+    }
+
+    const covWrap = el("details", "fx-details fx-aux-details");
+    covWrap.appendChild(
+      el("summary", null, "展开财务戏法检查覆盖度（已执行 / 未触发 / 制度不适用 / 数据不足）")
+    );
+    const cv = el("div", "fx-aux-content");
+    const done = el("div", "fx-coverage-block");
+    done.appendChild(
+      el("div", "fx-block-label", `已执行判定（${(cov.performed || []).length} 项，其中未触发 ${cov.checked_no_trigger || 0} 项）`)
+    );
+    const chips = el("div", "fx-chip-row");
+    for (const name of cov.performed || []) chips.appendChild(chip(name, "ok"));
+    done.appendChild(chips);
+    cv.appendChild(done);
+    const groups = [
+      ["制度不适用（该市场无此披露/科目）", "not_applicable"],
+      ["数据不足（原文或科目缺失）", "data_missing"],
+    ];
+    for (const [label, reason] of groups) {
+      const hits = (cov.skipped || []).filter((s) => s.reason === reason);
+      if (!hits.length) continue;
+      const block = el("div", "fx-coverage-block");
+      block.appendChild(el("div", "fx-block-label", `${label}（${hits.length}）`));
+      const ul = el("ul", "fx-skip-list");
+      for (const s of hits) ul.appendChild(el("li", null, `${s.check}：${s.note || s.reason}`));
+      block.appendChild(ul);
+      cv.appendChild(block);
+    }
+    if (fraud && fraud.error) {
+      cv.appendChild(el("div", "fx-fraud-error", `检查降级：${fraud.error}`));
+    }
+    covWrap.appendChild(cv);
+    wrap.appendChild(covWrap);
+    return wrap;
+  }
+
+  VC.renderFraudPatterns = renderFraudPatterns;
+
   VC.renderForensics = function renderForensics(container, data) {
     if (!container) return;
     container.innerHTML = "";
@@ -544,6 +696,8 @@
     wrap.appendChild(renderSignals(data));
     const mining = renderMiningFindings(data);
     if (mining) wrap.appendChild(mining);
+    const fraud = renderFraudPatterns(data);
+    if (fraud) wrap.appendChild(fraud);
     wrap.appendChild(renderAnomalies(data));
     wrap.appendChild(renderCrossChecks(data));
     wrap.appendChild(renderCoverage(data));

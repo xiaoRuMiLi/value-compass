@@ -178,11 +178,22 @@ class StaticWiringTests(unittest.TestCase):
         html = _REPORT_HTML.read_text(encoding="utf-8")
         self.assertIn('id="klineMarkerLegend"', html)
         self.assertIn("财报关键点事件带", html)
-        self.assertIn('src="/static/js/forensics.js?v=20261123b"', html)
-        self.assertIn('src="/static/js/report.js?v=20261123b"', html)
+        self.assertIn('src="/static/js/forensics.js?v=20261123c"', html)
+        self.assertIn('src="/static/js/report.js?v=20261123c"', html)
 
     def test_review_page_uses_same_asset_version(self):
-        self.assertIn("?v=20261123b", _REVIEW_HTML.read_text(encoding="utf-8"))
+        self.assertIn("?v=20261123c", _REVIEW_HTML.read_text(encoding="utf-8"))
+
+    def test_fraud_patterns_are_wired_and_styled(self):
+        js = _FORENSICS_JS.read_text(encoding="utf-8")
+        self.assertIn("VC.renderFraudPatterns", js)
+        self.assertIn("renderFraudPatterns(data)", js)
+        self.assertIn("data.fraud_patterns", js)
+        self.assertIn("data.report_facts", js)
+        self.assertIn("fx-fraud-grid", js)
+        css = _REPORT_CSS.read_text(encoding="utf-8")
+        self.assertIn(".fx-fraud-item", css)
+        self.assertIn(".fx-fraud-grid", css)
 
     def test_shared_component_exposes_marker_api_and_dom_anchor(self):
         js = _FORENSICS_JS.read_text(encoding="utf-8")
