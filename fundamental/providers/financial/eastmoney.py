@@ -121,10 +121,16 @@ def _chunks(values: list[str], size: int) -> Iterator[list[str]]:
 
 # 港股主要指标报表：东财对港股用独立数据集，字段与 A 股不同。
 _HK_MAINFIN_REPORT = "RPT_HKF10_FN_MAININDICATOR"
+_HK_STATEMENT_REPORT = {
+    StatementType.INCOME: "RPT_HKF10_FN_INCOME",
+    StatementType.BALANCE: "RPT_HKF10_FN_BALANCE",
+}
 _HK_DATE_TYPE = {"001": ReportType.FY, "003": ReportType.Q1, "002": ReportType.H1, "004": ReportType.Q3}
 _HK_FIELDS = {
     "revenue": "OPERATE_INCOME",
     "net_profit": "HOLDER_PROFIT",  # 归母净利润
+    "operating_profit": "OPERATE_PROFIT",
+    "pretax_profit": "PRETAX_PROFIT",
     "gross_margin": "GROSS_PROFIT_RATIO",
     "net_margin": "NET_PROFIT_RATIO",
     "roe": "ROE_AVG",
@@ -200,6 +206,8 @@ class EastmoneyFinancialProvider:
                         revenue=to_float(row.get("TOTALOPERATEREVE")),
                         net_profit=to_float(row.get("PARENTNETPROFIT")),
                         net_profit_deducted=to_float(row.get("KCFJCXSYJLR")),
+                        operating_profit=to_float(row.get("OPERATE_PROFIT")),
+                        pretax_profit=to_float(row.get("TOTAL_PROFIT")),
                         gross_margin=to_float(row.get("XSMLL")),
                         net_margin=to_float(row.get("XSJLL")),
                         roe=to_float(row.get("ROEJQ")),
@@ -282,6 +290,8 @@ class EastmoneyFinancialProvider:
     ) -> list[StatementItem]:
         code, market = parse_symbol(symbol)
         statement = StatementType(statement_type)
+        if market == Market.HK:
+            return self._fetch_hk_statement_items(code, statement, start, end)
         fields = _STATEMENT_FIELDS[statement]
         report_dates = [item.report_date for item in self.fetch_financials(symbol, start, end)]
         items: list[StatementItem] = []
@@ -314,6 +324,65 @@ class EastmoneyFinancialProvider:
                             item_yoy=to_float(row.get(f"{field_code}_YOY")),
                         )
                     )
+        return items
+
+    def _fetch_hk_statement_items(
+        self,
+        code: str,
+        statement: StatementType,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> list[StatementItem]:
+        """港股逐科目报表（东财 RPT_HKF10_FN_INCOME / BALANCE 长表）。
+
+        港股没有 A 股三大报表接口；主要指标表只能给出汇总数，营业利润以下的
+        投资/联营/利息等分项必须走这里，否则解释层只能看到一个黑箱合计。
+        港股现金流量表长表在东财不存在，返回空列表由 coverage 声明缺口。
+        """
+        report_name = _HK_STATEMENT_REPORT.get(statement)
+        if not report_name:
+            return []
+        items: list[StatementItem] = []
+        page = 1
+        while True:
+            payload = self.client.get_json(
+                _MAINFINA_URL,
+                params={
+                    "reportName": report_name,
+                    "columns": "ALL",
+                    "filter": f'(SECUCODE="{code}.HK")',
+                    "pageNumber": str(page),
+                    "pageSize": "500",
+                    "sortTypes": "1,-1",
+                    "sortColumns": "STD_REPORT_DATE,STD_ITEM_CODE",
+                    "source": "F10",
+                    "client": "PC",
+                },
+                ttl=3600,
+            )
+            rows = (payload.get("result") or {}).get("data") or []
+            if not rows:
+                break
+            for row in rows:
+                report_date = str(row.get("STD_REPORT_DATE") or "")[:10]
+                if start and report_date < start:
+                    continue
+                if end and report_date > end:
+                    continue
+                items.append(
+                    StatementItem(
+                        report_date=report_date,
+                        report_type=_hk_report_type(row),
+                        statement_type=statement,
+                        item_code=str(row.get("STD_ITEM_CODE") or ""),
+                        item_name=str(row.get("ITEM_NAME") or ""),
+                        item_value=to_float(row.get("AMOUNT")),
+                        item_yoy=to_float(row.get("YOY_RATIO")),
+                    )
+                )
+            if len(rows) < 500:
+                break
+            page += 1
         return items
 
     def fetch_revenue_composition(

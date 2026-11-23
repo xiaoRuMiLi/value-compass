@@ -20,6 +20,7 @@ from typing import Any
 from fundamental.storage import db, repository
 from fundamental.utils import paths
 from fundamental.utils.logging import get_logger
+from fundamental.utils.pdf import is_source_title_usable
 
 _logger = get_logger(__name__)
 
@@ -32,7 +33,13 @@ _EVIDENCE_TERMS: dict[str, tuple[str, ...]] = {
     "业绩拐点：高增长转负": ("净利润", "归母净利润", "变动原因", "主要是", "主要原因", "销量", "价格", "产品结构", "基数", "行业", "调整期", "需求"),
     "毛利率异动": ("毛利率", "营业成本", "产品结构", "成本", "销售价格"),
     "净利率异动": ("净利率", "净利润", "费用", "产品结构", "毛利率"),
-    "ROE 显著变化": ("净资产收益率", "ROE", "净利润", "所有者权益", "分红"),
+    "ROE 显著变化": (
+        "净资产收益率", "ROE", "净利润", "所有者权益", "分红",
+        # 港股公告用繁体及「权益持有人应占盈利」口径，并常把原因写在同比段落
+        "股本回報率", "權益持有人應佔盈利", "本公司權益持有人應佔盈利",
+        "股東權益", "股息", "視同處置", "美團", "1,066",
+        "非國際財務報告準則", "投資收益", "聯營公司", "減值撥備",
+    ),
     "资产负债率突变": ("资产负债率", "负债", "资产", "存款", "借款"),
     "扣非净利显著低于归母净利": ("非经常性损益", "扣除非经常", "政府补助", "处置", "投资收益"),
     "利润未转化为经营现金流": ("经营活动产生的现金流量", "经营现金流", "应收账款", "存货", "回款"),
@@ -45,7 +52,10 @@ _EVIDENCE_TERMS: dict[str, tuple[str, ...]] = {
     "公告中出现风险类关键词": ("风险", "立案", "处罚", "问询", "减值", "更正"),
     "内部人净减持": ("减持", "股份变动", "股东", "交易"),
     "股权质押比例偏高": ("质押", "控股股东", "股份"),
-    "业绩方向与股价反应背离": ("净利润", "营业收入", "变动原因", "主要原因", "经营情况"),
+    "业绩方向与股价反应背离": (
+        "净利润", "营业收入", "变动原因", "主要原因", "经营情况",
+        "主要由於", "同比增長", "同比下降", "權益持有人應佔盈利",
+    ),
     "第三方资料出现负面表述": ("风险", "下滑", "承压"),
     # 资本运作与治理线索（财报原文里公司自己的说明）
     "异常突击分红": ("利润分配", "现金分红", "每股派现", "分红方案", "分红比例", "未分配利润"),
@@ -62,18 +72,25 @@ _EVIDENCE_TERMS: dict[str, tuple[str, ...]] = {
 _FALLBACK_TERMS: tuple[str, ...] = (
     "变动原因", "主要原因", "主要是", "管理层讨论与分析", "经营情况讨论与分析",
     "营业收入", "净利润", "经营活动产生的现金流量",
+    # 港股繁体口径：公司解释通常写成「该下降主要由於…」
+    "主要由於", "主要反映", "同比增長", "同比下降", "管理層討論與分析",
+    "權益持有人應佔盈利", "非國際財務報告準則", "視同處置", "美團",
 )
 
 # 财报里「公司对波动做说明」的黄金段落标记，命中即高优先级
 _EXPLANATION_MARKERS: tuple[str, ...] = (
     "变动原因说明", "变动的情况、原因", "主要原因", "经营情况讨论与分析",
     "主营业务分析", "报告期内主要经营情况",
+    "主要由於", "該下降主要由於", "主要反映", "管理層討論與分析",
 )
 
 # 章节边界：MD&A 通常从「第三节 管理层讨论与分析」到「第四节」；季报从「主要财务数据」开始
 # 注意排除目录行（标题后跟一长串点线 + 页码），必须匹配正文中的真实章节标题
-_SECTION_START = re.compile(r"^(第[三四]节\s*管理层讨论与分析|一、主要财务数据|主要会计数据和财务指标)\s*$")
-_SECTION_END = re.compile(r"^第[四五]节\s*(公司治理|重要事项)")
+_SECTION_START = re.compile(
+    r"^(第[三四][节節]\s*管理[层層][讨论論]{2}[與与]分析|管理[层層][讨论論]{2}[與与]分析|"
+    r"財務回顧|一、主要财务数据|主要会计数据和财务指标)\s*$"
+)
+_SECTION_END = re.compile(r"^第[四五][节節]\s*(公司治理|重要事项|公司管治|重要事項)")
 
 
 def _terms_for(signal: dict[str, Any]) -> tuple[str, ...]:
@@ -94,7 +111,7 @@ def _report_year(signal: dict[str, Any]) -> str | None:
 
 
 def _load_documents(symbol: str, db_path: Path | None) -> list[dict[str, Any]]:
-    """从 documents 表读取已下载的财报文本路径（只取 A 股本地存档）。"""
+    """从 documents 表读取已归档的财报文本路径（A 股巨潮 / 港股披露易）。"""
     conn = db.init_db(db_path)
     try:
         code, market = parse_code(symbol)
@@ -106,7 +123,9 @@ def _load_documents(symbol: str, db_path: Path | None) -> list[dict[str, Any]]:
             "SELECT doc_type, period, title, local_path FROM documents WHERE stock_id = ?",
             (stock_id,),
         )
-        return [dict(r) for r in rows]
+        # 披露提示性公告只有"报告已披露"的声明，读它取不到任何经营/财务表述，
+        # 在入口处就挡掉，避免污染检索证据与逐段通读的文档池。
+        return [dict(r) for r in rows if is_source_title_usable(str(r["title"] or ""))]
     finally:
         conn.close()
 
@@ -179,6 +198,22 @@ def _slice_sections(text: str) -> list[str]:
     return explanation_sentences + [p for p in paragraphs if len(p) >= 12]
 
 
+# 公司解释句：港股公告常把「该下降主要由於…」埋在长段落末尾，
+# 单独切出后才能在有限证据名额里被模型看到。
+_EXPLANATION_SENTENCE = re.compile(
+    r"[^。！？]{0,120}(?:該下降主要由於|主要由於|主要反映)[^。！？]{0,260}[。！？]?"
+)
+
+
+def _slice_explanations(text: str) -> list[str]:
+    out: list[str] = []
+    for match in _EXPLANATION_SENTENCE.finditer(text):
+        sentence = re.sub(r"\s+", " ", match.group(0)).strip()
+        if len(sentence) >= 16:
+            out.append(sentence)
+    return out
+
+
 def _score_paragraph(paragraph: str, terms: tuple[str, ...]) -> int:
     """命中关键词数 + 黄金段落标记加权；精准的「变动原因说明」短句优先。
 
@@ -186,11 +221,16 @@ def _score_paragraph(paragraph: str, terms: tuple[str, ...]) -> int:
     单条/少条的「XX变动原因说明：主要是……」才是公司最有价值的官方解释，
     因此给这类短句额外加权，确保它能进入 max_per_signal 的展示名额。
     """
-    score = sum(1 for term in terms if term in paragraph)
+    # 长段落关键词命中数天然虚高，封顶后让短解释句有机会胜出
+    score = min(sum(1 for term in terms if term in paragraph), 6)
     if any(marker in paragraph for marker in _EXPLANATION_MARKERS):
         score += 3
     if "变动原因说明" in paragraph and len(paragraph) <= 260:
         score += 6
+    if len(paragraph) <= 320 and any(
+        marker in paragraph for marker in ("該下降主要由於", "主要由於", "主要反映")
+    ):
+        score += 8
     return score
 
 
@@ -271,10 +311,15 @@ def retrieve_evidence(
                     _logger.warning("读取财报文本失败 %s: %s", txt_path, exc)
                     cache[cache_key] = []
                     continue
-                cache[cache_key] = [
-                    (para, period, str(doc.get("title") or period))
-                    for para in _slice_sections(raw)
-                ]
+                sections = _slice_sections(raw) + _slice_explanations(raw)
+                seen_paras: set[str] = set()
+                unique = []
+                for para in sections:
+                    if para in seen_paras:
+                        continue
+                    seen_paras.add(para)
+                    unique.append((para, period, str(doc.get("title") or period)))
+                cache[cache_key] = unique
 
             scored: list[tuple[int, str, str, str]] = []
             for para, p, title in cache[cache_key]:

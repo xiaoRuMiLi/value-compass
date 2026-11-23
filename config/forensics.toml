@@ -14,6 +14,15 @@ recent_years = 6
 max_signals = 16
 max_anomalies = 24
 
+# 财报原文守卫：分析前先检查本地原文，不足则自动下载多期再分析。
+# 这是「用财报原文印证偏离原因」的前置条件，不建议把两个下限都调成 0。
+# min_source_documents：至少几份可读原文（PDF 必须已抽取出文本）
+min_source_documents = 3
+# min_source_years：至少覆盖几个不同报告年份（避免只有单期、无法对照基数）
+min_source_years = 2
+# 补档时每种报告类型最多尝试下载几份（按报告期幂等，已归档的不会重下）
+source_archive_per_type = 6
+
 [forensics.thresholds]
 
 # ---------- 一、离群统计（自身历史基线） ----------

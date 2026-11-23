@@ -158,6 +158,8 @@ CREATE TABLE financials (
   revenue REAL,
   net_profit REAL,
   net_profit_deducted REAL,
+  operating_profit REAL,
+  pretax_profit REAL,
   gross_margin REAL,
   net_margin REAL,
   roe REAL,
@@ -175,6 +177,8 @@ CREATE TABLE financials (
   UNIQUE(stock_id, report_date, report_type)
 );
 ```
+
+`operating_profit` / `pretax_profit` 为营业利润与税前利润，两者之差是「营业利润以下合计」（投资/公允价值/联营/减值/利息/汇兑等）。港股从东财 `RPT_HKF10_FN_MAININDICATOR` 映射，A 股优先从三大报表明细回填；财报体检用它定位比率变动发生在经营端还是经营端之外。
 
 ### statement_items
 

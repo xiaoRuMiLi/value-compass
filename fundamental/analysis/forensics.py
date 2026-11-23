@@ -85,6 +85,150 @@ def _yoy(cur: float | None, prev: float | None) -> float | None:
     return (cur - prev) / prev * 100
 
 
+def _below_operating(operating: float | None, pretax: float | None) -> float | None:
+    """营业利润以下项目合计（投资/公允价值/联营/利息/汇兑/其他）。"""
+
+    if operating is None or pretax is None:
+        return None
+    return pretax - operating
+
+
+# 营业利润以下 / 税项的逐科目映射：港股用 STD_ITEM_CODE，A 股用科目名兜底。
+_BELOW_ITEM_ALIASES = {
+    "other": (
+        ("004011997",),
+        ("溢利其他项目", "投资收益", "公允价值变动收益", "资产减值损失", "信用减值损失"),
+    ),
+    "associates": (
+        ("004011202",),
+        ("应占联营公司溢利", "对联营企业和合营企业的投资收益", "联营企业投资收益"),
+    ),
+    "interest_income": (("004011200",), ("利息收入",)),
+    "finance_cost": (("004011201",), ("融资成本", "财务费用")),
+    "tax": (("004012001",), ("税项", "所得税费用")),
+}
+_BELOW_ITEM_LABELS = {
+    "other": "溢利其他项目（投资/处置/公允价值/减值等）",
+    "associates": "应占联营公司溢利",
+    "interest_income": "利息收入",
+    "finance_cost": "融资成本",
+    "tax": "税项",
+}
+
+
+def _statement_amount_by_alias(
+    items: list[Any] | None,
+    report_date: str | None,
+    codes: tuple[str, ...],
+    names: tuple[str, ...],
+) -> float | None:
+    if not report_date:
+        return None
+    for item in items or []:
+        if str(item.report_date) != str(report_date):
+            continue
+        if str(getattr(item, "item_code", "")) in codes or getattr(item, "item_name", "") in names:
+            return item.item_value
+    return None
+
+
+def _below_operating_breakdown(
+    items: list[Any] | None, report_date: str, prev_date: str | None = None
+) -> dict[str, dict[str, float | None]]:
+    """把营业利润以下合计拆成具体科目，避免解释层只看到黑箱。"""
+
+    result: dict[str, dict[str, float | None]] = {}
+    for key, (codes, names) in _BELOW_ITEM_ALIASES.items():
+        cur = _statement_amount_by_alias(items, report_date, codes, names)
+        prev = _statement_amount_by_alias(items, prev_date, codes, names) if prev_date else None
+        if cur is None and prev is None:
+            continue
+        result[key] = {
+            "current": cur,
+            "previous": prev,
+            "change": cur - prev if cur is not None and prev is not None else None,
+        }
+    return result
+
+
+def _profit_structure_facts(item: dict[str, Any]) -> list[dict[str, str]]:
+    """把利润结构作为确定性事实注入信号，供解释层定位因果发生的位置。"""
+
+    op = item.get("operating_profit")
+    pretax = item.get("pretax_profit")
+    if op is None or pretax is None:
+        return []
+    below = _below_operating(op, pretax)
+    facts = [
+        {"label": "本期营业利润", "value": _yi(op)},
+        {"label": "本期税前利润", "value": _yi(pretax)},
+        {"label": "营业利润以下合计", "value": _yi(below)},
+    ]
+    prev_op = item.get("prev_operating_profit")
+    prev_pretax = item.get("prev_pretax_profit")
+    if prev_op is not None:
+        facts.append({"label": "上年同期营业利润", "value": _yi(prev_op)})
+    if prev_pretax is not None:
+        facts.append({"label": "上年同期税前利润", "value": _yi(prev_pretax)})
+    prev_below = _below_operating(prev_op, prev_pretax)
+    if prev_below is not None:
+        facts.append({"label": "上年同期营业利润以下合计", "value": _yi(prev_below)})
+        facts.append({
+            "label": "营业利润以下同比变化",
+            "value": _yi(below - prev_below) if below is not None else "数据缺失",
+        })
+    for key, data in (item.get("below_breakdown") or {}).items():
+        cur, prev, change = data.get("current"), data.get("previous"), data.get("change")
+        if cur is None and prev is None:
+            continue
+        facts.append({
+            "label": _BELOW_ITEM_LABELS.get(key, key),
+            "value": f"{_yi(prev)} → {_yi(cur)}（变化 {_yi(change)}）",
+        })
+    return facts
+
+
+def _profit_structure_series(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """结论窗口内的利润结构快照，只保留代码算出的事实。"""
+
+    result: list[dict[str, Any]] = []
+    for item in items:
+        op = item.get("operating_profit")
+        pretax = item.get("pretax_profit")
+        if op is None or pretax is None:
+            continue
+        below = _below_operating(op, pretax)
+        prev_below = _below_operating(
+            item.get("prev_operating_profit"), item.get("prev_pretax_profit")
+        )
+        result.append({
+            "period": item["period"],
+            "report_date": item["report_date"],
+            "report_type": item["report_type"],
+            "operating_profit": op,
+            "pretax_profit": pretax,
+            "below_operating": below,
+            "below_operating_prev": prev_below,
+            "below_operating_change": (
+                below - prev_below if below is not None and prev_below is not None else None
+            ),
+            "below_breakdown": item.get("below_breakdown") or {},
+            "net_profit": item.get("net_profit"),
+        })
+    return result
+
+
+def _statement_amount(
+    items: list[Any] | None, report_date: str, names: tuple[str, ...]
+) -> float | None:
+    """从三大报表明细回填利润结构（A 股字段尚未映射到 financials 时）。"""
+
+    for item in items or []:
+        if str(item.report_date) == str(report_date) and item.item_name in names:
+            return item.item_value
+    return None
+
+
 def _period_key(row: FinancialReport) -> tuple[int, int]:
     """返回 (年份, 期序)，用于同报告期对齐。"""
 
@@ -244,6 +388,7 @@ def _scan_financial_series(
     coverage: dict[str, Any],
     cfg: ForensicsConfig | None = None,
     lookback: int = 12,
+    statement_items: list[Any] | None = None,
 ) -> int:
     """扫描财报序列。
 
@@ -256,7 +401,7 @@ def _scan_financial_series(
     ordered = sorted(financials, key=_period_key)
     if len(ordered) < 2:
         coverage["skipped"].append({"check": "财务序列异常", "reason": "财报期数不足 2 期"})
-        return 0
+        return 0, []
 
     # 同报告期（去年同类型）索引，保证累计口径可比
     by_key = {_period_key(row): row for row in ordered}
@@ -266,6 +411,22 @@ def _scan_financial_series(
         year, seq = _period_key(row)
         prev = by_key.get((year - 1, seq))
         rt = row.report_type.value if hasattr(row.report_type, "value") else str(row.report_type)
+        op = getattr(row, "operating_profit", None)
+        pretax = getattr(row, "pretax_profit", None)
+        prev_op = getattr(prev, "operating_profit", None) if prev else None
+        prev_pretax = getattr(prev, "pretax_profit", None) if prev else None
+        date = str(row.report_date)
+        prev_date = str(prev.report_date) if prev else None
+        if op is None:
+            op = _statement_amount(statement_items, date, ("营业利润",))
+        if pretax is None:
+            pretax = _statement_amount(statement_items, date, ("利润总额", "税前利润"))
+        if prev is not None:
+            if prev_op is None:
+                prev_op = _statement_amount(statement_items, prev_date, ("营业利润",))
+            if prev_pretax is None:
+                prev_pretax = _statement_amount(statement_items, prev_date, ("利润总额", "税前利润"))
+        breakdown = _below_operating_breakdown(statement_items, date, prev_date)
         series.append(
             {
                 "row": row,
@@ -280,6 +441,11 @@ def _scan_financial_series(
                 "net_profit_yoy": _yoy(row.net_profit, prev.net_profit if prev else None),
                 "gross_margin": row.gross_margin,
                 "net_margin": row.net_margin,
+                "operating_profit": op,
+                "pretax_profit": pretax,
+                "prev_operating_profit": prev_op,
+                "prev_pretax_profit": prev_pretax,
+                "below_breakdown": breakdown,
                 "roe": row.roe,
                 "debt_ratio": row.debt_ratio,
                 "ocf": row.ocf,
@@ -294,6 +460,16 @@ def _scan_financial_series(
         f"结论窗口为最近 {len(series) - start} / {len(series)} 期，全历史作为波动基线；"
         f"MAD 离群基线按报告期类型分组（阈值指纹 {cfg.fingerprint()}）"
     )
+    profit_structure = _profit_structure_series(series[start:])
+    if profit_structure:
+        coverage["performed"].append(
+            "利润结构定位：营业利润 / 税前利润 / 营业利润以下合计（按同报告期同比）"
+        )
+    else:
+        coverage["skipped"].append({
+            "check": "利润结构定位",
+            "reason": "营业利润与税前利润均缺失（港股需 provider 映射，A 股需三大报表明细）",
+        })
 
     # 全量序列仅用于「字段是否缺失」的覆盖度声明
     hist_gm = [s["gross_margin"] for s in series if s["gross_margin"] is not None]
@@ -371,7 +547,7 @@ def _scan_financial_series(
                     ],
                     f"净利同比 - 营收同比 > {cfg.profit_growth_gap_pp:g} 个百分点",
                     f"{period} 归母净利同比 {_pct(s['net_profit_yoy'])}，高出营收同比 "
-                    f"{_pp(gap)}；需核对是否由非经常性损益、费用资本化或基数效应造成。",
+                    f"{_pp(gap)}，利润增速与收入增速的差额由利润结构解释。",
                     [ref],
                 )
             )
@@ -442,15 +618,17 @@ def _scan_financial_series(
             trigger = f"|同比变化| > {threshold:g} 个百分点"
             if require_outlier:
                 trigger += "，且偏离自身历史波动"
+            facts = [
+                {"label": f"本期{label}", "value": _pct(cur)},
+                {"label": "上年同期", "value": _pct(prev_val)},
+                {"label": "同比变化", "value": _pp(delta)},
+                {"label": "自身历史中位数", "value": _pct(median) if hist else "样本不足"},
+            ]
+            facts.extend(_profit_structure_facts(s))
             signals.append(
                 _signal(
                     next_signal(), category, severity, title, period,
-                    [
-                        {"label": f"本期{label}", "value": _pct(cur)},
-                        {"label": "上年同期", "value": _pct(prev_val)},
-                        {"label": "同比变化", "value": _pp(delta)},
-                        {"label": "自身历史中位数", "value": _pct(median) if hist else "样本不足"},
-                    ],
+                    facts,
                     trigger,
                     f"{period} {label} {_pct(cur)}，较上年同期 {_pct(prev_val)} "
                     f"变化 {_pp(delta)}；历史中位数 {_pct(median) if hist else '样本不足'}。",
@@ -611,7 +789,7 @@ def _scan_financial_series(
         coverage["skipped"].append({"check": "经营现金流与利润背离", "reason": "经营现金流字段缺失（银行/港股常见）"})
     if not any(s["net_profit_deducted"] is not None for s in series):
         coverage["skipped"].append({"check": "扣非净利缺口", "reason": "扣非净利字段缺失"})
-    return start
+    return start, profit_structure
 
 
 # ---------- 利润表科目扫描 ----------
@@ -1490,7 +1668,7 @@ def _consolidate_signals(
         merged["description"] = (
             f"结论窗口内共有 {len(items)} 个报告期触发「{title}」，"
             f"从 {first['period']} 延续到 {last['period']}；这是持续性趋势而非单期偶发波动，"
-            "应优先判断其驱动因素（行业周期、基数效应、会计口径或经营质量变化）。"
+            "逐期数值见 occurrences。"
         )
         refs: list[str] = []
         for item in ordered:
@@ -1563,7 +1741,10 @@ def scan_forensics(
     coverage: dict[str, Any] = {"performed": [], "skipped": []}
     ordered = sorted(financials, key=_period_key)
 
-    _scan_financial_series(ordered, signals, anomalies, coverage, cfg=cfg, lookback=lookback)
+    _, profit_structure = _scan_financial_series(
+        ordered, signals, anomalies, coverage, cfg=cfg, lookback=lookback,
+        statement_items=statement_items,
+    )
     _scan_statement_items(
         statement_items or [], signals, anomalies, coverage, cfg=cfg, lookback=lookback
     )
@@ -1636,6 +1817,7 @@ def scan_forensics(
         },
         "signals": signals,
         "anomalies": anomalies,
+        "profit_structure": profit_structure,
         "evidence": evidence,
         "coverage": coverage,
         "summary": {

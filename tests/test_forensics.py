@@ -16,6 +16,7 @@ from unittest import mock
 from fundamental.analysis import forensics as fx
 from fundamental.analysis.forensics_config import ForensicsConfig
 from fundamental.models import (
+    DocType,
     EarningsForecast,
     FinancialReport,
     IntegrityRecord,
@@ -23,7 +24,8 @@ from fundamental.models import (
     StatementItem,
     StatementType,
 )
-from fundamental.services.narrative import _common, _forensics as narrative_fx
+from fundamental.providers.announcement import hkex
+from fundamental.services.narrative import _common, _evidence, _forensics as narrative_fx
 from fundamental.web.app import app
 from fundamental.web.routes import api
 
@@ -247,6 +249,18 @@ class TestGenerateAndCache(unittest.TestCase):
             _common.paths, "cache_dir", return_value=Path(self._tmp.name)
         )
         self._patch.start()
+        # 守卫走真实归档服务会碰网络；这里用假结果隔离，守卫本身由 test_source_guard 覆盖
+        self._guard = {
+            "status": "ok",
+            "required": {"documents": 0, "years": 0},
+            "before": {"documents": 3, "years": ["2023", "2024", "2025"]},
+            "after": {"documents": 3, "years": ["2023", "2024", "2025"]},
+            "downloaded": {},
+        }
+        self._guard_patch = mock.patch.object(
+            narrative_fx, "ensure_source_documents", return_value=self._guard
+        )
+        self._guard_patch.start()
         self._inputs = {
             "name": "测试公司", "industry": "测试行业",
             "financials": [
@@ -258,6 +272,7 @@ class TestGenerateAndCache(unittest.TestCase):
         }
 
     def tearDown(self):
+        self._guard_patch.stop()
         self._patch.stop()
         self._tmp.cleanup()
 
@@ -285,6 +300,11 @@ class TestGenerateAndCache(unittest.TestCase):
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         again = self._run()
         self.assertEqual(again["forensics_version"], narrative_fx._FORENSICS_VERSION)
+
+    def test_source_guard_result_is_exposed(self):
+        result = self._run(refresh=True)
+        self.assertEqual(result["source_guard"]["status"], "ok")
+        self.assertEqual(result["source_guard"]["after"]["documents"], 3)
 
     def test_missing_stock_returns_error(self):
         with mock.patch.object(narrative_fx, "_load_inputs", return_value=None):
@@ -335,6 +355,86 @@ class TestApiRoute(unittest.TestCase):
             with self.assertRaises(HTTPException) as ctx:
                 api.get_financial_forensics("X")
         self.assertEqual(ctx.exception.status_code, 404)
+
+
+class TestProfitStructureEvidence(unittest.TestCase):
+    def test_rate_signal_carries_below_operating_facts(self):
+        rows = [
+            fr("2024-12-31", roe=25.0, net_profit=100e8, operating_profit=1000e8, pretax_profit=1010e8),
+            fr("2025-12-31", roe=15.0, net_profit=180e8, operating_profit=1100e8, pretax_profit=1300e8),
+        ]
+        scan = fx.scan_forensics("TEST.HK", rows)
+        signal = next(s for s in scan["signals"] if s["title"] == "ROE 显著变化")
+        labels = {f["label"] for f in signal["facts"]}
+        self.assertIn("本期营业利润", labels)
+        self.assertIn("营业利润以下合计", labels)
+        self.assertIn("营业利润以下同比变化", labels)
+        self.assertNotIn("基数效应", signal["description"])
+        self.assertNotIn("会计口径", signal["description"])
+        self.assertEqual(len(scan["profit_structure"]), 1)
+        item = scan["profit_structure"][0]
+        self.assertAlmostEqual(item["below_operating"], 200e8)
+        self.assertAlmostEqual(item["below_operating_change"], 190e8)
+
+    def test_statement_items_backfill_operating_profit(self):
+        rows = [
+            fr("2024-12-31", roe=25.0, net_profit=100e8),
+            fr("2025-12-31", roe=15.0, net_profit=180e8),
+        ]
+        items = [
+            StatementItem("2024-12-31", ReportType.FY, StatementType.INCOME, "OP", "营业利润", 1000e8),
+            StatementItem("2024-12-31", ReportType.FY, StatementType.INCOME, "TP", "利润总额", 1010e8),
+            StatementItem("2025-12-31", ReportType.FY, StatementType.INCOME, "OP", "营业利润", 1100e8),
+            StatementItem("2025-12-31", ReportType.FY, StatementType.INCOME, "TP", "利润总额", 1300e8),
+        ]
+        scan = fx.scan_forensics("TEST.SH", rows, statement_items=items)
+        self.assertEqual(len(scan["profit_structure"]), 1)
+        self.assertAlmostEqual(scan["profit_structure"][0]["below_operating"], 200e8)
+
+    def test_below_operating_breakdown_reaches_facts(self):
+        rows = [
+            fr("2024-12-31", roe=25.0, net_profit=100e8, operating_profit=1000e8, pretax_profit=1010e8),
+            fr("2025-12-31", roe=15.0, net_profit=180e8, operating_profit=1100e8, pretax_profit=1300e8),
+        ]
+        items = [
+            StatementItem("2024-12-31", ReportType.FY, StatementType.INCOME, "004011997", "溢利其他项目", 50e8),
+            StatementItem("2024-12-31", ReportType.FY, StatementType.INCOME, "004011202", "应占联营公司溢利", 3e8),
+            StatementItem("2025-12-31", ReportType.FY, StatementType.INCOME, "004011997", "溢利其他项目", 150e8),
+            StatementItem("2025-12-31", ReportType.FY, StatementType.INCOME, "004011202", "应占联营公司溢利", 20e8),
+        ]
+        scan = fx.scan_forensics("TEST.HK", rows, statement_items=items)
+        signal = next(s for s in scan["signals"] if s["title"] == "ROE 显著变化")
+        labels = {f["label"] for f in signal["facts"]}
+        self.assertTrue(any("溢利其他项目" in label for label in labels))
+        self.assertTrue(any("应占联营公司溢利" in label for label in labels))
+        breakdown = scan["profit_structure"][0]["below_breakdown"]
+        self.assertAlmostEqual(breakdown["other"]["change"], 100e8)
+        self.assertAlmostEqual(breakdown["associates"]["change"], 17e8)
+
+    def test_prompt_contract_demands_causal_explanation(self):
+        prompt = (Path(__file__).parent.parent / "prompts" / "financial_forensics.md").read_text(encoding="utf-8")
+        self.assertIn("先定位因果发生的位置", prompt)
+        self.assertIn("below_breakdown", prompt)
+        self.assertIn("要解释，不要提醒", prompt)
+        self.assertNotIn("否则写行业属性 / 累计口径 / 周期位置 / 基数效应", prompt)
+
+
+class TestHkOriginalEvidence(unittest.TestCase):
+    def test_chinese_period_and_doc_type(self):
+        title = "截至二零二三年十二月三十一日止年度全年業績公佈"
+        self.assertEqual(hkex._extract_period(title), "2023")
+        self.assertEqual(hkex._extract_period("2024 年報"), "2024")
+        self.assertTrue(hkex._match_doc_type(title, DocType.ANNUAL_REPORT))
+        self.assertFalse(hkex._match_doc_type("中期報告 2025", DocType.ANNUAL_REPORT))
+        self.assertFalse(
+            hkex._match_doc_type("2024年環境、社會及管治報告", DocType.ANNUAL_REPORT)
+        )
+
+    def test_roe_terms_cover_hk_official_wording(self):
+        terms = _evidence._terms_for({"title": "ROE 显著变化", "category": "回报率"})
+        self.assertIn("視同處置", terms)
+        self.assertIn("權益持有人應佔盈利", terms)
+        self.assertIn("非國際財務報告準則", terms)
 
 
 if __name__ == "__main__":

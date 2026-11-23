@@ -48,6 +48,7 @@ from fundamental.utils.symbols import parse_symbol
 
 from ._evidence import retrieve_evidence
 from ._quality import excerpt_quality as _excerpt_quality
+from ._source_guard import ensure_source_documents
 from ._report_mining import mine_report_evidence
 from ._common import (
     _build_prompt,
@@ -59,7 +60,7 @@ from ._common import (
 
 # 提示词/输出结构升级时递增，使旧报告缓存失效。
 # 阈值改动不改变版本号，而是由 thresholds_fingerprint 让缓存自动失效。
-_FORENSICS_VERSION = 10
+_FORENSICS_VERSION = 18
 
 # 喂给最终 LLM 的新线索条数上限（控制上下文预算，全文仍写进 output 供前端展示）
 _MAX_MINING_FINDINGS_IN_FACTS = 5
@@ -157,14 +158,15 @@ def _merge_evidence(
     mined_signals = mined.get("signal_evidence") or {}
     all_ids = set(mined_signals) | set(keyword_map)
     for sid in all_ids:
-        items: list[dict[str, str]] = []
+        mined_items: list[dict[str, str]] = []
+        keyword_items: list[dict[str, str]] = []
         seen: set[str] = set()
         for hit in mined_signals.get(sid, []):
             text = str(hit.get("quote") or "").strip()
             if not text or text[:60] in seen:
                 continue
             seen.add(text[:60])
-            items.append(
+            mined_items.append(
                 {
                     "text": text,
                     "source": f"{hit.get('source', '')}·{hit.get('section', '')}".strip("·"),
@@ -181,7 +183,7 @@ def _merge_evidence(
             if not text or text[:60] in seen:
                 continue
             seen.add(text[:60])
-            items.append(
+            keyword_items.append(
                 {
                     "text": text,
                     "source": str(hit.get("source") or ""),
@@ -193,14 +195,23 @@ def _merge_evidence(
                     "seq": 0,
                 }
             )
+        # 两路各自排序后交错保留名额：挖掘摘录时效新，但关键词证据命中
+        # 「该下降主要由於…」这类关键句，不能被当期摘录整体挤出上下文。
+        mined_items.sort(key=lambda it: (
+            not it.get("is_current", False),
+            -it.get("seq", 0),
+            -_excerpt_quality(it["text"]),
+        ))
+        keyword_items.sort(key=lambda it: -_excerpt_quality(it["text"]))
+        items: list[dict[str, str]] = []
+        for i in range(max(len(mined_items), len(keyword_items))):
+            if i < len(mined_items):
+                items.append(mined_items[i])
+            if i < len(keyword_items):
+                items.append(keyword_items[i])
+            if len(items) >= 8:
+                break
         if items:
-            # 排序：当期证据优先（最新季报/当期年报），同档内按报告期时效分
-            # （最新季报 > 年报 > 历史）排，最后按信息密度（解释性短句优先）。
-            items.sort(key=lambda it: (
-                not it.get("is_current", False),
-                -it.get("seq", 0),
-                -_excerpt_quality(it["text"]),
-            ))
             merged[sid] = items[:8]
     return merged
 
@@ -245,6 +256,9 @@ def _facts(
         "instruction": (
             "以下全部数据由代码从公开财报与公开资料确定性计算得出，不是模型推测。"
             "请逐条解释、交叉印证，不得引入任何未提供的事实，不得下法律定性结论。"
+            "profit_structure 给出营业利润、税前利润与营业利润以下合计的逐期金额，"
+            "用于定位比率变动发生在经营端还是经营端之外；解释必须落到具体科目、金额与方向，"
+            "不要用核查提醒代替解释。"
             "signal.official_explanation 是公司财报原文中对该类波动的官方说明，"
             "是解释该风险点的首选依据：引用时必须注明来自公司财报原文；"
             "若某条风险点没有 official_explanation，就明确写「财报原文中未找到相关说明」，"
@@ -267,6 +281,7 @@ def _facts(
         "window": scan["window"],
         "periods": scan["periods"],
         "summary": scan["summary"],
+        "profit_structure": scan.get("profit_structure", []),
         "signals": [_brief_signal(s, evidence_map) for s in scan["signals"][:max_signals]],
         "signals_omitted": max(0, len(scan["signals"]) - max_signals),
         "official_explanation_coverage": {
@@ -545,6 +560,16 @@ def generate_financial_forensics(
             "forensics_version": _FORENSICS_VERSION,
         }
 
+    # 前置守卫：先用财报原文把证据底座备齐，再进入扫描与逐条剖析。
+    # 缺档时自动按市场下载多期原文；失败不阻断，但状态会写进报告。
+    guard = ensure_source_documents(
+        symbol,
+        db_path=db_path,
+        min_documents=cfg.min_source_documents,
+        min_years=cfg.min_source_years,
+        per_type=cfg.source_archive_per_type,
+    )
+
     try:
         intel = load_intel_digest(symbol, refresh=refresh)
     except Exception:  # 情报资料是增强项，失败不应阻断体检
@@ -577,7 +602,7 @@ def generate_financial_forensics(
     # 两者都失败不阻断主流程——没有原文时 LLM 仍按扫描数据解释。
     try:
         keyword_map = retrieve_evidence(
-            symbol, scan["signals"][:max_signals], db_path=db_path
+            symbol, scan["signals"][:max_signals], db_path=db_path, max_chars=900
         )
     except Exception:  # noqa: BLE001
         keyword_map = {}
@@ -648,6 +673,7 @@ def generate_financial_forensics(
         "thresholds_fingerprint": fingerprint,
         "thresholds": cfg.as_dict(),
         "company": {"name": inputs["name"], "industry": inputs["industry"]},
+        "source_guard": guard,
         "scan": scan,
         "official_explanations": evidence_map,
         "report_mining": mining,

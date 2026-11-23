@@ -1119,6 +1119,8 @@ details[open] > .fx-sig-head::before { content: "▾"; }
   background: #fff;
   border: 1px solid #fef3c7;
   border-radius: 6px;
+  /* K 线线索点点击后滚动定位时留点顶部余量 */
+  scroll-margin-top: 16px;
 }
 
 .fx-mining-head {
@@ -1338,4 +1340,44 @@ details[open] > .fx-sig-head::before { content: "▾"; }
   font-size: 11px;
   line-height: 1.7;
   color: #94a3b8;
+}
+
+/* ---- 日 K 线：财报关键点事件带 ---- */
+.kline-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #475569;
+}
+.kl-legend-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.kl-legend-dot {
+  width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+  border: 1px solid #fff; box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+/* 原文通读线索：菱形，区别于圆形的规则风险点 */
+.kl-legend-dot.is-diamond { border-radius: 2px; transform: rotate(45deg); }
+.kl-legend-hint, .kl-legend-empty { color: #94a3b8; }
+
+/* ECharts tooltip 内的事件详情卡 */
+.kl-tt-date { font-weight: 600; color: #0f172a; margin-bottom: 2px; }
+.kl-tt-ohlc { color: #475569; font-size: 12px; margin-bottom: 6px; }
+.kl-tt-ev { padding: 6px 0 6px 9px; margin-top: 6px; max-width: 330px; }
+.kl-tt-ev-head { font-size: 13px; font-weight: 600; color: #0f172a; }
+.kl-tt-tone { font-size: 11px; font-weight: 400; color: #64748b; }
+.kl-tt-meta { font-size: 11px; color: #64748b; margin: 3px 0; }
+.kl-tt-detail { font-size: 12px; line-height: 1.5; color: #334155; max-height: 96px; overflow: hidden; }
+.kl-tt-hint { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+
+/* 点击 K 线事件点后，上方对应风险卡片短暂高亮 */
+.fx-signal-flash { animation: fx-flash 1.8s ease-out; }
+@keyframes fx-flash {
+  0% { box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.45); background: #eff6ff; }
+  100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); background: #fff; }
 }

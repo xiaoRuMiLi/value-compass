@@ -89,6 +89,8 @@ CREATE TABLE financials (
   revenue REAL,
   net_profit REAL,
   net_profit_deducted REAL,
+  operating_profit REAL,
+  pretax_profit REAL,
   gross_margin REAL,
   net_margin REAL,
   roe REAL,

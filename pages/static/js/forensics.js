@@ -222,6 +222,8 @@
       };
       const sev = SEVERITY[signal.severity] || SEVERITY.low;
       const details = el("details", `fx-signal fx-sev-${sev.cls}`);
+      // K 线事件点点击后靠这个锚点定位、展开并高亮对应风险卡片
+      details.id = signalDomId(signal.id);
       if (index < 3 || signal.severity === "high") details.setAttribute("open", "open");
 
       const summary = el("summary", "fx-sig-head");
@@ -342,6 +344,7 @@
     const summaries = mining.summaries || mining.report_summaries || [];
     if (!findings.length && !summaries.length) return null;
     const wrap = el("div", "fx-mining");
+    wrap.id = "fx-mining";
     const sourceDocs = mining.source_docs || [];
     const docCount = sourceDocs.length || (mining.source_doc ? 1 : 0);
     const hasQuarterly = sourceDocs.some((d) => d.doc_type && d.doc_type !== "annual_report");
@@ -370,6 +373,8 @@
       const list = el("div", "fx-mining-list");
       findings.forEach((f, i) => {
         const item = el("div", "fx-mining-item");
+        // K 线通读线索点点击后靠这个锚点定位并高亮
+        item.id = findingDomId(i);
         const head = el("div", "fx-mining-head");
         head.appendChild(chip(`线索 ${i + 1}`, "suspicious"));
         if (f.is_current) head.appendChild(chip(`当期 ${f.report_label || f.period || ""}`.trim(), "confirmed"));
@@ -574,5 +579,213 @@
         container.appendChild(el("p", "fx-error", `财报深度体检暂时不可用：${msg}`));
         return null;
       });
+  };
+
+  // ---------- 财报关键点 → K 线底部事件带 ----------
+  // 纯数据转换（不碰 DOM），供 report 页把体检结论标到日 K 线图下方，
+  // 也便于在 Node 环境做回归测试。颜色遵循 A 股习惯：红=正向/好结果，绿=风险，灰=中性。
+
+  function signalDomId(id) {
+    return "fx-signal-" + String(id == null ? "" : id).replace(/[^A-Za-z0-9_-]/g, "");
+  }
+
+  function findingDomId(index) {
+    // 与 K 线事件点用同一份渲染数据、同一个序号，点击即可反向定位
+    return "fx-finding-" + (Number(index) + 1);
+  }
+
+  function escapeHtml(value) {
+    // 实体名拆开拼接，避免源码里出现会被二次解释的 HTML 实体
+    const AMP = "&" + "amp;";
+    const LT = "&" + "lt;";
+    const GT = "&" + "gt;";
+    const QUOT = "&" + "quot;";
+    const APOS = "&" + "#39;";
+    return String(value == null ? "" : value)
+      .replace(/&/g, AMP)
+      .replace(/</g, LT)
+      .replace(/>/g, GT)
+      .replace(/"/g, QUOT)
+      .replace(/'/g, APOS);
+  }
+
+  const MARKER_TONES = {
+    positive: { label: "正向 / 正常解释", color: "#dc2626", y: 0.14 },
+    negative: { label: "风险 / 需核查", color: "#16a34a", y: 0.09 },
+    neutral: { label: "中性 / 数据不足", color: "#64748b", y: 0.04 },
+    // 原文通读发现不是规则信号，也没有模型判定，单独成类：琥珀菱形，
+    // 不占用用户约定的「红=正向 / 绿=风险」语义，也不会被误读成结论。
+    clue: { label: "原文通读线索", color: "#d97706", y: 0.195, symbol: "diamond" },
+  };
+
+  function markerTone(signal, analysis) {
+    const judgement = analysis && analysis.judgement;
+    // LLM 判定「更可能是正常解释」= 虚惊 / 好结果 → 红
+    if (judgement === "normal") return "positive";
+    // 已披露事实 / 需核查线索 / 高严重度 → 绿（警示）
+    if (judgement === "confirmed" || judgement === "suspicious") return "negative";
+    if (signal.severity === "high") return "negative";
+    return "neutral";
+  }
+
+  function markerDetail(signal, analysis) {
+    const parts = [];
+    if (analysis && analysis.substance) parts.push(analysis.substance);
+    else if (signal.description) parts.push(signal.description);
+    if (analysis && analysis.benign) parts.push("合理解释：" + analysis.benign);
+    if (analysis && analysis.risk) parts.push("需警惕：" + analysis.risk);
+    return parts.join(" ").slice(0, 300);
+  }
+
+  function periodDates(period) {
+    // 区间型："2023-12-31 年报 ~ 2024-12-31 年报（共 2 期）" → 全部日期，取末次为准
+    return String(period || "").match(/20\d{2}-\d{2}-\d{2}/g) || [];
+  }
+
+  function anchorTradeDate(kline, reportDate) {
+    // x 轴是交易日字符串；报告期常非交易日，取当天或之后最近的一个交易日
+    for (const bar of kline) {
+      if (bar.trade_date >= reportDate) return bar.trade_date;
+    }
+    return kline.length ? kline[kline.length - 1].trade_date : null;
+  }
+
+  function findingReportDate(f) {
+    // 归档文档的 period 常只存年份（如 "2026"），季型写在 report_label 里，
+    // 这里还原成报告期末日期，与风险信号的「按报告期定位」口径保持一致。
+    const explicit = periodDates(f.period);
+    if (explicit.length) return explicit[explicit.length - 1];
+    const label = String(f.report_label || "");
+    const yearMatch = String(f.period || label).match(/20\d{2}/);
+    if (!yearMatch) return null;
+    const y = yearMatch[0];
+    if (/一季|第一季|Q1/i.test(label)) return y + "-03-31";
+    if (/中报|半年|中期|H1/i.test(label)) return y + "-06-30";
+    if (/三季|第三季|Q3/i.test(label)) return y + "-09-30";
+    return y + "-12-31";
+  }
+
+  function findingDetail(f) {
+    const parts = [];
+    if (f.description) parts.push(f.description);
+    if (f.quote) parts.push("原文摘录：" + f.quote);
+    return parts.join(" ").slice(0, 360);
+  }
+
+  VC.escapeHtml = escapeHtml;
+  VC.MARKER_TONES = MARKER_TONES;
+
+  /** 把体检信号 + 原文通读发现一起转成 K 线事件带上的散点。 */
+  VC.buildForensicMarkers = function buildForensicMarkers(data, kline) {
+    const result = {
+      points: [],
+      counts: { positive: 0, negative: 0, neutral: 0, clue: 0 },
+      earliest: null,
+    };
+    if (!data || !kline || !kline.length) return result;
+    const signals = (data.scan && data.scan.signals) || [];
+    // 通读发现是模型逐段读财报后补出的线索，与规则信号并列展示，但不混进红/绿判定
+    const findings = ((data.report_mining || {}).new_findings) || [];
+    const byId = {};
+    for (const analysis of data.analyses || []) byId[analysis.id] = analysis;
+    // 同一交易日、同一色调的事件轻微错位，避免多个点完全叠在一起看不见
+    const laneCount = {};
+
+    function addPoint(tradeDate, tone, spec) {
+      const toneInfo = MARKER_TONES[tone];
+      result.counts[tone] += 1;
+      if (!result.earliest || tradeDate < result.earliest) result.earliest = tradeDate;
+      const laneKey = tradeDate + "|" + tone;
+      const lane = laneCount[laneKey] || 0;
+      laneCount[laneKey] = lane + 1;
+      result.points.push({
+        name: spec.name,
+        // y 走第二条隐藏轴（0~1）：色调分层 + 同层内错位，全部落在图表底部
+        value: [tradeDate, toneInfo.y + Math.min(lane, 4) * 0.017],
+        signalId: spec.signalId || null,
+        anchorId: spec.anchorId,
+        tone: tone,
+        symbol: toneInfo.symbol || "circle",
+        symbolSize: spec.symbolSize || 10,
+        itemStyle: { color: toneInfo.color, borderColor: "#ffffff", borderWidth: 1.5 },
+        meta: Object.assign(
+          { color: toneInfo.color, toneLabel: toneInfo.label },
+          spec.meta
+        ),
+      });
+    }
+
+    for (const signal of signals) {
+      const dates = periodDates(signal.period);
+      if (!dates.length) continue;
+      const tradeDate = anchorTradeDate(kline, dates[dates.length - 1]);
+      if (!tradeDate) continue;
+      const analysis = byId[signal.id];
+      const sev = SEVERITY[signal.severity] || SEVERITY.low;
+      const judgement = analysis && JUDGEMENT[analysis.judgement]
+        ? JUDGEMENT[analysis.judgement].label
+        : "客观扫描";
+      addPoint(tradeDate, markerTone(signal, analysis), {
+        name: signal.title,
+        signalId: signal.id,
+        anchorId: signalDomId(signal.id),
+        symbolSize: signal.severity === "high" ? 15 : signal.severity === "medium" ? 12 : 9,
+        meta: {
+          title: signal.title,
+          period: signal.period,
+          category: signal.category,
+          severity: sev.label,
+          judgement: judgement,
+          detail: markerDetail(signal, analysis),
+          hint: "点击圆点定位到上方对应风险点",
+        },
+      });
+    }
+
+    findings.forEach((f, i) => {
+      const reportDate = findingReportDate(f);
+      if (!reportDate) return;
+      const tradeDate = anchorTradeDate(kline, reportDate);
+      if (!tradeDate) return;
+      addPoint(tradeDate, "clue", {
+        name: "原文通读线索 " + (i + 1),
+        anchorId: findingDomId(i),
+        symbolSize: 11,
+        meta: {
+          title: "原文通读线索 " + (i + 1),
+          period: f.report_label || f.period || "",
+          severity: "线索",
+          judgement: "规则扫描未覆盖",
+          detail: findingDetail(f),
+          hint: "点击圆点定位到上方「原文通读发现」",
+          findingId: i + 1,
+        },
+      });
+    });
+    return result;
+  };
+
+  /** 由 K 线事件点反向定位到上方财报体检的对应卡片（风险点或原文通读发现）。 */
+  VC.focusForensicAnchor = function focusForensicAnchor(anchorId) {
+    if (!anchorId) return false;
+    const node = document.getElementById(anchorId);
+    if (!node) return false;
+    // 自己或任一祖先是折叠的 <details> 时先展开，否则滚过去也看不见内容
+    let cur = node;
+    while (cur) {
+      if (cur.tagName && cur.tagName.toLowerCase() === "details") {
+        cur.setAttribute("open", "open");
+      }
+      cur = cur.parentElement;
+    }
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    node.classList.add("fx-signal-flash");
+    window.setTimeout(() => node.classList.remove("fx-signal-flash"), 1800);
+    return true;
+  };
+
+  /** 兼容旧调用：由信号 id 定位到对应风险卡片。 */
+  VC.focusForensicSignal = function focusForensicSignal(id) {
+    return VC.focusForensicAnchor(signalDomId(id));
   };
 })();

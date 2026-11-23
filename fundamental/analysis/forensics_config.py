@@ -53,6 +53,12 @@ class ForensicsConfig:
     max_signals: int = 16
     max_anomalies: int = 24
 
+    # 财报原文前置守卫：分析前至少要有这么多期可读原文 / 覆盖年份，
+    # 不足则自动补档（每类报告最多下载 source_archive_per_type 份）。
+    min_source_documents: int = 3
+    min_source_years: int = 2
+    source_archive_per_type: int = 6
+
     # 离群统计
     mad_multiplier: float = 3.0
     mad_min_samples: int = 4
@@ -208,6 +214,9 @@ class ForensicsConfig:
             recent_years=pick("recent_years", int, minimum=1),
             max_signals=pick("max_signals", int, minimum=1),
             max_anomalies=pick("max_anomalies", int, minimum=1),
+            min_source_documents=pick("min_source_documents", int, minimum=0),
+            min_source_years=pick("min_source_years", int, minimum=0),
+            source_archive_per_type=pick("source_archive_per_type", int, minimum=1),
             mad_multiplier=pick("mad_multiplier", float, minimum=0.1),
             mad_min_samples=pick("mad_min_samples", int, minimum=2),
             rate_require_outlier=pick_terms("rate_require_outlier", _RATE_KEYS),

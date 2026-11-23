@@ -202,6 +202,8 @@ class FinancialReport:
     revenue: Optional[float] = None
     net_profit: Optional[float] = None
     net_profit_deducted: Optional[float] = None
+    operating_profit: Optional[float] = None
+    pretax_profit: Optional[float] = None
     gross_margin: Optional[float] = None
     net_margin: Optional[float] = None
     roe: Optional[float] = None

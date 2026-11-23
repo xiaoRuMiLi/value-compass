@@ -78,8 +78,8 @@ def sync_stock(
     financials = financial.fetch_financials(symbol)
     stats["financials"] = _insert(
         conn, "financials",
-        ["stock_id", "report_date", "report_type", "revenue", "net_profit", "net_profit_deducted", "gross_margin", "net_margin", "roe", "roic", "debt_ratio", "current_ratio", "ocf", "fcf", "eps", "bps", "revenue_yoy", "net_profit_yoy", "audit_opinion"],
-        financials, lambda f: (stock_id, f.report_date, f.report_type.value, f.revenue, f.net_profit, f.net_profit_deducted, f.gross_margin, f.net_margin, f.roe, f.roic, f.debt_ratio, f.current_ratio, f.ocf, f.fcf, f.eps, f.bps, f.revenue_yoy, f.net_profit_yoy, _ev(f.audit_opinion)),
+        ["stock_id", "report_date", "report_type", "revenue", "net_profit", "net_profit_deducted", "operating_profit", "pretax_profit", "gross_margin", "net_margin", "roe", "roic", "debt_ratio", "current_ratio", "ocf", "fcf", "eps", "bps", "revenue_yoy", "net_profit_yoy", "audit_opinion"],
+        financials, lambda f: (stock_id, f.report_date, f.report_type.value, f.revenue, f.net_profit, f.net_profit_deducted, f.operating_profit, f.pretax_profit, f.gross_margin, f.net_margin, f.roe, f.roic, f.debt_ratio, f.current_ratio, f.ocf, f.fcf, f.eps, f.bps, f.revenue_yoy, f.net_profit_yoy, _ev(f.audit_opinion)),
     )
     statement_rows = []
     for statement_type in (StatementType.INCOME, StatementType.BALANCE, StatementType.CASHFLOW):
