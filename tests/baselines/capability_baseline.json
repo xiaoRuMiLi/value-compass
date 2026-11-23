@@ -1,0 +1,59 @@
+{
+  "symbols": {
+    "300308.SZ": {
+      "source": "llm",
+      "forensics_version": 18,
+      "verdict_level": "medium",
+      "essence_chars": 761,
+      "key_phrase_hit": true,
+      "signal_count": 12,
+      "signal_ids": [
+        "SIG001",
+        "SIG002",
+        "SIG003",
+        "SIG004",
+        "SIG005",
+        "SIG006",
+        "SIG007",
+        "SIG008",
+        "SIG009",
+        "SIG010",
+        "SIG011",
+        "SIG012"
+      ],
+      "analysis_count": 12,
+      "analysis_complete": 12,
+      "mining_segments": 110,
+      "mining_findings": 5,
+      "mining_evidence_signals": 12,
+      "official_explanations": 12,
+      "source_guard": "ok",
+      "coverage_performed": 7,
+      "marker_points": 13
+    },
+    "00700.HK": {
+      "source": "llm",
+      "forensics_version": 18,
+      "verdict_level": "medium",
+      "essence_chars": 594,
+      "key_phrase_hit": true,
+      "signal_count": 5,
+      "signal_ids": [
+        "SIG001",
+        "SIG002",
+        "SIG003",
+        "SIG004",
+        "SIG005"
+      ],
+      "analysis_count": 5,
+      "analysis_complete": 5,
+      "mining_segments": 37,
+      "mining_findings": 5,
+      "mining_evidence_signals": 5,
+      "official_explanations": 5,
+      "source_guard": "ok",
+      "coverage_performed": 4,
+      "marker_points": 10
+    }
+  }
+}
