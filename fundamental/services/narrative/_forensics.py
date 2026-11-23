@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Type, TypeVar
 
 from fundamental.analysis.forensics import scan_forensics
+from fundamental.analysis.forensic_patterns import scan_fraud_patterns
 from fundamental.config import load_settings
 from fundamental.models import (
     Announcement,
@@ -43,11 +44,13 @@ from fundamental.services.forensics_config import load_forensics_config
 from fundamental.services.llm import chat_json, has_live_llm
 from fundamental.storage import db, repository
 from fundamental.utils.intel import load_intel_digest
+from fundamental.utils.logging import get_logger
 from fundamental.utils.prompts import load_prompt
 from fundamental.utils.symbols import parse_symbol
 
 from ._evidence import retrieve_evidence
 from ._quality import excerpt_quality as _excerpt_quality
+from ._report_facts import extract_report_facts
 from ._source_guard import ensure_source_documents
 from ._report_mining import mine_report_evidence
 from ._common import (
@@ -60,10 +63,14 @@ from ._common import (
 
 # 提示词/输出结构升级时递增，使旧报告缓存失效。
 # 阈值改动不改变版本号，而是由 thresholds_fingerprint 让缓存自动失效。
-_FORENSICS_VERSION = 18
+_FORENSICS_VERSION = 19
+
+_logger = get_logger(__name__)
 
 # 喂给最终 LLM 的新线索条数上限（控制上下文预算，全文仍写进 output 供前端展示）
 _MAX_MINING_FINDINGS_IN_FACTS = 5
+# 财务戏法线索注入总纲的条数上限；完整结果作为报告并列字段供前端逐条查看
+_MAX_FRAUD_PATTERNS_IN_FACTS = 5
 
 _JUDGEMENTS = {"confirmed", "suspicious", "normal", "unverifiable"}
 _CONFIDENCES = {"high", "medium", "low"}
@@ -138,6 +145,44 @@ def _load_inputs(symbol: str, db_path: Path | None = None) -> dict[str, Any] | N
         }
     finally:
         conn.close()
+
+
+def _fill_ocf_from_items(
+    financials: list[FinancialReport], statement_items: list[StatementItem]
+) -> list[FinancialReport]:
+    """A 股 financials.ocf 常为空，但 statement_items 里有 NETCASH_OPERATE，按报告期回填。
+
+    只在本模块内部修正输入，不写数据库，也不改同步链路；港股 financials.ocf
+    本来就由主指标接口填充齐全，这里不会动它。修掉「原文里明明有经营现金流，
+    事实层却判字段缺失、把检查跳过」这一割裂。
+    """
+    if all(f.ocf is not None for f in financials):
+        return financials
+    by_date: dict[str, float] = {}
+    for item in statement_items:
+        if str(item.item_code) != "NETCASH_OPERATE" or item.item_value is None:
+            continue
+        by_date.setdefault(str(item.report_date), float(item.item_value))
+    if not by_date:
+        return financials
+    filled: list[FinancialReport] = []
+    changed = 0
+    for f in financials:
+        value = by_date.get(str(f.report_date))
+        if f.ocf is None and value is not None:
+            if dataclasses.is_dataclass(f):
+                filled.append(dataclasses.replace(f, ocf=value))
+            else:
+                # 兼容非 dataclass 适配器（只按属性取值），避免 replace() 抛 TypeError
+                data = dict(vars(f))
+                data["ocf"] = value
+                filled.append(type(f)(**data))
+            changed += 1
+        else:
+            filled.append(f)
+    if changed:
+        _logger.info("从科目明细回填 ocf %d 期", changed)
+    return filled
 
 
 # ---------- 事实组装 ----------
@@ -247,8 +292,10 @@ def _facts(
     max_anomalies: int,
     evidence_map: dict[str, list[dict[str, str]]] | None = None,
     mining: dict[str, Any] | None = None,
+    fraud: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ev = scan["evidence"]
+    fraud = fraud or {}
     intel = intel or {}
     evidence_map = evidence_map or {}
     covered = sum(1 for s in scan["signals"][:max_signals] if s["id"] in evidence_map)
@@ -276,8 +323,26 @@ def _facts(
             "研发资本化比重、财务公司信贷、未履行承诺等），不要只谈治理与市场预期而遗漏它们，"
             "否则总述会与下方剖析对不上。新线索只作提示，不得当作已确认事实，"
             "引用须注明来自财报原文摘录。"
+            "fraud_patterns 是确定性「财务戏法线索」扫描结果，每条都带组合判定条件与数值证据，"
+            "覆盖虚增利润/收入质量、财务洗澡、关联交易、会计估计四类；"
+            "verdict.essence 需纳入其中最实质的 1~2 条并解释因果链（谁导致谁、具体科目与金额），"
+            "但绝不能据此下「财务造假/粉饰/操纵」定性结论；未触发的检查不等于没有问题。"
         ),
         "company": {"symbol": symbol, "name": inputs["name"], "industry": inputs["industry"]},
+        "fraud_patterns": {
+            "summary": fraud.get("summary", {}),
+            "checked_but_not_triggered": (fraud.get("coverage") or {}).get("checked_no_trigger", 0),
+            "patterns": [
+                {
+                    "id": p["id"], "title": p["title"], "category": p["category"],
+                    "severity": p["severity"], "period": p["period"],
+                    "confidence": p["confidence"],
+                    "explanation": p["explanation"][:300],
+                    "facts": p["facts"],
+                }
+                for p in (fraud.get("patterns") or [])[:_MAX_FRAUD_PATTERNS_IN_FACTS]
+            ],
+        },
         "window": scan["window"],
         "periods": scan["periods"],
         "summary": scan["summary"],
@@ -560,6 +625,11 @@ def generate_financial_forensics(
             "forensics_version": _FORENSICS_VERSION,
         }
 
+    # A 股主表缺 ocf 但科目明细里有：先补齐再扫描，避免「原文有数却判缺失」。
+    inputs["financials"] = _fill_ocf_from_items(
+        inputs["financials"], inputs["statement_items"]
+    )
+
     # 前置守卫：先用财报原文把证据底座备齐，再进入扫描与逐条剖析。
     # 缺档时自动按市场下载多期原文；失败不阻断，但状态会写进报告。
     guard = ensure_source_documents(
@@ -598,6 +668,36 @@ def generate_financial_forensics(
         recent_years=recent_years,
         config=cfg,
     )
+
+    # 财务戏法线索：独立于 scan.signals 的并列检查，不占用原有风险点名额、
+    # 不进入逐条剖析数组，因此不会影响既有 25 条规则与 LLM 剖析完整性。
+    # 事实卡只读归档文本，扫描只吃纯数据；任一环节失败都写进报告状态，不静默。
+    try:
+        report_facts = extract_report_facts(symbol, db_path=db_path)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("财报结构化事实抽取失败 %s: %s", symbol, exc)
+        report_facts = {"error": str(exc), "source_docs": [], "missing_facts": ["抽取失败"]}
+    market = "HK" if str(symbol).upper().endswith(".HK") else "A"
+    try:
+        fraud = scan_fraud_patterns(
+            symbol=symbol,
+            market=market,
+            financials=inputs["financials"],
+            statement_items=inputs["statement_items"],
+            report_facts=report_facts,
+            lookback_periods=lookback,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("财务戏法检查失败 %s: %s", symbol, exc)
+        fraud = {
+            "symbol": symbol, "market": market, "patterns": [],
+            "coverage": {"performed": [], "skipped": [], "checks_total": 11,
+                         "checked_no_trigger": 0, "not_applicable": 0, "data_missing": 0},
+            "summary": {"pattern_count": 0, "high": 0, "medium": 0, "low": 0,
+                        "by_category": {}},
+            "error": str(exc),
+        }
+
     # 财报原文证据：先跑关键词检索（离线、快），再跑分段挖掘（LLM、贵）。
     # 两者都失败不阻断主流程——没有原文时 LLM 仍按扫描数据解释。
     try:
@@ -635,7 +735,7 @@ def generate_financial_forensics(
 
     facts = _facts(
         symbol, inputs, scan, intel, max_signals, max_anomalies,
-        evidence_map=evidence_map, mining=mining,
+        evidence_map=evidence_map, mining=mining, fraud=fraud,
     )
 
     report: dict[str, Any] | None = None
@@ -677,6 +777,8 @@ def generate_financial_forensics(
         "scan": scan,
         "official_explanations": evidence_map,
         "report_mining": mining,
+        "fraud_patterns": fraud,
+        "report_facts": report_facts,
         "citations": _citations(scan, intel),
         "coverage": scan["coverage"],
         **report,
