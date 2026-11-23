@@ -169,6 +169,48 @@ assert.strictEqual(signalNode.scrolled, true);
 assert.strictEqual(VC.buildForensicMarkers(null, kline).points.length, 0);
 assert.strictEqual(VC.buildForensicMarkers(data, []).points.length, 0);
 assert.strictEqual(VC.buildForensicMarkers(data, kline).counts.clue, 0);
+
+// ---- 判定依据不再吐原始 JSON：中文标签、单位换算、表格与去重 ----
+assert.strictEqual(VC.formatFactValue('ocf', 1315866293.65), '13.16 亿元');
+assert.strictEqual(VC.formatFactValue('top5_pct', 75.98), '75.98%');
+assert.strictEqual(VC.formatFactValue('gap_pp', 12.3), '12.30 个百分点');
+assert.strictEqual(VC.formatFactValue('asset_expansion_confirmed', false), '否');
+assert.strictEqual(VC.formatFactValue('entity_count', 9), '9 家');
+assert.strictEqual(VC.formatFactValue('ratio', 0.351), '0.351');
+function mockEl(tag) {
+  return { tagName: String(tag).toUpperCase(), className: '', textContent: '', children: [],
+    appendChild: function (c) { this.children.push(c); return c; }, setAttribute: function () {} };
+}
+ctx.document = { getElementById: (id) => nodes[id] || null, createElement: mockEl };
+const factNode = VC.renderPatternFacts({
+  series: [{ period: '2026-09-30', ocf: 8008444194.49, net_profit: 22237939006.75, ratio: 0.36 }],
+  low_periods: 6, consecutive_low: 3, asset_expansion_confirmed: false,
+  occurrences: [{ period: '2025', top5_pct: 75.98, related_sales_pct: 8.1,
+                  quote: '前五名客户合计销售金额占年度销售总额比例 75.98%', source: '2025 年报' }],
+}, new Set());
+function flatten(n) {
+  let s = n.textContent || '';
+  for (const c of n.children || []) s += ' ' + flatten(c);
+  return s;
+}
+const factText = flatten(factNode);
+assert.ok(factText.indexOf('经营活动现金流净额') >= 0, factText);
+assert.ok(factText.indexOf('80.08 亿元') >= 0, factText);
+assert.ok(factText.indexOf('前五名客户占比') >= 0, factText);
+assert.ok(factText.indexOf('75.98%') >= 0, factText);
+assert.ok(factText.indexOf('连续偏低期数') >= 0, factText);
+assert.ok(factText.indexOf('否') >= 0, factText);
+assert.ok(factText.indexOf('2025 年报') >= 0, factText);
+assert.strictEqual(factText.indexOf('{'), -1, '不应再出现 JSON 花括号');
+assert.strictEqual(factText.indexOf('"ocf"'), -1, '不应再出现英文键名');
+// 卡片正文已展示过的原文摘录，展开区不重复
+const dedup = VC.renderPatternFacts(
+  { occurrences: [{ period: '2025', quote: '同一段原文', top5_pct: 75.98 }] },
+  new Set(['同一段原文'])
+);
+assert.strictEqual(flatten(dedup).indexOf('同一段原文'), -1);
+// 空 facts 优雅降级，不抛异常
+assert.ok(flatten(VC.renderPatternFacts({}, new Set())).indexOf('已展示在卡片正文中') >= 0);
 console.log('MARKER_LOGIC_OK');
 """
 
@@ -178,11 +220,11 @@ class StaticWiringTests(unittest.TestCase):
         html = _REPORT_HTML.read_text(encoding="utf-8")
         self.assertIn('id="klineMarkerLegend"', html)
         self.assertIn("财报关键点事件带", html)
-        self.assertIn('src="/static/js/forensics.js?v=20261123c"', html)
-        self.assertIn('src="/static/js/report.js?v=20261123c"', html)
+        self.assertIn('src="/static/js/forensics.js?v=20261123d"', html)
+        self.assertIn('src="/static/js/report.js?v=20261123d"', html)
 
     def test_review_page_uses_same_asset_version(self):
-        self.assertIn("?v=20261123c", _REVIEW_HTML.read_text(encoding="utf-8"))
+        self.assertIn("?v=20261123d", _REVIEW_HTML.read_text(encoding="utf-8"))
 
     def test_fraud_patterns_are_wired_and_styled(self):
         js = _FORENSICS_JS.read_text(encoding="utf-8")
@@ -191,9 +233,16 @@ class StaticWiringTests(unittest.TestCase):
         self.assertIn("data.fraud_patterns", js)
         self.assertIn("data.report_facts", js)
         self.assertIn("fx-fraud-grid", js)
+        # 判定依据面向一般用户：原始 JSON 必须消失，改为中文标签表格
+        self.assertNotIn("JSON.stringify(p.facts", js)
+        self.assertIn("FACT_LABELS", js)
+        self.assertIn("查看判定数值与依据", js)
+        self.assertIn("VC.renderPatternFacts", js)
         css = _REPORT_CSS.read_text(encoding="utf-8")
         self.assertIn(".fx-fraud-item", css)
         self.assertIn(".fx-fraud-grid", css)
+        self.assertIn(".fx-fraud-table", css)
+        self.assertNotIn(".fx-fraud-json", css)
 
     def test_shared_component_exposes_marker_api_and_dom_anchor(self):
         js = _FORENSICS_JS.read_text(encoding="utf-8")

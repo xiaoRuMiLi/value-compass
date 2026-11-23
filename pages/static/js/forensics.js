@@ -532,6 +532,175 @@
     return wrap;
   }
 
+  // ---- 财务戏法线索「判定依据」的人话渲染 ----
+  // 后端给出的是确定性数值（元 / 小数 / 百分比）。直接 JSON.stringify 会把英文键名、
+  // 13 位金额与整段原文糊给一般用户；这里统一翻译成中文标签 + 常用单位 + 表格。
+  const FACT_LABELS = {
+    series: "逐期数值", occurrences: "逐期检出记录", findings: "检出的会计口径变化",
+    cip_periods: "在建工程逐期金额", cip_amount: "在建工程金额",
+    period: "报告期", source: "出处", quote: "财报原文摘录", type: "变化类型",
+    ocf: "经营活动现金流净额", net_profit: "归母净利润",
+    ratio: "净现比（经营现金流/净利）", receipt_ratio: "销售收现比", prev: "上年同期收现比",
+    ar_yoy_pct: "应收账款同比", revenue_yoy_pct: "营收同比", gap_pp: "增速差",
+    ar_to_revenue: "应收/营收", ar_to_revenue_prev: "上期应收/营收",
+    ratio_rise_pct: "占比较上期抬升",
+    inventory_yoy_pct: "存货同比", cost_or_revenue_yoy_pct: "营业成本/营收同比",
+    goodwill_yoy_pct: "商誉同比", net_profit_yoy_pct: "归母净利同比",
+    ratio_pct: "关联方应收占比", top5_pct: "前五名客户占比",
+    related_sales_pct: "关联方销售占比",
+    from: "上期资本化率", to: "本期资本化率", rise_pp: "抬升幅度",
+    profit_share_pct: "资本化金额占净利",
+    trough_period: "低谷报告期", trough_net_margin_pct: "低谷净利率",
+    rebound_period: "反弹报告期", rebound_yoy_pct: "净利同比反弹",
+    low_periods: "净现比偏低期数", consecutive_low: "连续偏低期数",
+    confirm_periods: "连续确认期数", asset_expansion_confirmed: "是否伴随资产扩张",
+    entity_count: "新增合并主体", cip_growth_pct: "在建工程增幅",
+    fixed_asset_growth_pct: "固定资产增幅",
+  };
+  const FACT_PERCENT = new Set([
+    "ar_yoy_pct", "revenue_yoy_pct", "ratio_rise_pct", "inventory_yoy_pct",
+    "cost_or_revenue_yoy_pct", "goodwill_yoy_pct", "net_profit_yoy_pct",
+    "ratio_pct", "top5_pct", "related_sales_pct", "profit_share_pct", "from", "to",
+    "trough_net_margin_pct", "rebound_yoy_pct", "cip_growth_pct", "fixed_asset_growth_pct",
+  ]);
+  const FACT_PP = new Set(["gap_pp", "rise_pp"]);
+  const FACT_MONEY = new Set(["ocf", "net_profit", "cip_amount"]);
+  const FACT_RATIO = new Set(["ratio", "receipt_ratio", "prev", "ar_to_revenue", "ar_to_revenue_prev"]);
+  const FACT_COUNTS = {
+    low_periods: " 期", consecutive_low: " 期", confirm_periods: " 期", entity_count: " 家",
+  };
+  // 长文本与出处不进数值表格，原文摘录另以引用块展示
+  const FACT_TABLE_HIDDEN = new Set(["quote", "source"]);
+
+  function factLabel(key) {
+    return FACT_LABELS[key] || String(key).replace(/_/g, " ");
+  }
+
+  function fmtMoney(value) {
+    const n = Number(value);
+    if (!isFinite(n)) return String(value);
+    const abs = Math.abs(n);
+    if (abs >= 1e8) return (n / 1e8).toFixed(2) + " 亿元";
+    if (abs >= 1e4) return (n / 1e4).toFixed(2) + " 万元";
+    return n.toFixed(2);
+  }
+
+  function fmtFact(key, value) {
+    if (value === null || value === undefined || value === "") return "—";
+    if (typeof value === "boolean") return value ? "是" : "否";
+    if (FACT_MONEY.has(key)) return fmtMoney(value);
+    if (FACT_PP.has(key)) return Number(value).toFixed(2) + " 个百分点";
+    if (FACT_PERCENT.has(key)) return Number(value).toFixed(2) + "%";
+    if (FACT_RATIO.has(key)) {
+      const n = Number(value);
+      return isFinite(n) ? n.toFixed(Math.abs(n) < 1 ? 3 : 2) : String(value);
+    }
+    if (FACT_COUNTS[key] !== undefined) {
+      return Math.round(Number(value)) + FACT_COUNTS[key];
+    }
+    if (typeof value === "number") {
+      return Number.isInteger(value) ? String(value) : value.toFixed(2);
+    }
+    return String(value);
+  }
+
+  function renderFactTable(rows, label) {
+    const keys = [];
+    for (const row of rows) {
+      if (!row || typeof row !== "object") continue;
+      for (const key of Object.keys(row)) {
+        if (!FACT_TABLE_HIDDEN.has(key) && keys.indexOf(key) < 0) keys.push(key);
+      }
+    }
+    if (!keys.length) return null;
+    const box = el("div", "fx-fraud-facts-group");
+    box.appendChild(el("div", "fx-fraud-facts-group-title", label));
+    const table = el("table", "fx-fraud-table");
+    const head = el("tr");
+    for (const key of keys) head.appendChild(el("th", null, factLabel(key)));
+    const thead = el("thead");
+    thead.appendChild(head);
+    table.appendChild(thead);
+    const tbody = el("tbody");
+    for (const row of rows) {
+      const tr = el("tr");
+      for (const key of keys) tr.appendChild(el("td", null, fmtFact(key, row && row[key])));
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    const wrap = el("div", "fx-fraud-table-wrap");
+    wrap.appendChild(table);
+    box.appendChild(wrap);
+    return box;
+  }
+
+  /** 把一条线索的 facts 渲染成人话：中文表头数值表 + 标量摘要 + 去重后的原文引用。 */
+  function renderPatternFacts(facts, shownQuotes) {
+    const body = el("div", "fx-fraud-facts-body");
+    body.appendChild(
+      el("p", "fx-fraud-facts-note",
+        "以下数值由系统按财报与公告原文直接计算（金额已换算为亿元/万元），未经模型改写，仅作判定依据。")
+    );
+    const groups = [];
+    const scalars = [];
+    const quotes = [];
+    const seen = shownQuotes || new Set();
+    for (const [key, value] of Object.entries(facts || {})) {
+      if (Array.isArray(value)) {
+        // 在建工程是 [报告期, 金额] 二元组，先转成对象行复用同一张表
+        const rows = key === "cip_periods"
+          ? value.map((pair) => ({ period: pair[0], cip_amount: pair[1] }))
+          : value;
+        const objects = rows.filter((r) => r && typeof r === "object" && !Array.isArray(r));
+        if (objects.length) {
+          const table = renderFactTable(objects, factLabel(key));
+          if (table) groups.push(table);
+          for (const row of objects) {
+            if (row.quote && !seen.has(row.quote)) {
+              seen.add(row.quote);
+              quotes.push(row);
+            }
+          }
+        } else if (rows.length) {
+          scalars.push([factLabel(key), rows.map((v) => fmtFact(key, v)).join("、")]);
+        }
+      } else if (value && typeof value === "object") {
+        for (const [subKey, subValue] of Object.entries(value)) {
+          scalars.push([factLabel(subKey), fmtFact(subKey, subValue)]);
+        }
+      } else {
+        scalars.push([factLabel(key), fmtFact(key, value)]);
+      }
+    }
+    for (const group of groups) body.appendChild(group);
+    if (scalars.length) {
+      const kv = el("div", "fx-fraud-kv");
+      for (const [label, value] of scalars) {
+        const pair = el("span", "fx-fraud-kv-item");
+        pair.appendChild(el("b", null, label + "："));
+        pair.appendChild(el("span", null, value));
+        kv.appendChild(pair);
+      }
+      body.appendChild(kv);
+    }
+    for (const q of quotes) {
+      const text = String(q.quote || "");
+      const short = text.length > 160 ? text.slice(0, 160) + "…" : text;
+      body.appendChild(
+        el("div", "fx-fraud-ev",
+          `据${q.source || "财报原文"}（${q.period || "-"}）：${short}`)
+      );
+    }
+    if (!groups.length && !scalars.length && !quotes.length) {
+      body.appendChild(el("div", "fx-fraud-facts-empty", "本条线索的数值依据已展示在卡片正文中。"));
+    }
+    return body;
+  }
+
+  // 暴露纯函数便于回归测试（不改写后端结论，仅前端展示格式化）
+  VC.formatFactValue = fmtFact;
+  VC.renderPatternFacts = renderPatternFacts;
+
   function latestFact(facts, key) {
     const list = (facts && facts[key]) || [];
     return list.length ? list[0] : null;
@@ -588,11 +757,12 @@
             `据${e.source || "财报原文"}（${e.period || "-"}）：${e.quote}`)
         );
       }
-      const fd = el("details", "fx-fraud-facts");
-      fd.appendChild(el("summary", null, "展开判定依据（确定性数值）"));
-      fd.appendChild(
-        el("pre", "fx-fraud-json", JSON.stringify(p.facts || {}, null, 2).slice(0, 4000))
+      const shownQuotes = new Set(
+        (p.evidence || []).map((e) => e.quote).filter(Boolean)
       );
+      const fd = el("details", "fx-fraud-facts");
+      fd.appendChild(el("summary", null, "查看判定数值与依据"));
+      fd.appendChild(renderPatternFacts(p.facts, shownQuotes));
       item.appendChild(fd);
       if (p.action) item.appendChild(el("div", "fx-fraud-action", `下一步：${p.action}`));
       item.appendChild(el("div", "fx-fraud-disclaimer", p.disclaimer || ""));
