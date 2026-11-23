@@ -9,10 +9,8 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from fundamental.analysis.forensic_patterns import (
-    DEFAULT_THRESHOLDS,
-    scan_fraud_patterns,
-)
+from fundamental.analysis.forensic_patterns import scan_fraud_patterns
+from fundamental.analysis.forensics_config import ForensicsConfig, FraudPatternConfig
 from fundamental.models import FinancialReport, ReportType
 from fundamental.services.narrative._forensics import _fill_ocf_from_items
 from fundamental.services.narrative._report_facts import _extract_hk
@@ -246,9 +244,51 @@ class TestOcfBackfill(unittest.TestCase):
 
 
 class TestThresholds(unittest.TestCase):
-    def test_defaults_are_explicit_and_overridable(self):
-        self.assertIn("ar_divergence_pp", DEFAULT_THRESHOLDS)
-        self.assertGreater(DEFAULT_THRESHOLDS["cash_conversion_low"], 0)
+    """锁住「阈值全部配置化」：判定值只在配置对象与 toml，扫描器不留第二份。"""
+
+    def test_thresholds_live_in_config_object_not_scanner(self):
+        import fundamental.analysis.forensic_patterns as fp
+
+        cfg = FraudPatternConfig()
+        self.assertIn("ar_divergence_pp", cfg.as_dict())
+        self.assertGreater(cfg.cash_conversion_low, 0)
+        self.assertFalse(hasattr(fp, "DEFAULT_THRESHOLDS"))
+
+    def test_toml_subtable_is_loaded_and_in_fingerprint(self):
+        from fundamental.services.forensics_config import load_forensics_config
+
+        cfg = load_forensics_config()
+        self.assertIsInstance(cfg.fraud_patterns, FraudPatternConfig)
+        self.assertEqual(cfg.fraud_patterns.cash_conversion_low, 0.70)
+        self.assertIn("fraud_patterns", cfg.as_dict())
+        changed = ForensicsConfig(
+            fraud_patterns=FraudPatternConfig(cash_conversion_low=0.99)
+        )
+        self.assertNotEqual(cfg.fingerprint(), changed.fingerprint())
+
+    def test_illegal_values_fall_back_per_field(self):
+        cfg = FraudPatternConfig.from_mapping({
+            "cash_conversion_low": "bad",
+            "min_periods": 0,
+            "ar_divergence_pp": 42.0,
+        })
+        self.assertEqual(cfg.cash_conversion_low,
+                         FraudPatternConfig().cash_conversion_low)
+        self.assertEqual(cfg.min_periods, 1)  # 期数类下限 1，不回退默认但不会为 0
+        self.assertEqual(cfg.ar_divergence_pp, 42.0)
+
+    def test_config_override_changes_scan_result(self):
+        """配置对象真的被扫描器消费，而不是只挂在报告上。"""
+        fin = [_financial(f"{y}-12-31", ocf=50, net_profit=100, net_margin=15)
+               for y in range(2020, 2027)]
+        loose = _scan(fin)
+        strict = scan_fraud_patterns(
+            symbol="TEST", market="A", financials=fin, statement_items=[],
+            report_facts={}, config=FraudPatternConfig(cash_conversion_low=0.01),
+            lookback_periods=12,
+        )
+        self.assertIn("FRD002", _ids(loose))
+        self.assertNotIn("FRD002", _ids(strict))
 
 
 if __name__ == "__main__":

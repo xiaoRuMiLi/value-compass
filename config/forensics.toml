@@ -156,3 +156,35 @@ regulatory_severe_categories = [
 "跨界投资" = ["跨界", "对外投资", "子公司", "增资", "参股"]
 "异常股权激励" = ["股权激励", "限制性股票", "股票期权", "激励计划"]
 "关联交易" = ["关联交易", "关联方", "日常关联交易"]
+
+# ---------- 十二、财务戏法检查阈值（独立子表） ----------
+# 与主扫描阈值隔离，字段名与 analysis/forensics_config.py 的 FraudPatternConfig 一一对应。
+# 同样遵循「调大数值 = 触发更少」；全部纳入 ForensicsConfig.fingerprint()，
+# 改动后财报体检缓存按指纹自动重算，不必手动清缓存或改代码。
+# 每项判定的组合条件见 analysis/forensic_patterns.py 对应 _check_* 函数。
+[forensics.thresholds.fraud_patterns]
+# 虚增利润 / 收入质量
+ar_divergence_pp = 30.0            # 应收同比 - 营收同比 超过 N 个百分点
+ar_divergence_high_pp = 60.0       # 超过该值升级为 high
+ar_ratio_rise_pct = 20.0           # 应收/营收 比较去年抬升 N%
+cash_conversion_low = 0.70         # 经营现金流 / 归母净利 低于 N
+cash_conversion_severe = 0.50      # 低于该值升级为 high
+cash_conversion_periods = 2        # 连续 N 期偏低才报
+cash_receipt_low = 0.80            # 销售收现 / 营业收入 低于 N（A 股）
+cash_receipt_drop_pp = 10.0        # 收现比同比恶化超过 N 个百分点
+inventory_divergence_pp = 30.0     # 存货同比 - 成本同比 超过 N 个百分点
+# 财务洗澡
+big_bath_margin_pct = -5.0         # 单期净利率低于 N% 视为极端低点
+big_bath_rebound_pct = 100.0       # 随后净利同比反弹超过 N%
+goodwill_drop_pct = 50.0           # 商誉较峰值下降 N% 视为集中减值
+# 关联交易
+related_party_ratio_pct = 10.0     # 关联方应收款 / 应收帐款 超过 N%
+top5_customer_pct = 70.0           # 前五名客户占比超过 N%
+related_sales_pct = 5.0            # 关联方销售占比超过 N%
+# 会计估计与资本运作
+rd_cap_rate_rise_pp = 5.0          # 研发资本化率同比抬升超过 N 个百分点
+rd_cap_profit_pct = 3.0            # 资本化金额占归母净利超过 N%
+consolidation_entities = 5         # 单期新增合并主体达到 N 家
+cip_growth_pct = 100.0             # 在建工程同比增幅超过 N%
+cip_periods = 3                    # 连续 N 期高增长且不转固
+min_periods = 4                    # 少于 N 个同口径样本则不判定

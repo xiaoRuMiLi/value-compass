@@ -687,6 +687,7 @@ def generate_financial_forensics(
             financials=inputs["financials"],
             statement_items=inputs["statement_items"],
             report_facts=report_facts,
+            config=cfg.fraud_patterns,
             lookback_periods=lookback,
         )
     except Exception as exc:  # noqa: BLE001

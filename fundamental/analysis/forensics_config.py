@@ -44,6 +44,78 @@ _RATE_KEYS = ("gross_margin", "net_margin", "roe", "debt_ratio")
 
 
 @dataclasses.dataclass(frozen=True)
+class FraudPatternConfig:
+    """财务戏法检查的全部触发阈值。
+
+    字段名与 ``config/forensics.toml`` 的 ``[forensics.thresholds.fraud_patterns]``
+    一一对应。和 ``ForensicsConfig`` 一样：这里只放内置默认值，不读配置文件；
+    线上值由 services 层注入，``ForensicsConfig.fingerprint()`` 会自动把本对象
+    递归纳入指纹，改阈值即让体检缓存失效。
+
+    单独成类而不是平铺进 ``ForensicsConfig``，是为了让新增检查项的阈值不把
+    主扫描的 50+ 字段继续撑长，也让「不要留第二份硬编码」在扫描器侧可验证。
+    """
+
+    # 虚增利润 / 收入质量
+    ar_divergence_pp: float = 30.0
+    ar_divergence_high_pp: float = 60.0
+    ar_ratio_rise_pct: float = 20.0
+    cash_conversion_low: float = 0.70
+    cash_conversion_severe: float = 0.50
+    cash_conversion_periods: int = 2
+    cash_receipt_low: float = 0.80
+    cash_receipt_drop_pp: float = 10.0
+    inventory_divergence_pp: float = 30.0
+    # 财务洗澡
+    big_bath_margin_pct: float = -5.0
+    big_bath_rebound_pct: float = 100.0
+    goodwill_drop_pct: float = 50.0
+    # 关联交易
+    related_party_ratio_pct: float = 10.0
+    top5_customer_pct: float = 70.0
+    related_sales_pct: float = 5.0
+    # 会计估计与资本运作
+    rd_cap_rate_rise_pp: float = 5.0
+    rd_cap_profit_pct: float = 3.0
+    consolidation_entities: int = 5
+    cip_growth_pct: float = 100.0
+    cip_periods: int = 3
+    min_periods: int = 4
+
+    @classmethod
+    def from_mapping(cls, section: dict[str, Any] | None) -> "FraudPatternConfig":
+        """从 toml 子表构造；非法值逐项回退内置默认，不影响其他字段。"""
+
+        if not isinstance(section, dict):
+            return cls()
+        base = cls()
+        out: dict[str, Any] = {}
+        for f in dataclasses.fields(cls):
+            default = getattr(base, f.name)
+            raw = section.get(f.name, default)
+            try:
+                if isinstance(default, bool):
+                    value = default
+                elif isinstance(default, int):
+                    value = max(int(raw), 1)  # 期数/家数至少为 1
+                elif isinstance(default, float):
+                    value = float(raw)
+                    if not math.isfinite(value):
+                        raise ValueError("non-finite")
+                else:
+                    value = default
+            except (TypeError, ValueError):
+                value = default
+            out[f.name] = value
+        return cls(**out)
+
+    def as_dict(self) -> dict[str, Any]:
+        """供扫描器注入与页面展示（JSON 可序列化）。"""
+
+        return dataclasses.asdict(self)
+
+
+@dataclasses.dataclass(frozen=True)
 class ForensicsConfig:
     """财报体检的全部可调参数。字段名与 ``config/forensics.toml`` 的键一一对应。"""
 
@@ -142,6 +214,11 @@ class ForensicsConfig:
     risk_title_keywords: tuple[str, ...] = _DEFAULT_RISK_TITLE_KEYWORDS
     negative_view_keywords: tuple[str, ...] = _DEFAULT_NEGATIVE_VIEW_KEYWORDS
     regulatory_severe_categories: tuple[str, ...] = _DEFAULT_SEVERE_CATEGORIES
+
+    # 财务戏法检查阈值（独立子表，随 fingerprint 一起变更）
+    fraud_patterns: FraudPatternConfig = dataclasses.field(
+        default_factory=FraudPatternConfig
+    )
 
     @classmethod
     def from_mapping(cls, section: dict[str, Any] | None) -> "ForensicsConfig":
@@ -267,6 +344,7 @@ class ForensicsConfig:
             risk_title_keywords=pick_terms("risk_title_keywords"),
             negative_view_keywords=pick_terms("negative_view_keywords"),
             regulatory_severe_categories=pick_terms("regulatory_severe_categories"),
+            fraud_patterns=FraudPatternConfig.from_mapping(merged.get("fraud_patterns")),
         )
 
     def fingerprint(self) -> str:

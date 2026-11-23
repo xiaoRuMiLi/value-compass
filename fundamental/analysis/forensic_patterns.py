@@ -17,8 +17,9 @@
   定性判断属于监管与审计，不属于确定性扫描。
 - 数据不足或制度不适用时写进 coverage.skipped 并标明 reason，不假装检查过。
 
-本模块只消费传入的纯数据（dataclass 列表 + 事实卡 dict），不读配置、
-不读数据库、不读文件，保持 analysis 层的纯粹性。
+本模块只消费传入的纯数据（dataclass 列表 + 事实卡 dict + FraudPatternConfig），
+不读配置文件、不读数据库、不读文件，保持 analysis 层的纯粹性；
+阈值由 services 层注入，判定值不在本模块留第二份硬编码。
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ from __future__ import annotations
 import re
 import statistics
 from typing import Any
+
+from fundamental.analysis.forensics_config import FraudPatternConfig
 
 # 科目编码：A 股为东财长表英文 code，港股为东财港股长表数字 code
 _A_CODES = {
@@ -58,29 +61,9 @@ _HK_CODES = {
     "cip": ("004001008",),
 }
 
-DEFAULT_THRESHOLDS: dict[str, float] = {
-    "ar_divergence_pp": 30.0,        # 应收同比 - 营收同比 超过 N 个百分点
-    "ar_divergence_high_pp": 60.0,
-    "ar_ratio_rise_pct": 20.0,       # 应收/营收 比较去年抬升 N%
-    "cash_conversion_low": 0.70,     # 经营现金流 / 归母净利 低于 N
-    "cash_conversion_severe": 0.50,
-    "cash_conversion_periods": 2,    # 连续 N 期偏低
-    "cash_receipt_low": 0.80,        # 销售收现 / 营业收入 低于 N（A 股）
-    "cash_receipt_drop_pp": 10.0,
-    "inventory_divergence_pp": 30.0,
-    "big_bath_margin_pct": -5.0,     # 单期净利率低于 N% 视为极端低点
-    "big_bath_rebound_pct": 100.0,   # 随后净利同比反弹超过 N%
-    "goodwill_drop_pct": 50.0,
-    "related_party_ratio_pct": 10.0, # 关联方应收款 / 应收帐款 超过 N%
-    "top5_customer_pct": 70.0,
-    "related_sales_pct": 5.0,
-    "rd_cap_rate_rise_pp": 5.0,
-    "rd_cap_profit_pct": 3.0,
-    "consolidation_entities": 5,
-    "cip_growth_pct": 100.0,
-    "cip_periods": 3,
-    "min_periods": 4,
-}
+# 触发阈值不在本模块定义：默认值集中在 analysis/forensics_config.py 的
+# FraudPatternConfig，线上值由 services 层从 config/forensics.toml 注入。
+# 这样扫描器里没有第二份硬编码，改阈值不必改代码，且随指纹自动失效缓存。
 
 _CATEGORIES = {
     "earnings_quality": "虚增利润 / 收入质量线索",
@@ -632,12 +615,22 @@ def scan_fraud_patterns(
     financials: list[Any],
     statement_items: list[Any],
     report_facts: dict[str, Any] | None = None,
-    config: dict[str, float] | None = None,
+    config: FraudPatternConfig | dict[str, float] | None = None,
     lookback_periods: int = 12,
 ) -> dict[str, Any]:
-    """扫描财务戏法线索。任何异常都由调用方兜底，本函数不抛业务异常。"""
-    th = dict(DEFAULT_THRESHOLDS)
-    th.update(config or {})
+    """扫描财务戏法线索。任何异常都由调用方兜底，本函数不抛业务异常。
+
+    ``config`` 接受 ``FraudPatternConfig``（线上路径）或纯字典（测试里覆盖
+    单项阈值）；不传则用配置对象的内置默认值。阈值字典只在模块内部作为
+    判定参数流转，跨模块边界由 dataclass 承担。
+    """
+    if config is None:
+        cfg = FraudPatternConfig()
+    elif isinstance(config, FraudPatternConfig):
+        cfg = config
+    else:
+        cfg = FraudPatternConfig.from_mapping(config)
+    th = cfg.as_dict()
     codes = _codes(market)
     facts = report_facts or {}
 
