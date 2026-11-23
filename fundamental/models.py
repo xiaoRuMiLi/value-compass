@@ -694,6 +694,46 @@ class FraudScore:
 
 
 @dataclass(frozen=True)
+class FraudPattern:
+    """财务戏法检查的单条待核查线索。
+
+    由 ``analysis/forensic_patterns.py`` 确定性产出，只描述「值得核查的
+    数值组合」，不构成财务造假认定。``facts`` 是判定所依据的确定性数值，
+    供报告折叠区渲染，属数据载荷而非业务实体。
+    """
+
+    id: str
+    category: str
+    category_key: str
+    title: str
+    severity: str
+    period: str
+    facts: dict[str, Any]
+    explanation: str
+    action: str
+    confidence: str = "medium"
+    evidence: list[dict[str, str]] = field(default_factory=list)
+    disclaimer: str = "这是基于公开财报数据的待核查线索，不构成财务造假认定或投资建议。"
+
+
+@dataclass(frozen=True)
+class FraudPatternScan:
+    """财务戏法检查的聚合结果（analysis 层出参）。
+
+    services 层在写报告前用 ``dataclasses.asdict`` 转成 dict，Web API 与
+    前端结构保持不变；``error`` 非空表示检查降级，供前端显式提示。
+    """
+
+    symbol: str
+    market: str
+    patterns: list[FraudPattern] = field(default_factory=list)
+    coverage: dict[str, Any] = field(default_factory=dict)
+    summary: dict[str, Any] = field(default_factory=dict)
+    disclaimer: str = "财务戏法检查输出的是待核查线索，不构成财务造假认定、审计意见或投资建议。"
+    error: str = ""
+
+
+@dataclass(frozen=True)
 class FinancialReviewReport:
     symbol: str
     summary: str

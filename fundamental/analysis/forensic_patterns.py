@@ -29,6 +29,7 @@ import statistics
 from typing import Any
 
 from fundamental.analysis.forensics_config import FraudPatternConfig
+from fundamental.models import FraudPattern, FraudPatternScan
 
 # 科目编码：A 股为东财长表英文 code，港股为东财港股长表数字 code
 _A_CODES = {
@@ -157,21 +158,20 @@ def _pattern(
     pid: str, category: str, title: str, severity: str, period: str,
     facts: dict[str, Any], explanation: str, action: str,
     confidence: str = "medium", evidence: list[dict[str, str]] | None = None,
-) -> dict[str, Any]:
-    return {
-        "id": pid,
-        "category": _CATEGORIES[category],
-        "category_key": category,
-        "title": title,
-        "severity": severity,
-        "period": period,
-        "facts": facts,
-        "explanation": explanation,
-        "action": action,
-        "confidence": confidence,
-        "evidence": evidence or [],
-        "disclaimer": "这是基于公开财报数据的待核查线索，不构成财务造假认定或投资建议。",
-    }
+) -> FraudPattern:
+    return FraudPattern(
+        id=pid,
+        category=_CATEGORIES[category],
+        category_key=category,
+        title=title,
+        severity=severity,
+        period=period,
+        facts=facts,
+        explanation=explanation,
+        action=action,
+        confidence=confidence,
+        evidence=evidence or [],
+    )
 
 
 def _skipped(check: str, reason: str, note: str) -> dict[str, str]:
@@ -183,7 +183,7 @@ def _skipped(check: str, reason: str, note: str) -> dict[str, str]:
 
 def _check_ar_divergence(
     items: list[Any], financials: list[Any], codes: dict, th: dict
-) -> tuple[dict | None, dict | None]:
+) -> tuple[FraudPattern | None, dict | None]:
     ar = _item_series(items, codes.get("ar", ()))
     rev = _item_series(items, codes.get("revenue", ())) or _fin_series(financials, "revenue")
     if len(ar) < th["min_periods"] or len(rev) < th["min_periods"]:
@@ -229,7 +229,7 @@ def _check_ar_divergence(
 
 def _check_cash_conversion(
     financials: list[Any], items: list[Any], codes: dict, th: dict
-) -> tuple[dict | None, dict | None]:
+) -> tuple[FraudPattern | None, dict | None]:
     ocf = _fin_series(financials, "ocf")
     profit = _fin_series(financials, "net_profit")
     if not ocf or not profit:
@@ -292,7 +292,7 @@ def _check_cash_conversion(
 
 def _check_cash_receipt(
     items: list[Any], financials: list[Any], codes: dict, th: dict, market: str
-) -> tuple[dict | None, dict | None]:
+) -> tuple[FraudPattern | None, dict | None]:
     if "sales_cash" not in codes:
         return None, _skipped("销售收现比恶化", "not_applicable", "港股无现金流量表长表，收现科目不可用")
     cash = _item_series(items, codes["sales_cash"])
@@ -321,7 +321,7 @@ def _check_cash_receipt(
 
 def _check_inventory(
     items: list[Any], financials: list[Any], codes: dict, th: dict, market: str = "A"
-) -> tuple[dict | None, dict | None]:
+) -> tuple[FraudPattern | None, dict | None]:
     # 港股长表无营业成本科目；拿营收当成本分母会系统性误报「存货堆积」，
     # 宁可标制度不适用，也不硬凑一个不可比的口径。
     if "cost" not in codes and str(market).upper() in ("HK", "HONGKONG"):
@@ -354,7 +354,7 @@ def _check_inventory(
 # ---------- 二、财务洗澡 ----------
 
 
-def _check_big_bath(financials: list[Any], th: dict) -> tuple[dict | None, dict | None]:
+def _check_big_bath(financials: list[Any], th: dict) -> tuple[FraudPattern | None, dict | None]:
     margins = _fin_series(financials, "net_margin")
     profits = _fin_series(financials, "net_profit")
     if len(margins) < th["min_periods"] or len(profits) < th["min_periods"]:
@@ -397,7 +397,7 @@ def _check_big_bath(financials: list[Any], th: dict) -> tuple[dict | None, dict 
 
 def _check_goodwill(
     items: list[Any], financials: list[Any], codes: dict, th: dict
-) -> tuple[dict | None, dict | None]:
+) -> tuple[FraudPattern | None, dict | None]:
     if "goodwill" not in codes:
         return None, _skipped("商誉集中减值", "not_applicable", "港股长表无商誉科目")
     gw = _item_series(items, codes["goodwill"])
@@ -428,7 +428,7 @@ def _check_goodwill(
 
 def _check_related_party_balance(
     items: list[Any], codes: dict, th: dict, market: str
-) -> tuple[dict | None, dict | None]:
+) -> tuple[FraudPattern | None, dict | None]:
     if "related_ar" not in codes:
         return None, _skipped("关联方往来占比", "not_applicable", "A 股长表无独立关联方往来科目，改由原文事实卡核查")
     rel = _item_series(items, codes["related_ar"])
@@ -451,7 +451,7 @@ def _check_related_party_balance(
     ), None
 
 
-def _check_customer_concentration(report_facts: dict, th: dict) -> tuple[dict | None, dict | None]:
+def _check_customer_concentration(report_facts: dict, th: dict) -> tuple[FraudPattern | None, dict | None]:
     top5 = (report_facts or {}).get("top5_customer_pct") or []
     related = (report_facts or {}).get("related_party_sales_pct") or []
     if not top5 and not related:
@@ -488,7 +488,7 @@ def _check_customer_concentration(report_facts: dict, th: dict) -> tuple[dict | 
 # ---------- 四、会计估计与资本运作 ----------
 
 
-def _check_rd_capitalization(report_facts: dict, th: dict) -> tuple[dict | None, dict | None]:
+def _check_rd_capitalization(report_facts: dict, th: dict) -> tuple[FraudPattern | None, dict | None]:
     series = (report_facts or {}).get("rd_capitalization_pct") or []
     if len(series) < 2:
         return None, _skipped("研发资本化率骤升", "data_missing", "财报原文未抽到连续两期研发资本化率")
@@ -515,7 +515,7 @@ def _check_rd_capitalization(report_facts: dict, th: dict) -> tuple[dict | None,
     ), None
 
 
-def _check_accounting_changes(report_facts: dict, th: dict) -> tuple[dict | None, dict | None]:
+def _check_accounting_changes(report_facts: dict, th: dict) -> tuple[FraudPattern | None, dict | None]:
     facts = report_facts or {}
     policy = facts.get("accounting_policy_change") or []
     consolidation = facts.get("consolidation_change") or []
@@ -555,7 +555,7 @@ def _check_accounting_changes(report_facts: dict, th: dict) -> tuple[dict | None
 
 def _check_cip(
     items: list[Any], codes: dict, th: dict
-) -> tuple[dict | None, dict | None]:
+) -> tuple[FraudPattern | None, dict | None]:
     if "fixed_asset" not in codes:
         return None, _skipped("在建工程长期不转固", "not_applicable", "港股长表无对应固定资产科目映射")
     cip = _item_series(items, codes.get("cip", ()))
@@ -617,7 +617,7 @@ def scan_fraud_patterns(
     report_facts: dict[str, Any] | None = None,
     config: FraudPatternConfig | dict[str, float] | None = None,
     lookback_periods: int = 12,
-) -> dict[str, Any]:
+) -> FraudPatternScan:
     """扫描财务戏法线索。任何异常都由调用方兜底，本函数不抛业务异常。
 
     ``config`` 接受 ``FraudPatternConfig``（线上路径）或纯字典（测试里覆盖
@@ -654,7 +654,7 @@ def scan_fraud_patterns(
         ("在建工程长期不转固", lambda: _check_cip(statement_items, codes, th)),
     ]
 
-    patterns: list[dict[str, Any]] = []
+    patterns: list[FraudPattern] = []
     performed: list[str] = []
     skipped: list[dict[str, str]] = []
     for name, run in checks:
@@ -669,12 +669,12 @@ def scan_fraud_patterns(
             patterns.append(pattern)
 
     order = {"high": 0, "medium": 1, "low": 2}
-    patterns.sort(key=lambda p: (order.get(p["severity"], 3), p["id"]))
-    return {
-        "symbol": symbol,
-        "market": market,
-        "patterns": patterns,
-        "coverage": {
+    patterns.sort(key=lambda p: (order.get(p.severity, 3), p.id))
+    return FraudPatternScan(
+        symbol=symbol,
+        market=market,
+        patterns=patterns,
+        coverage={
             "performed": performed,
             "skipped": skipped,
             "checks_total": len(checks),
@@ -685,15 +685,14 @@ def scan_fraud_patterns(
             "not_applicable": sum(1 for s in skipped if s["reason"] == "not_applicable"),
             "data_missing": sum(1 for s in skipped if s["reason"] == "data_missing"),
         },
-        "summary": {
+        summary={
             "pattern_count": len(patterns),
-            "high": sum(1 for p in patterns if p["severity"] == "high"),
-            "medium": sum(1 for p in patterns if p["severity"] == "medium"),
-            "low": sum(1 for p in patterns if p["severity"] == "low"),
+            "high": sum(1 for p in patterns if p.severity == "high"),
+            "medium": sum(1 for p in patterns if p.severity == "medium"),
+            "low": sum(1 for p in patterns if p.severity == "low"),
             "by_category": {
-                key: sum(1 for p in patterns if p["category_key"] == key)
+                key: sum(1 for p in patterns if p.category_key == key)
                 for key in _CATEGORIES
             },
         },
-        "disclaimer": "财务戏法检查输出的是待核查线索，不构成财务造假认定、审计意见或投资建议。",
-    }
+    )

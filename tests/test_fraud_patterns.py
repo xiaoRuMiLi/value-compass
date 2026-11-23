@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 from types import SimpleNamespace
 
@@ -37,11 +38,12 @@ def _item(date: str, code: str, value: float):
 
 
 def _scan(financials, items=(), *, market="A", facts=None, lookback=12):
-    return scan_fraud_patterns(
+    """扫描器出参是 dataclass；测试沿用报告出口的 dict 视角做断言。"""
+    return dataclasses.asdict(scan_fraud_patterns(
         symbol="TEST", market=market, financials=list(financials),
         statement_items=list(items), report_facts=facts or {},
         lookback_periods=lookback,
-    )
+    ))
 
 
 def _ids(result):
@@ -243,6 +245,25 @@ class TestOcfBackfill(unittest.TestCase):
         self.assertIsNone(_fill_ocf_from_items(fin, [])[0].ocf)
 
 
+class TestOutputContract(unittest.TestCase):
+    """锁住 analysis 出参是 dataclass，不在模块边界传裸业务实体。"""
+
+    def test_scan_returns_dataclass_models(self):
+        from fundamental.models import FraudPattern, FraudPatternScan
+
+        result = scan_fraud_patterns(
+            symbol="TEST", market="A", financials=[], statement_items=[],
+            report_facts={},
+        )
+        self.assertIsInstance(result, FraudPatternScan)
+        self.assertTrue(all(isinstance(p, FraudPattern) for p in result.patterns))
+        # 报告出口 asdict 后结构不丢字段
+        payload = dataclasses.asdict(result)
+        self.assertIn("coverage", payload)
+        self.assertIn("summary", payload)
+        self.assertIn("disclaimer", payload)
+
+
 class TestThresholds(unittest.TestCase):
     """锁住「阈值全部配置化」：判定值只在配置对象与 toml，扫描器不留第二份。"""
 
@@ -282,11 +303,11 @@ class TestThresholds(unittest.TestCase):
         fin = [_financial(f"{y}-12-31", ocf=50, net_profit=100, net_margin=15)
                for y in range(2020, 2027)]
         loose = _scan(fin)
-        strict = scan_fraud_patterns(
+        strict = dataclasses.asdict(scan_fraud_patterns(
             symbol="TEST", market="A", financials=fin, statement_items=[],
             report_facts={}, config=FraudPatternConfig(cash_conversion_low=0.01),
             lookback_periods=12,
-        )
+        ))
         self.assertIn("FRD002", _ids(loose))
         self.assertNotIn("FRD002", _ids(strict))
 

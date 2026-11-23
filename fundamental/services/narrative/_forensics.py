@@ -63,7 +63,7 @@ from ._common import (
 
 # 提示词/输出结构升级时递增，使旧报告缓存失效。
 # 阈值改动不改变版本号，而是由 thresholds_fingerprint 让缓存自动失效。
-_FORENSICS_VERSION = 20
+_FORENSICS_VERSION = 21
 
 _logger = get_logger(__name__)
 
@@ -681,7 +681,7 @@ def generate_financial_forensics(
         report_facts = {"error": str(exc), "source_docs": [], "missing_facts": ["抽取失败"]}
     market = "HK" if str(symbol).upper().endswith(".HK") else "A"
     try:
-        fraud = scan_fraud_patterns(
+        fraud_scan = scan_fraud_patterns(
             symbol=symbol,
             market=market,
             financials=inputs["financials"],
@@ -690,6 +690,9 @@ def generate_financial_forensics(
             config=cfg.fraud_patterns,
             lookback_periods=lookback,
         )
+        # analysis 出参是 dataclass；在报告出口统一转 dict，
+        # Web API 与前端字段结构保持不变（CONVENTIONS 第 4 节边界表）。
+        fraud = dataclasses.asdict(fraud_scan)
     except Exception as exc:  # noqa: BLE001
         _logger.warning("财务戏法检查失败 %s: %s", symbol, exc)
         fraud = {
@@ -698,6 +701,7 @@ def generate_financial_forensics(
                          "checked_no_trigger": 0, "not_applicable": 0, "data_missing": 0},
             "summary": {"pattern_count": 0, "high": 0, "medium": 0, "low": 0,
                         "by_category": {}},
+            "disclaimer": "财务戏法检查输出的是待核查线索，不构成财务造假认定、审计意见或投资建议。",
             "error": str(exc),
         }
 
