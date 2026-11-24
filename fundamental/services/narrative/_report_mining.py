@@ -40,15 +40,19 @@ from ._quality import excerpt_quality, is_numeric_quote
 _logger = get_logger(__name__)
 
 # 挖掘结果结构与提示词变化时递增，触发缓存失效
-_MINING_VERSION = 10
+_MINING_VERSION = 11
 
 # 单段模型输出非法 JSON 时的重试指令：只要求格式，不补充任何内容。
 _JSON_RETRY_INSTRUCTION = (
     "上一次输出不是合法 JSON。请严格只输出一个 JSON 对象，"
-    "不要 Markdown 代码块、不要任何解释文字；字段保持 excerpts / summary / new_findings。"
+    "不要 Markdown 代码块、不要任何解释文字；"
+    "字段保持 excerpts / summary / new_findings / factor_hits。"
     "若本段确实没有可用内容，就输出 "
-    "{\"excerpts\": [], \"summary\": \"\", \"new_findings\": []}。"
+    "{\"excerpts\": [], \"summary\": \"\", \"new_findings\": [], \"factor_hits\": []}。"
 )
+
+_MAX_FACTOR_HITS_PER_SEGMENT = 12
+_MAX_VERIFIED_QUOTES_PER_FACTOR = 6
 
 # 同时通读的年报份数：最新一份为主、其余年份佐证判断。
 # 通过 narrative.mining_report_count 配置，默认 2（当期 + 上年）。
@@ -306,12 +310,34 @@ def _risk_years(signals: list[dict[str, Any]]) -> set[str]:
     return years
 
 
+def _as_bool(value: Any) -> bool:
+    """模型可能给布尔、字符串或数字；只有明确肯定才算建议触发。"""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "yes", "是", "y")
+
+
+def _quote_verified(quote: str, raw_text: str) -> bool:
+    """引文逐字核验：忽略空白差异后必须能在归档原文中定位。
+
+    这是 documentary 因子防幻觉的第一道闸：模型改写、概括或凭空生成的摘录
+    一律剔除，不进入 analysis 层的触发确认，也不出现在报告证据里。
+    """
+    needle = re.sub(r"\s+", "", str(quote or ""))
+    if len(needle) < 8:
+        return False
+    haystack = re.sub(r"\s+", "", str(raw_text or ""))
+    return needle in haystack
+
+
 def _fingerprint(
-    docs_text: list[tuple[str, str]], signals: list[dict[str, Any]]
+    docs_text: list[tuple[str, str]],
+    signals: list[dict[str, Any]],
+    factor_briefs: list[dict[str, Any]] | None = None,
 ) -> str:
-    """指纹纳入每份财报的路径、长度与开头，任一变化都会触发重算。"""
+    """指纹纳入财报文本、风险点清单与因子任务单，任一变化都触发重算。"""
     doc_prints = [(path, len(text), text[:1200]) for path, text in docs_text]
-    raw = _MINING_VERSION, doc_prints, _signal_briefs(signals)
+    raw = _MINING_VERSION, doc_prints, _signal_briefs(signals), factor_briefs or []
     blob = json.dumps(raw, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -370,17 +396,21 @@ def _map_segment(
     briefs: list[dict[str, Any]],
     system: str,
     doc_meta: dict[str, str] | None = None,
+    factor_briefs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """单段 Map：带风险点让模型摘录原文 + 总结 + 发现新线索。
+    """单段 Map：带风险点 + 因子任务单，让模型摘录原文 + 总结 + 挂牌。
 
     doc_meta 记录本段来自哪份财报（source/period/is_current），写进每条结果，
     让多份年报的证据能各自溯源并区分"当期 vs 历史佐证"。
+    ``factor_briefs`` 是注册表生成的取证任务单：一次通读同时给所有原文因子
+    挂牌，不按因子数放大 LLM 调用；模型只给引文与触发建议，不判最终触发。
     """
     doc_meta = doc_meta or {}
     user = json.dumps(
         {
             "section": segment["section"], "text": segment["text"],
             "risk_signals": briefs,
+            "factor_probes": factor_briefs or [],
             "document": {
                 "source": doc_meta.get("source", ""),
                 "period": doc_meta.get("period", ""),
@@ -391,7 +421,8 @@ def _map_segment(
         ensure_ascii=False,
     )
     empty = {
-        "excerpts": [], "summary": "", "new_findings": [], "section": segment["section"],
+        "excerpts": [], "summary": "", "new_findings": [], "factor_hits": [],
+        "section": segment["section"],
         "source": doc_meta.get("source", ""), "period": doc_meta.get("period", ""),
         "is_current": doc_meta.get("is_current", False),
         "report_label": doc_meta.get("report_label", ""),
@@ -445,10 +476,34 @@ def _map_segment(
                     "seq": doc_meta.get("seq", 0),
                 }
             )
+        factor_hits = []
+        for item in (raw.get("factor_hits") or [])[:_MAX_FACTOR_HITS_PER_SEGMENT]:
+            if not isinstance(item, dict):
+                continue
+            fid = str(item.get("factor_id") or "").strip()
+            quote = str(item.get("quote") or "").strip()
+            if not fid or not quote:  # 因子挂牌同样必须附原文摘录
+                continue
+            factor_hits.append(
+                {
+                    "factor_id": fid,
+                    "quote": quote[:500],
+                    "reason": str(item.get("reason") or "")[:120],
+                    "suggested": _as_bool(item.get("suggested")),
+                    "section": str(item.get("section") or segment["section"])[:60],
+                    "source": doc_meta.get("source", ""),
+                    "period": doc_meta.get("period", ""),
+                    "is_current": doc_meta.get("is_current", False),
+                    "report_label": doc_meta.get("report_label", ""),
+                    "doc_type": doc_meta.get("doc_type", ""),
+                    "seq": doc_meta.get("seq", 0),
+                }
+            )
         return {
             "excerpts": excerpts,
             "summary": str(raw.get("summary") or "")[:600],
             "new_findings": findings,
+            "factor_hits": factor_hits,
             "section": segment["section"],
             "source": doc_meta.get("source", ""),
             "period": doc_meta.get("period", ""),
@@ -510,28 +565,35 @@ def mine_report_evidence(
     db_path: Path | None = None,
     refresh: bool = False,
     max_workers: int = 6,
+    factor_briefs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """主入口：筛出的风险点 + 风险年份财报 → 分段摘录/总结 → 汇总证据包。
+    """主入口：风险点 + 因子任务单 + 财报 → 分段摘录/总结/挂牌 → 证据包。
 
     返回结构：
     {
       "signal_evidence": {signal_id: [{"quote","section","source","period","why","is_current"}]},
       "summaries": [{"section","text","source","period"}],
       "new_findings": [{"description","quote","section","source","period","is_current"}],
+      "factor_evidence": {factor_id: {"available", "verified_hits", "rejected_quotes", "documents"}},
       "source_doc": "最新年报（当期）", "period": "2025",
       "source_docs": [{"title","period","is_current"}], "segments": N,
       "failed_segments": [{"section","source","period","reason"}],
       "fingerprint": "...", "generated_at": "..."
     }
     多份年报：当期（最新）为主，其余年份佐证，每条证据都标注来源与是否当期。
-    失败返回空结构，由叙述层降级。
+    ``factor_briefs`` 由注册表生成：有了它，即使数值风险点为空也会通读财报，
+    让「规则驱动原文取证」不再被阈值门控；引文逐字核验只在本模块（持有原文）
+    完成，analysis 层只消费纯 dict。失败返回空结构，由叙述层降级。
     """
     empty: dict[str, Any] = {
         "signal_evidence": {}, "summaries": [], "new_findings": [],
+        "factor_evidence": {},
         "source_doc": "", "period": "", "source_docs": [], "segments": 0,
         "failed_segments": [],
     }
-    if not signals or not has_live_llm():
+    # 门控放宽：风险点为空但带了因子任务单时仍通读，这正是「用规则去读财报」
+    # 与旧「阈值触发后才读财报」的区别。两者都没有时才不花钱调 LLM。
+    if (not signals and not factor_briefs) or not has_live_llm():
         return empty
     try:
         docs = _load_documents(symbol, db_path)
@@ -568,7 +630,7 @@ def mine_report_evidence(
 
     # fingerprint 用 (path, raw) 列表
     path_text = [(p, raw) for _, p, raw, _, _, _, _ in docs_text]
-    fingerprint = _fingerprint(path_text, signals)
+    fingerprint = _fingerprint(path_text, signals, factor_briefs)
     cache_file = _cache_path(symbol)
     cached = _read_cache(cache_file, fingerprint, refresh)
     if cached:
@@ -602,7 +664,7 @@ def mine_report_evidence(
     workers = max(1, min(max_workers, len(tagged_segments)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [
-            pool.submit(_map_segment, seg, briefs, system, meta)
+            pool.submit(_map_segment, seg, briefs, system, meta, factor_briefs)
             for seg, meta in tagged_segments
         ]
         for future in as_completed(futures):
@@ -678,6 +740,51 @@ def mine_report_evidence(
                 "seq": ex.get("seq", res.get("seq", 0)),
             })
 
+    # 原文因子挂牌汇总：只对注册表下发过的因子记账。引文逐字核验放在本模块
+    # （只有这里持有归档全文），无法定位的摘录直接剔除并计数，绝不进 analysis。
+    # analysis 层拿到的 verified_hits 已全部可复核，触发权始终在代码。
+    factor_evidence: dict[str, Any] = {}
+    probe_ids = {
+        str(b.get("factor_id") or "")
+        for b in (factor_briefs or []) if b.get("factor_id")
+    }
+    if probe_ids:
+        doc_raw_by_source = {
+            source: raw for _, _, raw, source, _, _, _ in docs_text
+        }
+        doc_labels = [str(x.get("title") or "") for x in source_docs[:4]]
+        for fid in probe_ids:
+            factor_evidence[fid] = {
+                "available": bool(doc_raw_by_source),
+                "verified_hits": [],
+                "rejected_quotes": 0,
+                "documents": doc_labels,
+            }
+        for res in results:
+            raw_text = doc_raw_by_source.get(str(res.get("source") or ""), "")
+            for hit in res.get("factor_hits") or []:
+                fid = str(hit.get("factor_id") or "")
+                bundle = factor_evidence.get(fid)
+                if bundle is None:
+                    continue
+                if not _quote_verified(str(hit.get("quote") or ""), raw_text):
+                    bundle["rejected_quotes"] += 1
+                    continue
+                bundle["verified_hits"].append({
+                    "quote": str(hit.get("quote") or "")[:500],
+                    "reason": str(hit.get("reason") or ""),
+                    "suggested": bool(hit.get("suggested")),
+                    "section": hit.get("section") or res.get("section", ""),
+                    "source": hit.get("source") or res.get("source", ""),
+                    "period": hit.get("period") or res.get("period", ""),
+                    "report_label": hit.get("report_label") or res.get("report_label", ""),
+                    "is_current": hit.get("is_current", res.get("is_current", False)),
+                })
+        for bundle in factor_evidence.values():
+            bundle["verified_hits"] = _dedup(
+                bundle["verified_hits"], "quote"
+            )[:_MAX_VERIFIED_QUOTES_PER_FACTOR]
+
     # 选取：信息密度优先 + 单一报告期限流。既让年报的"变动原因说明"解释性
     # 短句排前面，又保证最新季报的当下证据有代表，不被一方刷屏。
     for sid in signal_evidence:
@@ -715,6 +822,7 @@ def mine_report_evidence(
         "signal_evidence": signal_evidence,
         "summaries": summaries,
         "new_findings": findings,
+        "factor_evidence": factor_evidence,
         "source_doc": source_doc,
         "period": period,
         "latest_report": latest_report,
@@ -726,10 +834,13 @@ def mine_report_evidence(
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
     _write_cache(cache_file, output)
+    factor_hit_count = sum(
+        1 for b in factor_evidence.values() if b.get("verified_hits")
+    )
     _logger.info(
         "财报挖掘完成 %s：%d 份年报 / %d 段（%d 段解析失败），"
-        "%d 个风险点拿到证据，%d 条新线索",
+        "%d 个风险点拿到证据，%d 条新线索，%d 个原文因子拿到已核验引文",
         symbol, len(source_docs), len(tagged_segments), len(failed_segments),
-        len(signal_evidence), len(findings),
+        len(signal_evidence), len(findings), factor_hit_count,
     )
     return output

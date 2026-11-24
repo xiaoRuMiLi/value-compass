@@ -156,7 +156,7 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
 
 - `[forensics]`：结论窗口期数、事件证据年限、送入 LLM 的信号/波动上限、原文守卫下限与补档份数。
 - `[forensics.thresholds]`：离群倍数、各率类百分点阈值、预告容差、质押/减持门槛、聚合门限、风险等级门槛与线索关键词（主扫描 `analysis/forensics.py`）；末尾两组 `十一·B / 十一·C` 分别控制「单季还原 + 全年-累计现金含量对照」与「财报原文事实的趋势/组合信号」，同样遵循「调大＝触发更少」。
-- `[forensics.thresholds.fraud_patterns]`：财务戏法检查 11 项的全部判定值，独立子表，对应 `FraudPatternConfig`。同样遵循「调大＝触发更少」，并随 `ForensicsConfig.fingerprint()` 一起让缓存自动重算。
+- `[forensics.thresholds.fraud_patterns]`：财务戏法检查中 `quantitative` 类 11 项的全部判定值，独立子表，对应 `FraudPatternConfig`。同样遵循「调大＝触发更少」，并随 `ForensicsConfig.fingerprint()` 一起让缓存自动重算。`documentary` 类 4 项**没有数值阈值**——它们靠「引文可逐字定位 + 模型建议 + 风险语义标记」确认，标记在 `analysis/factor_registry.py` 的 `trigger_markers`，不下发到模型。
 - 嫌风险点太多：调大 `net_margin_pp` / `roe_pp` / `expense_ratio_pp` / `revenue_yoy_swing_pp`；
   或把 `rate_require_outlier` 改成四项全开（率类异动还必须偏离自身同口径历史波动）。
 - 嫌戏法线索太敏感：调大子表里的 `ar_divergence_pp` / `big_bath_rebound_pct` / `top5_customer_pct` 等；
@@ -168,10 +168,16 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
   体检区底部的「本次生效的触发阈值」折叠面板可用来核对配置文件是否已被读取。
 - 新增主扫描阈值字段：`analysis/forensics_config.py` 的 `ForensicsConfig` 加字段与 `from_mapping()` 的 `pick(...)`（带非法值兜底），
   `config/forensics.toml` 的 `[forensics.thresholds]` 加默认值，`analysis/forensics.py` 用 `cfg.xxx` 判定并写进 `trigger` 文案。
-- 新增财务戏法检查项：在 `analysis/forensic_patterns.py` 加一个 `_check_*(...) -> tuple[FraudPattern | None, dict | None]`，
-  注册进 `scan_fraud_patterns()` 的 `checks` 列表；阈值加到 `FraudPatternConfig` 字段与 `[forensics.thresholds.fraud_patterns]` 子表
-  （`from_mapping()` 会按字段类型自动逐项兜底，无需手写 `pick`）；前端 `forensics.js` 的 `FACT_LABELS` 补中文标签。
-  组合条件、同报告期同比、结论窗口与 `coverage` 三分沿用现有约定，不要退回单点异动报警。
+- 新增财务戏法因子（注册表驱动，`analysis/factor_registry.py` 是单一事实来源）：
+  - `documentary`（原文取证型）：**只需在 `FACTOR_REGISTRY` 追加一条 `FactorSpec`**，填 `source_scope / probe_criteria / trigger_markers / red_flag_refs`。
+    `documentary_briefs()`、`checks` 列表、`coverage` 模板、前端因子清单全部自动生成，不用改扫描器、不用改前端标签表、不用碰配置阈值。
+  - `quantitative`（数值型）：除注册表一条 `FactorSpec` 外，在 `analysis/forensic_patterns.py` 加一个 `_check_*(...) -> tuple[FraudPattern | None, dict | None]`
+    并注册进 `_HANDLERS`（模块级包装函数，**不要再往扫描循环里插 lambda**）；新阈值加到 `FraudPatternConfig` 字段与
+    `[forensics.thresholds.fraud_patterns]` 子表（`from_mapping()` 按字段类型自动逐项兜底）；若 facts 用了新 key，再补 `forensics.js` 的 `FACT_LABELS`。
+  - 组合条件、同报告期同比、结论窗口与 `coverage` 三分沿用现有约定，不要退回单点异动报警。
+  - **缓存失效**：新增阈值会自动进 `ForensicsConfig.fingerprint()`；但只加因子、不新增阈值时指纹不变，
+    **必须递增 `_FORENSICS_VERSION`（涉及通读结构时同时递增 `_MINING_VERSION`）**，否则旧报告缓存不会重算。
+  - `red_flag_refs` 只能指向 `references/red-flags.md` 里已存在的 `RF-*` 编号；新增红旗先追加编号，不要复用或重排。
 - 新增「依赖财报原文文字」的信号，分层是固定的：services 层（`_report_facts.py` / `_audit_evidence.py`）只做章节定位 + 数字抽取 + 原文摘录，
   抽不到写 `missing`/`missing_facts`；把结果当**纯 dict** 通过 `scan_forensics(report_facts=..., audit_evidence=...)` 传入，
   `analysis/forensics.py` 的 `_scan_evidence_facts()` 只做数值比较并写 `coverage`；判定阈值仍放 `ForensicsConfig`。

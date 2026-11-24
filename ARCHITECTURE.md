@@ -123,7 +123,8 @@ value-compass/
 │   │   ├── fraud_score.py            # 造假预警（M-score 等）
 │   │   ├── financial_review.py       # 财报体检/大白话汇总（原轻量版，保留）
 │   │   ├── forensics.py              # 财报取证扫描：多期风险点/异常波动/证据/覆盖度（纯确定性，不下结论）
-│   │   ├── forensic_patterns.py      # 财务戏法线索检查（11 项 / 4 类），出参 FraudPatternScan dataclass
+│   │   ├── factor_registry.py        # 财务戏法因子注册表（纯元数据：15 项 / 3 类判定方式 / red_flag_refs）
+│   │   ├── forensic_patterns.py      # 财务戏法线索检查（注册表驱动，出参 FraudPatternScan dataclass）
 │   │   ├── forensics_config.py       # ForensicsConfig + FraudPatternConfig（纯 dataclass，不读配置文件）
 │   │   ├── integrity.py              # 诚信记录挖掘
 │   │   ├── masters/                  # 大师模型（可插拔）
@@ -474,7 +475,9 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 - **原文事实转确定性信号**：`scan_forensics()` 新增两个纯 dict 入参 `report_facts` / `audit_evidence`（由 services 层抽取、每条附 `quote`），`_scan_evidence_facts()` 只做数值比较：关联方销售/采购占比的跨年抬升、实物销量下滑 + 库存累积 + 经销商净减少的组合、合并范围新增主体对同比可比性的影响；结果写入 `scan.evidence.structured`。分层不变——`analysis` 不读文件/DB/配置，只吃数据与 `ForensicsConfig`；`citations` 同步补上三类原文引用。为此 `_report_facts.py` 增加关联方采购占比抽取，`_audit_evidence.py` 增加产销存表（销量/库存/生产量本期与同比）与「报告期内合并范围是否发生变动」章节抽取，阈值在 `十一·C` 组。
 - **非法 JSON 的保守处理**：`providers/llm/openai_compat.py::_extract_json()` 支持去代码围栏、截取首尾对象、去尾逗号，并把 `JSONDecodeError` 统一收敛成 `LlmError`；**不**给截断内容补右括号或补字符串结尾，避免捏造数字与原文摘录。`_report_mining.py::_chat_segment_json()` 用「只输出 JSON」指令重试一次，仍失败则记入 `report_mining.failed_segments` 并写进 `caveats` 与前端提示，杜绝「16 段里 1 段解析失败 → 线索静默丢失却显示通读无发现」。
 - **例行合规披露降噪**：`config/forensics.toml` 的 `regulatory_routine_patterns` 识别「年度关联方资金占用专项审计报告/汇总表」「独立董事候选人声明与承诺」「自愿承诺不减持」「差错责任追究制度」等按期披露的合规材料。这类文件标题里的「资金占用/差错/承诺」不等于发生了占用、差错或违规，命中后降为 `low`、标 `routine=true`、不计入高严重度、不送进 LLM、不进引用清单；只有剩余的实质性监管记录才生成 `REG001`/`REG002` 信号。实测五粮液 18 条诚信记录中 17 条属于此类，修正前被写成「高严重度 6 条」并放大进 verdict。
-- **财务戏法检查**：`analysis/forensic_patterns.py` 以 11 项组合条件扫描虚增利润/收入质量、财务洗澡、关联交易、会计估计与资本运作四类线索，输出 `FraudPatternScan`（含 `FraudPattern` 列表）dataclass。刻意**不并入 `scan.signals`**：作为报告并列字段 `fraud_patterns` 输出，不占 `max_signals` 名额、不进 `analyses` 逐条剖析数组，因此既有 25 条规则与 LLM 剖析链路零改动；services 层在报告出口用 `dataclasses.asdict` 转 dict，Web API 与前端结构不变。准确度靠组合条件、同报告期同比、结论窗口（全历史只作基数）与 `coverage` 三分（已执行未触发 / 制度不适用 / 数据不足）；只输出待核查线索，绝不下「财务造假」定性结论。
+- **财务戏法检查（注册表驱动）**：`analysis/forensic_patterns.py` 扫描虚增利润/收入质量、财务洗澡、关联交易、会计估计与资本运作四类线索，输出 `FraudPatternScan`（含 `FraudPattern` 列表）dataclass。刻意**不并入 `scan.signals`**：作为报告并列字段 `fraud_patterns` 输出，不占 `max_signals` 名额、不进 `analyses` 逐条剖析数组；services 层在报告出口用 `dataclasses.asdict` 转 dict，Web API 与前端结构不变。准确度靠组合条件、同报告期同比、结论窗口（全历史只作基数）与 `coverage` 三分（已执行未触发 / 制度不适用 / 数据不足）；只输出待核查线索，绝不下「财务造假」定性结论。
+- **因子注册表 `FactorSpec`（单一事实来源）**：`analysis/factor_registry.py` 用纯元数据描述 15 项因子（`FRD001`~`FRD015`），字段含 `id / category / title / check_name / evidence_kind / required_items / source_scope / markets / thresholds / probe_criteria / trigger_markers / evidence_source / prompt_ref / red_flag_refs / severity`。由它一处生成 `checks` 列表（替掉原来 11 个手写 lambda）、`coverage` 模板（`checks_total` 不再写死）、前端 `coverage.factor_specs` 标签，以及 `documentary_briefs()` 取证任务单；`red_flag_refs` 指向 `references/red-flags.md` 的 `RF-*` 稳定编号（文档挂了很久的 P1 由此落地）。判定函数按 `handler` 键映射到模块级包装函数，注册表自身不含可执行逻辑、不读文件/DB/配置、不 import services/provider。
+- **两类判定权，不交给 LLM**：`quantitative`（11 项）完全由代码按 `FraudPatternConfig` 阈值判定，不读财报原文；`documentary`（4 项，FRD012~FRD015）针对「有财报但科目没落库」的场景，由 `services/narrative/_report_mining.py` 在**同一次分段通读**里按取证任务单挑原文摘录并给出 `suggested` 触发建议（不新增 LLM 调用次数），引文在本模块（持有归档全文）用 `_quote_verified()` 逐字核验，无法定位的直接剔除并记 `rejected_quotes`；`analysis` 层拿到的 `factor_evidence` 是纯 dict，按「引文可定位 + 建议 + 风险语义标记」三项确定性条件确认是否触发。`hybrid` 为预留类型。门控从 `if not signals` 放宽为「有风险点**或**有因子任务单」，让规则反过来驱动通读，不再被数值阈值卡住。叙述层时序相应调整为 `scan_forensics → 分段挖掘 → 引文核验 → 戏法扫描 → _facts → LLM 剖析`，输出契约不变。
 - **能力回归基线**：`scripts/verify_capability.py` + `tests/baselines/capability_baseline.json` 固化两份线上体检报告的关键指标（原文取证、信号数、剖析完整率、K 线事件点、source_guard），只允许变多不允许变少；原有风险点按标题判定、关键原文证据用容错正则，避免 signal 重编号与 LLM 措辞差异误报降级。
 - 汇总整合 `redflags.py`、`fraud_score.py`、`delisting.py` 的结论，做多期交叉检查：营收 vs 现金流、利润 vs 应收账款、毛利率异常、审计意见、财务重述。
 - `analysis/integrity.py` 从公告中挖掘言行不一与坑害投资者行为：承诺未兑现、违规担保、资金占用、处罚、问询函、财务重述、误导性披露。

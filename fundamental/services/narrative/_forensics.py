@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Type, TypeVar
 
+from fundamental.analysis.factor_registry import checks_total, documentary_briefs
 from fundamental.analysis.forensics import scan_forensics
 from fundamental.analysis.forensic_patterns import scan_fraud_patterns
 from fundamental.config import load_settings
@@ -64,14 +65,16 @@ from ._common import (
 
 # 提示词/输出结构升级时递增，使旧报告缓存失效。
 # 阈值改动不改变版本号，而是由 thresholds_fingerprint 让缓存自动失效。
-_FORENSICS_VERSION = 25
+_FORENSICS_VERSION = 27
 
 _logger = get_logger(__name__)
 
 # 喂给最终 LLM 的新线索条数上限（控制上下文预算，全文仍写进 output 供前端展示）
 _MAX_MINING_FINDINGS_IN_FACTS = 5
 # 财务戏法线索注入总纲的条数上限；完整结果作为报告并列字段供前端逐条查看
-_MAX_FRAUD_PATTERNS_IN_FACTS = 3
+# 注册表因子变多后按 severity 取前 5（scan 里已按 high/medium/low 排序），
+# 避免实质线索被 3 条上限挡在 LLM 剖析之外。
+_MAX_FRAUD_PATTERNS_IN_FACTS = 5
 
 _JUDGEMENTS = {"confirmed", "suspicious", "normal", "unverifiable"}
 _CONFIDENCES = {"high", "medium", "low"}
@@ -377,6 +380,9 @@ def _facts(
             "覆盖虚增利润/收入质量、财务洗澡、关联交易、会计估计四类；"
             "verdict.essence 需纳入其中最实质的 1~2 条并解释因果链（谁导致谁、具体科目与金额），"
             "但绝不能据此下「财务造假/粉饰/操纵」定性结论；未触发的检查不等于没有问题。"
+            "其中判定方式为「原文取证 → 代码按引文确认」的线索来自财报原文逐字核验的引文，"
+            "模型只提供证据与触发建议、是否触发由代码确认；引用时须注明来自哪一期财报原文，"
+            "且只能表述为「存在需要核实的披露」，不得当作已确认违规或错报。"
             "无论新增多少线索，essence 都必须保留至少一处公司财报原文里的具体科目与金额"
             "（来自 official_explanations），并注明报告期；不得用新增线索替换掉原有的原文取证。"
             "audit_evidence 是代码从财报原文抽取的「审计视角/会计口径/资金动向/反证」硬事实，"
@@ -836,34 +842,13 @@ def generate_financial_forensics(
         audit_evidence=audit_evidence,
     )
 
-    market = "HK" if str(symbol).upper().endswith(".HK") else "A"
-    try:
-        fraud_scan = scan_fraud_patterns(
-            symbol=symbol,
-            market=market,
-            financials=inputs["financials"],
-            statement_items=inputs["statement_items"],
-            report_facts=report_facts,
-            config=cfg.fraud_patterns,
-            lookback_periods=lookback,
-        )
-        # analysis 出参是 dataclass；在报告出口统一转 dict，
-        # Web API 与前端字段结构保持不变（CONVENTIONS 第 4 节边界表）。
-        fraud = dataclasses.asdict(fraud_scan)
-    except Exception as exc:  # noqa: BLE001
-        _logger.warning("财务戏法检查失败 %s: %s", symbol, exc)
-        fraud = {
-            "symbol": symbol, "market": market, "patterns": [],
-            "coverage": {"performed": [], "skipped": [], "checks_total": 11,
-                         "checked_no_trigger": 0, "not_applicable": 0, "data_missing": 0},
-            "summary": {"pattern_count": 0, "high": 0, "medium": 0, "low": 0,
-                        "by_category": {}},
-            "disclaimer": "财务戏法检查输出的是待核查线索，不构成财务造假认定、审计意见或投资建议。",
-            "error": str(exc),
-        }
-
     # 财报原文证据：先跑关键词检索（离线、快），再跑分段挖掘（LLM、贵）。
     # 两者都失败不阻断主流程——没有原文时 LLM 仍按扫描数据解释。
+    #
+    # 时序要点：分段挖掘必须**早于**戏法扫描。它现在同时承担两件事——给已有
+    # 风险点找原文摘录，以及按注册表下发的「取证任务单」为 documentary 因子
+    # 挂牌并逐字核验引文。产出的 factor_evidence 是纯 dict，由本层注入 analysis；
+    # 于是「用规则去读财报」不再被数值阈值门控，而 analysis 依旧不碰 I/O/LLM。
     try:
         keyword_map = retrieve_evidence(
             symbol, scan["signals"][:max_signals], db_path=db_path, max_chars=900
@@ -871,12 +856,14 @@ def generate_financial_forensics(
     except Exception:  # noqa: BLE001
         keyword_map = {}
 
-    # 分段挖掘：带风险点逐段摘录+总结，能发现扫描器未覆盖的新线索。
-    # 结果自带磁盘缓存（按财报指纹+风险点指纹失效），refresh=true 时强制重跑。
+    # 分段挖掘：带风险点 + 因子任务单逐段摘录/总结/挂牌，能发现扫描器未覆盖
+    # 的新线索。缓存按「财报指纹 + 风险点指纹 + 因子任务单 + 版本」失效；
+    # refresh=true 强制重跑；没有风险点但有任务单时也会通读。
     mining: dict[str, Any] = {}
     try:
         mining = mine_report_evidence(
-            symbol, scan["signals"][:max_signals], db_path=db_path, refresh=refresh
+            symbol, scan["signals"][:max_signals], db_path=db_path, refresh=refresh,
+            factor_briefs=documentary_briefs(),
         )
     except Exception:  # noqa: BLE001
         mining = {}
@@ -896,6 +883,38 @@ def generate_financial_forensics(
                 hit["is_current"] = str(hit.get("period") or "") in current_years
 
     evidence_map = _merge_evidence(mining, keyword_map)
+
+    # 戏法扫描放在通读之后：factor_evidence 里的引文已由 services 层逐字核验，
+    # 在这里作为纯 dict 注入 analysis，触发与否仍完全由代码确认。
+    market = "HK" if str(symbol).upper().endswith(".HK") else "A"
+    try:
+        fraud_scan = scan_fraud_patterns(
+            symbol=symbol,
+            market=market,
+            financials=inputs["financials"],
+            statement_items=inputs["statement_items"],
+            report_facts=report_facts,
+            factor_evidence=(mining or {}).get("factor_evidence") or {},
+            config=cfg.fraud_patterns,
+            lookback_periods=lookback,
+        )
+        # analysis 出参是 dataclass；在报告出口统一转 dict，
+        # Web API 与前端字段结构保持不变（CONVENTIONS 第 4 节边界表）。
+        fraud = dataclasses.asdict(fraud_scan)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("财务戏法检查失败 %s: %s", symbol, exc)
+        fraud = {
+            "symbol": symbol, "market": market, "patterns": [],
+            "coverage": {"performed": [], "skipped": [],
+                         "checks_total": checks_total(),
+                         "checked_no_trigger": 0, "not_applicable": 0, "data_missing": 0,
+                         "factor_specs": [], "by_evidence_kind": {},
+                         "documentary_rejected_quotes": 0},
+            "summary": {"pattern_count": 0, "high": 0, "medium": 0, "low": 0,
+                        "by_category": {}},
+            "disclaimer": "财务戏法检查输出的是待核查线索，不构成财务造假认定、审计意见或投资建议。",
+            "error": str(exc),
+        }
 
     facts = _facts(
         symbol, inputs, scan, intel, max_signals, max_anomalies,
@@ -931,10 +950,19 @@ def generate_financial_forensics(
             f"财报原文分段通读有 {len(failed_segments)} 段返回非法 JSON 且重试未成功，"
             "这些段落的线索可能缺失；可点「重新分析」重跑，未检出不等同于不存在。"
         )
+    rejected_quotes = int(
+        (fraud.get("coverage") or {}).get("documentary_rejected_quotes") or 0
+    )
+    if rejected_quotes:
+        caveats.append(
+            f"原文取证有 {rejected_quotes} 条模型摘录无法在归档财报中逐字定位，"
+            "已剔除且不计入判定；此类线索一律以可核验引文为准。"
+        )
+    caveat_slots = 7 if rejected_quotes else 6
     disclaimer = "本报告基于公开财报与公开资料，不构成审计意见、监管结论或投资建议。"
     if not any("不构成" in c for c in caveats):
         caveats.append(disclaimer)
-    report["caveats"] = caveats[:6]
+    report["caveats"] = caveats[:caveat_slots]
 
     output: dict[str, Any] = {
         "symbol": symbol,

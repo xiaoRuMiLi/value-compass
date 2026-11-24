@@ -261,6 +261,32 @@ assert.ok(qText.indexOf('只能并列、不能相减') >= 0, qText);
 assert.ok(qText.indexOf('展开单季还原明细') >= 0, qText);
 assert.strictEqual(qText.indexOf('[object Object]'), -1, qText);
 assert.strictEqual(VC.renderQuarterly({ scan: {} }), null, '旧缓存无 quarterly 时应安静降级');
+// ---- 因子注册表清单：后端单一来源下发，页面不维护第二份名单 ----
+const specData = {
+  fraud_patterns: {
+    patterns: [], summary: { pattern_count: 0, high: 0, medium: 0, low: 0 },
+    coverage: {
+      performed: [], skipped: [], checks_total: 15,
+      by_evidence_kind: { quantitative: 11, documentary: 4, hybrid: 0 },
+      factor_specs: [
+        { id: 'FRD012', check_name: '关联方资金占用（原文取证）', evidence_kind: 'documentary', red_flag_refs: ['RF-GV-01'] },
+        { id: 'FRD001', check_name: '应收账款增速背离', evidence_kind: 'quantitative', red_flag_refs: ['RF-AQ-04'] },
+      ],
+      documentary_rejected_quotes: 2,
+    },
+  },
+};
+const specNode = VC.renderFraudPatterns(specData);
+const specText = flatten(specNode);
+assert.ok(specText.indexOf('展开因子注册表清单（2 项') >= 0, specText);
+assert.ok(specText.indexOf('FRD012') >= 0, specText);
+assert.ok(specText.indexOf('原文取证') >= 0, specText);
+assert.ok(specText.indexOf('RF-GV-01') >= 0, specText);
+assert.ok(specText.indexOf('数值型 11 项') >= 0, specText);
+assert.ok(specText.indexOf('已剔除且不计入判定') >= 0, specText);
+assert.strictEqual(specText.indexOf('[object Object]'), -1, specText);
+// 旧缓存没有 factor_specs 时安静降级，不抛异常
+assert.ok(VC.renderFraudPatterns({ fraud_patterns: { patterns: [], coverage: {}, summary: {} } }));
 console.log('MARKER_LOGIC_OK');
 """
 

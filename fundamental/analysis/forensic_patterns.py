@@ -1,4 +1,10 @@
-"""财务戏法线索扫描（确定性、可插拔、不改动既有 25 条规则）。
+"""财务戏法线索扫描（注册表驱动、确定性、不改动既有 25 条规则）。
+
+检查清单由 ``analysis/factor_registry.py`` 的 ``FACTOR_REGISTRY`` 单一来源生成，
+本模块不再维护手写 lambda 列表。两类判定权都不在 LLM：
+- ``quantitative``：代码按 ``FraudPatternConfig`` 阈值算，不读财报原文；
+- ``documentary``：LLM 在同一次分段通读里挑原文摘录并给触发建议，services
+  层逐字核验引文，本模块按「可定位 + 建议 + 风险语义标记」三项确认是否触发。
 
 覆盖四类常见手法：
 
@@ -24,10 +30,17 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import statistics
 from typing import Any
 
+from fundamental.analysis.factor_registry import (
+    FACTOR_REGISTRY,
+    FactorSpec,
+    checks_total,
+    factor_labels,
+)
 from fundamental.analysis.forensics_config import FraudPatternConfig
 from fundamental.models import FraudPattern, FraudPatternScan
 
@@ -585,6 +598,143 @@ def _check_cip(
 # ---------- 汇总 ----------
 
 
+# ---------- 注册表驱动：统一上下文 + 模块级 handler（无手写 lambda） ----------
+
+
+@dataclasses.dataclass(frozen=True)
+class _Ctx:
+    """一次扫描的纯数据上下文；handlers 只从这里取参数，不读外部状态。"""
+
+    financials: list[Any]
+    items: list[Any]
+    codes: dict[str, tuple[str, ...]]
+    th: dict[str, Any]
+    market: str
+    facts: dict[str, Any]
+    factor_evidence: dict[str, Any]
+
+
+def _h_ar_divergence(c: _Ctx):
+    return _check_ar_divergence(c.items, c.financials, c.codes, c.th)
+
+
+def _h_cash_conversion(c: _Ctx):
+    return _check_cash_conversion(c.financials, c.items, c.codes, c.th)
+
+
+def _h_cash_receipt(c: _Ctx):
+    return _check_cash_receipt(c.items, c.financials, c.codes, c.th, c.market)
+
+
+def _h_inventory(c: _Ctx):
+    return _check_inventory(c.items, c.financials, c.codes, c.th, c.market)
+
+
+def _h_big_bath(c: _Ctx):
+    return _check_big_bath(c.financials, c.th)
+
+
+def _h_goodwill(c: _Ctx):
+    return _check_goodwill(c.items, c.financials, c.codes, c.th)
+
+
+def _h_related_party_balance(c: _Ctx):
+    return _check_related_party_balance(c.items, c.codes, c.th, c.market)
+
+
+def _h_customer_concentration(c: _Ctx):
+    return _check_customer_concentration(c.facts, c.th)
+
+
+def _h_rd_capitalization(c: _Ctx):
+    return _check_rd_capitalization(c.facts, c.th)
+
+
+def _h_accounting_changes(c: _Ctx):
+    return _check_accounting_changes(c.facts, c.th)
+
+
+def _h_cip(c: _Ctx):
+    return _check_cip(c.items, c.codes, c.th)
+
+
+_HANDLERS = {
+    "ar_divergence": _h_ar_divergence,
+    "cash_conversion": _h_cash_conversion,
+    "cash_receipt": _h_cash_receipt,
+    "inventory": _h_inventory,
+    "big_bath": _h_big_bath,
+    "goodwill": _h_goodwill,
+    "related_party_balance": _h_related_party_balance,
+    "customer_concentration": _h_customer_concentration,
+    "rd_capitalization": _h_rd_capitalization,
+    "accounting_changes": _h_accounting_changes,
+    "cip": _h_cip,
+}
+
+
+def _check_documentary(
+    spec: FactorSpec, factor_evidence: dict[str, Any]
+) -> tuple[FraudPattern | None, dict | None]:
+    """原文取证型因子的**确定性确认**（触发权在代码，不在 LLM）。
+
+    三个条件同时成立才产出线索：① 引文已由 services 层逐字核验可在归档
+    原文定位；② 模型给出触发建议；③ 引文命中该因子的风险语义标记。
+    任何一条不满足都不触发，且不会把「模型认为有问题」写成结论。
+    """
+    bundle = factor_evidence.get(spec.id)
+    if not isinstance(bundle, dict) or not bundle.get("available"):
+        return None, _skipped(
+            spec.check_name, "data_missing",
+            "无可核验财报原文，或本次未执行分段通读",
+        )
+    hits = bundle.get("verified_hits") or []
+    confirmed = [
+        h for h in hits
+        if str(h.get("quote") or "")
+        and h.get("suggested")
+        and any(m in str(h.get("quote") or "") for m in spec.trigger_markers)
+    ]
+    if not confirmed:
+        return None, None  # 执行过但未触发，计入 coverage.performed
+
+    picks = confirmed[:3]
+    facts: dict[str, Any] = {
+        "判定方式": "原文取证 → 代码按引文确认",
+        "已核验引文数": str(len(hits)),
+        "确认命中数": str(len(confirmed)),
+        "规则描述": spec.probe_criteria[:120],
+        "红旗编号": " / ".join(spec.red_flag_refs),
+        "检索范围": "、".join(spec.source_scope[:3]),
+        "证据出处": "财报原文（逐字核验，可在归档文本定位）",
+    }
+    for i, h in enumerate(picks, 1):
+        facts[f"引文 {i}"] = str(h.get("quote") or "")[:110]
+    evidence = [
+        {
+            "source": str(h.get("source") or "财报原文"),
+            "period": str(h.get("period") or ""),
+            "quote": str(h.get("quote") or "")[:300],
+        }
+        for h in picks
+    ]
+    return (
+        _pattern(
+            spec.id, spec.category, spec.title, spec.severity,
+            str(picks[0].get("period") or ""),
+            facts,
+            f"财报原文中出现 {len(confirmed)} 处与「{spec.title}」相关的披露，"
+            "引文已逐字核验可在归档原文中定位。这属于待核查线索，"
+            "仅说明存在需要对照原文核实的披露，不代表存在违规、错报或财务操纵。",
+            "对照原文该章节与公司说明核实商业实质与金额，必要时查专项审计报告、"
+            "问询函回复或审计意见全文。",
+            confidence=spec.confidence,
+            evidence=evidence,
+        ),
+        None,
+    )
+
+
 def _window_dates(
     financials: list[Any], items: list[Any], lookback: int
 ) -> tuple[set[str], set[str]]:
@@ -615,6 +765,7 @@ def scan_fraud_patterns(
     financials: list[Any],
     statement_items: list[Any],
     report_facts: dict[str, Any] | None = None,
+    factor_evidence: dict[str, Any] | None = None,
     config: FraudPatternConfig | dict[str, float] | None = None,
     lookback_periods: int = 12,
 ) -> FraudPatternScan:
@@ -623,6 +774,11 @@ def scan_fraud_patterns(
     ``config`` 接受 ``FraudPatternConfig``（线上路径）或纯字典（测试里覆盖
     单项阈值）；不传则用配置对象的内置默认值。阈值字典只在模块内部作为
     判定参数流转，跨模块边界由 dataclass 承担。
+
+    ``factor_evidence`` 是 services 层分段通读 + 引文逐字核验后得到的纯
+    dict（``{factor_id: {available, verified_hits, rejected_quotes}}``）。
+    analysis 层不读文件、不调 LLM；原文取证型因子的最终触发在这里按三条
+    确定性条件确认，模型输出只作证据与建议。
     """
     if config is None:
         cfg = FraudPatternConfig()
@@ -640,31 +796,48 @@ def scan_fraud_patterns(
     statement_items = [i for i in statement_items
                        if str(getattr(i, "report_date", "") or "") in allowed]
 
-    checks: list[tuple[str, Any]] = [
-        ("应收账款增速背离", lambda: _check_ar_divergence(statement_items, financials, codes, th)),
-        ("净现比持续偏低", lambda: _check_cash_conversion(financials, statement_items, codes, th)),
-        ("销售收现比恶化", lambda: _check_cash_receipt(statement_items, financials, codes, th, market)),
-        ("存货异常堆积", lambda: _check_inventory(statement_items, financials, codes, th, market)),
-        ("财务洗澡（巨亏后反弹）", lambda: _check_big_bath(financials, th)),
-        ("商誉集中减值", lambda: _check_goodwill(statement_items, financials, codes, th)),
-        ("关联方往来占比", lambda: _check_related_party_balance(statement_items, codes, th, market)),
-        ("客户集中度与关联方销售", lambda: _check_customer_concentration(facts, th)),
-        ("研发资本化率骤升", lambda: _check_rd_capitalization(facts, th)),
-        ("会计政策/合并范围/审计意见变化", lambda: _check_accounting_changes(facts, th)),
-        ("在建工程长期不转固", lambda: _check_cip(statement_items, codes, th)),
-    ]
+    ctx = _Ctx(
+        financials=financials,
+        items=statement_items,
+        codes=codes,
+        th=th,
+        market=market,
+        facts=facts,
+        factor_evidence=factor_evidence or {},
+    )
 
     patterns: list[FraudPattern] = []
     performed: list[str] = []
     skipped: list[dict[str, str]] = []
-    for name, run in checks:
-        pattern, skip = run()
+    # checks 完全由 FACTOR_REGISTRY 生成：新增因子只需改注册表（quantitative
+    # 再加一个模块级 handler），不必在这里插入新的 lambda。
+    for spec in FACTOR_REGISTRY:
+        try:
+            if spec.evidence_kind == "documentary":
+                pattern, skip = _check_documentary(spec, ctx.factor_evidence)
+            elif spec.evidence_kind == "quantitative":
+                handler = _HANDLERS.get(spec.handler)
+                if handler is None:
+                    pattern, skip = None, _skipped(
+                        spec.check_name, "data_missing",
+                        f"未注册判定函数：{spec.handler}",
+                    )
+                else:
+                    pattern, skip = handler(ctx)
+            else:  # hybrid 为预留类型，未启用时不假装检查过
+                pattern, skip = None, _skipped(
+                    spec.check_name, "not_applicable", "hybrid 判定方式尚未启用",
+                )
+        except Exception as exc:  # 单项失败不拖垮整份扫描，但要显式记账
+            pattern, skip = None, _skipped(
+                spec.check_name, "data_missing", f"检查异常：{type(exc).__name__}",
+            )
         # 只有「数据不足 / 制度不适用」才算未执行；执行过但没触发也要计入，
         # 避免像旧 coverage 那样把空跑误记成已检查、或把未触发当成缺数据。
         if skip is None:
-            performed.append(name)
+            performed.append(spec.check_name)
         else:
-            skipped.append({**skip, "check": name})
+            skipped.append({**skip, "check": spec.check_name})
         if pattern:
             patterns.append(pattern)
 
@@ -677,13 +850,23 @@ def scan_fraud_patterns(
         coverage={
             "performed": performed,
             "skipped": skipped,
-            "checks_total": len(checks),
+            "checks_total": checks_total(),
             "window_periods": lookback_periods,
             "window_from": min(allowed) if allowed else None,
             "window_to": max(allowed) if allowed else None,
             "checked_no_trigger": len(performed) - len(patterns),
             "not_applicable": sum(1 for s in skipped if s["reason"] == "not_applicable"),
             "data_missing": sum(1 for s in skipped if s["reason"] == "data_missing"),
+            # 注册表单一来源：前端因子清单、判定方式分布、幻觉引文记账
+            "factor_specs": factor_labels(),
+            "by_evidence_kind": {
+                kind: sum(1 for s in FACTOR_REGISTRY if s.evidence_kind == kind)
+                for kind in ("quantitative", "documentary", "hybrid")
+            },
+            "documentary_rejected_quotes": sum(
+                int((b or {}).get("rejected_quotes") or 0)
+                for b in (factor_evidence or {}).values() if isinstance(b, dict)
+            ),
         },
         summary={
             "pattern_count": len(patterns),

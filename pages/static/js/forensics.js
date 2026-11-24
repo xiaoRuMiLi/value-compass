@@ -1078,6 +1078,43 @@
     }
     covWrap.appendChild(cv);
     wrap.appendChild(covWrap);
+
+    // 因子清单直接由后端注册表 factor_specs 生成，页面不维护第二份名单。
+    const specs = cov.factor_specs || [];
+    if (specs.length) {
+      const specWrap = el("details", "fx-details fx-aux-details");
+      specWrap.appendChild(
+        el("summary", null, `展开因子注册表清单（${specs.length} 项 · 单一事实来源）`)
+      );
+      const body = el("div", "fx-aux-content");
+      const kinds = cov.by_evidence_kind || {};
+      body.appendChild(
+        el("p", "fx-quarterly-note",
+          `判定方式：数值型 ${kinds.quantitative || 0} 项（代码按阈值判） · `
+          + `原文取证型 ${kinds.documentary || 0} 项（模型只给证据与触发建议，是否触发由代码按引文确认）。`)
+      );
+      for (const s of specs) {
+        const row = el("div", "fx-factor-row");
+        row.appendChild(el("span", "fx-factor-id", s.id || ""));
+        row.appendChild(el("span", "fx-factor-title", s.check_name || s.title || ""));
+        row.appendChild(
+          el("span", "fx-factor-kind",
+            s.evidence_kind === "documentary" ? "原文取证" : "数值判定")
+        );
+        if (s.red_flag_refs && s.red_flag_refs.length) {
+          row.appendChild(el("span", "fx-factor-flag", s.red_flag_refs.join(" / ")));
+        }
+        body.appendChild(row);
+      }
+      specWrap.appendChild(body);
+      wrap.appendChild(specWrap);
+    }
+    if (cov.documentary_rejected_quotes) {
+      wrap.appendChild(
+        el("p", "fx-quarterly-note",
+          `本次有 ${cov.documentary_rejected_quotes} 条模型摘录无法在归档财报中逐字定位，已剔除且不计入判定。`)
+      );
+    }
     return wrap;
   }
 

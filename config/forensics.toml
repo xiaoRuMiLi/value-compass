@@ -197,6 +197,8 @@ consolidation_min_entities = 1     # 合并范围新增主体达到 N 家才提�
 # 改动后财报体检缓存按指纹自动重算，不必手动清缓存或改代码。
 # 每项判定的组合条件见 analysis/forensic_patterns.py 对应 _check_* 函数。
 [forensics.thresholds.fraud_patterns]
+# 仅 quantitative 类 11 项的判定值；documentary 类 4 项（FRD012~FRD015）
+# 由 factor_registry.py 的 trigger_markers + 引文逐字核验确认，无数值阈值。
 # 虚增利润 / 收入质量
 ar_divergence_pp = 30.0            # 应收同比 - 营收同比 超过 N 个百分点
 ar_divergence_high_pp = 60.0       # 超过该值升级为 high

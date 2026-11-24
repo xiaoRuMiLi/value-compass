@@ -1474,3 +1474,17 @@ details[open] > .fx-sig-head::before { content: "▾"; }
 }
 .fx-quarterly .fx-stats { margin-top: 8px; }
 .fx-quarterly .fx-details { margin-top: 12px; }
+
+/* 因子注册表清单：判定方式与红旗编号由后端单一来源下发 */
+.fx-factor-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 0; font-size: 12px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+.fx-factor-id { font-family: ui-monospace, monospace; color: #94a3b8; min-width: 58px; }
+.fx-factor-title { flex: 1; min-width: 170px; color: #0f172a; }
+.fx-factor-kind {
+  padding: 1px 7px; border-radius: 6px; font-size: 11px;
+  background: #e6f1fb; color: #185fa5;
+}
+.fx-factor-flag { font-family: ui-monospace, monospace; font-size: 11px; color: #94a3b8; }
