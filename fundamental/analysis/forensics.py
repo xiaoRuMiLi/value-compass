@@ -1666,6 +1666,449 @@ def _scan_external_views(
     return views
 
 
+# ---------- 单季还原（累计差分）与现金含量对照 ----------
+
+
+def _quarter_label(year: int, prev_seq: int, seq: int) -> str:
+    """相邻累计期差分得到单季；缺期时写成区间，不把多期增量冒充单季。"""
+
+    if seq - prev_seq == 1:
+        return f"{year} Q{seq}"
+    return f"{year} Q{prev_seq + 1}~Q{seq}"
+
+
+def _derive_quarters(
+    financials: list[FinancialReport], lookback: int
+) -> dict[int, dict[str, Any]]:
+    """Q1/H1/Q3/FY 累计值 → 单季增量（同一自然年内差分，绝不跨年）。
+
+    只看结论窗口内的报告期；科目缺失时该单季字段留 None，不补数、不插值。
+    ``is_single`` 为 False 的条目是多期合并增量，只进事实序列、不参与分布判定。
+    """
+
+    window = financials[-lookback:] if lookback and lookback < len(financials) else financials
+    by_year: dict[int, dict[str, Any]] = {}
+    for row in sorted(window, key=_period_key):
+        year, seq = _period_key(row)
+        if seq <= 0:
+            continue
+        by_year.setdefault(year, {"rows": {}, "quarters": []})["rows"][seq] = row
+    for year, bucket in by_year.items():
+        rows: dict[int, FinancialReport] = bucket["rows"]
+        prev_seq = 0
+        for seq in sorted(rows):
+            cur = rows[seq]
+            prev = rows.get(prev_seq)
+            q: dict[str, Any] = {
+                "label": _quarter_label(year, prev_seq, seq),
+                "year": year, "seq": seq,
+                "report_date": str(cur.report_date),
+                "is_single": (seq == 1 and prev is None)
+                or (prev is not None and seq - prev_seq == 1),
+            }
+            for attr in ("net_profit", "ocf", "revenue"):
+                value = getattr(cur, attr, None)
+                if value is None:
+                    q[attr] = None
+                elif prev is None:
+                    # Q1 本身就是单季累计；缺 Q1 时首条累计值不能当单季用
+                    q[attr] = value if seq == 1 else None
+                else:
+                    base = getattr(prev, attr, None)
+                    q[attr] = value - base if base is not None else None
+            bucket["quarters"].append(q)
+            prev_seq = seq
+        bucket["fy"] = rows.get(4)
+    return by_year
+
+
+def _scan_quarterly_distribution(
+    financials: list[FinancialReport],
+    signals: list[dict[str, Any]],
+    coverage: dict[str, Any],
+    cfg: ForensicsConfig | None = None,
+    lookback: int = 12,
+) -> dict[str, Any]:
+    """单季利润分布、单季现金流大额流出、全年 vs 最新累计期现金含量对照。
+
+    解决的误判：只看最新三季报累计的「经营现金流/净利」会把季节性回款节奏
+    当成全年恶化；只看全年同比又看不见 Q2 单季利润塌陷。三条都是**待解释线索**
+    （low 为主），由 LLM 结合财报原文判断季节性、口径与实质性。
+    """
+
+    cfg = cfg or ForensicsConfig()
+    by_year = _derive_quarters(financials, lookback)
+    quarters = [
+        q for year in sorted(by_year) for q in by_year[year]["quarters"] if q["is_single"]
+    ]
+    summary: dict[str, Any] = {
+        "method": "同一自然年内 Q1/H1/Q3/FY 累计值差分；不跨年、不与去年累计直接相减",
+        "quarters": [
+            {k: v for k, v in q.items() if k != "is_single"} for q in quarters
+        ],
+        "annual_cash_conversion": None,
+        "latest_cumulative_cash_conversion": None,
+    }
+    if not quarters:
+        coverage["skipped"].append({
+            "check": "单季还原与分布异常",
+            "reason": "结论窗口内没有相邻累计报告期，无法差分出单季值",
+        })
+        return summary
+    coverage["performed"].append(
+        f"单季还原：结论窗口覆盖 {len(by_year)} 个报告年份，共差分出 {len(quarters)} 个单季增量"
+    )
+
+    # 最近一个完整年度：作为年度现金含量与单季现金流规模的共同基准
+    fy_rows = [b["fy"] for b in by_year.values() if b.get("fy") is not None]
+    latest_fy = max(fy_rows, key=lambda r: str(r.report_date)) if fy_rows else None
+    fy_profit = getattr(latest_fy, "net_profit", None) if latest_fy else None
+    fy_ocf = getattr(latest_fy, "ocf", None) if latest_fy else None
+    annual_ratio = (
+        fy_ocf / fy_profit if (fy_ocf is not None and fy_profit and fy_profit > 0) else None
+    )
+    if annual_ratio is not None:
+        summary["annual_cash_conversion"] = {
+            "period": str(latest_fy.report_date), "report_type": "FY",
+            "ocf": fy_ocf, "net_profit": fy_profit, "ratio": round(annual_ratio, 3),
+        }
+    else:
+        coverage["skipped"].append({
+            "check": "全年现金含量对照",
+            "reason": "最近完整年度缺经营现金流或归母净利（A 股需科目明细回填 ocf）",
+        })
+
+    sig_no = 0
+
+    def next_id() -> str:
+        nonlocal sig_no
+        sig_no += 1
+        return f"QTR{sig_no:03d}"
+
+    for year in sorted(by_year):
+        bucket = by_year[year]
+        fy = bucket.get("fy")
+        year_quarters = [
+            q for q in bucket["quarters"] if q["is_single"] and q["net_profit"] is not None
+        ]
+        # 1. 单季利润分布：只在完整年度 + 足够单季样本时判定
+        has_complete_year = (
+            fy is not None and getattr(fy, "net_profit", None) and fy.net_profit > 0
+            and len(year_quarters) >= cfg.quarter_min_periods
+        )
+        if has_complete_year:
+            avg = fy.net_profit / len(year_quarters)
+            low = min(year_quarters, key=lambda q: q["net_profit"])
+            if low["net_profit"] < avg / cfg.quarter_profit_gap_x:
+                share = low["net_profit"] / fy.net_profit * 100
+                facts = [
+                    {"label": f"{q['label']} 归母净利", "value": _yi(q["net_profit"])}
+                    for q in year_quarters
+                ]
+                facts += [
+                    {"label": "全年归母净利", "value": _yi(fy.net_profit)},
+                    {"label": "年均单季净利", "value": _yi(avg)},
+                    {"label": "最小单季占全年", "value": _pct(share)},
+                    {"label": "数据出处", "value": f"financials {year} 年累计报告期差分"},
+                ]
+                signals.append(
+                    _signal(
+                        next_id(), "业绩波动",
+                        "medium" if low["net_profit"] < 0 else "low",
+                        "单季利润分布极不均衡", f"{year} 年",
+                        facts,
+                        f"最小单季净利 < 年均单季净利的 1/{cfg.quarter_profit_gap_x:g} 倍"
+                        f"（且全年盈利、至少 {cfg.quarter_min_periods} 个单季可还原）",
+                        f"{year} 年 {low['label']} 归母净利 {_yi(low['net_profit'])}，"
+                        f"仅占全年 {_pct(share)}，而年均单季为 {_yi(avg)}。"
+                        "白酒等行业回款与确认有季节性，这一分布本身不代表异常，"
+                        "需结合分季度数据、收入确认口径调整与公司说明判断是否有实质变化。",
+                        [f"financials:{q['report_date']}" for q in year_quarters],
+                    )
+                )
+
+        # 2. 单季经营现金流大额净流出：以上一完整年度归母净利作规模基准。
+        # 本年尚未出年报（如最新三个季度）同样要检查，不能因缺 FY 跳过。
+        ocf_quarters = [
+            q for q in bucket["quarters"] if q["is_single"] and q["ocf"] is not None
+        ]
+        if fy_profit and fy_profit > 0 and len(ocf_quarters) >= 2:
+            limit = fy_profit * cfg.quarter_ocf_outflow_pct / 100
+            hits = [q for q in ocf_quarters if q["ocf"] < -limit]
+            if hits:
+                signals.append(
+                    _signal(
+                        next_id(), "现金质量", "low", "单季经营现金流大额净流出", f"{year} 年",
+                        [
+                            {"label": f"{q['label']} 经营现金流", "value": _yi(q["ocf"])}
+                            for q in ocf_quarters
+                        ] + [
+                            {"label": "规模基准（最近完整年度归母净利）", "value": _yi(fy_profit)},
+                            {"label": "触发线", "value": _yi(-limit)},
+                            {"label": "数据出处", "value": f"financials {year} 年累计报告期差分"},
+                        ],
+                        f"单季经营现金流净流出 > 上一完整年度归母净利的 "
+                        f"{cfg.quarter_ocf_outflow_pct:g}%（{_yi(limit)}）",
+                        f"{year} 年有 {len(hits)} 个单季经营现金流净流出超过 {_yi(limit)}："
+                        + "、".join(f"{q['label']} {_yi(q['ocf'])}" for q in hits)
+                        + "。累计口径下单一季度的现金流受回款、备货与税费节奏影响很大，"
+                        "需对照全年净现比与去年同期单季，不宜直接推断盈利质量恶化。",
+                        [f"financials:{q['report_date']}" for q in hits],
+                    )
+                )
+
+    # 3. 全年 vs 最新累计期现金含量（两者口径不同，必须显式并列而非相减）
+    ordered = sorted(financials, key=_period_key)
+    latest = next(
+        (
+            r for r in reversed(ordered)
+            if getattr(r, "ocf", None) is not None
+            and getattr(r, "net_profit", None)
+            and r.net_profit > 0
+        ),
+        None,
+    )
+    if latest_fy and latest and str(latest.report_date) > str(latest_fy.report_date):
+        latest_ratio = latest.ocf / latest.net_profit
+        summary["latest_cumulative_cash_conversion"] = {
+            "period": str(latest.report_date),
+            "report_type": latest.report_type.value
+            if hasattr(latest.report_type, "value") else str(latest.report_type),
+            "ocf": latest.ocf, "net_profit": latest.net_profit,
+            "ratio": round(latest_ratio, 3),
+        }
+        if (
+            annual_ratio is not None
+            and annual_ratio >= cfg.cash_conversion_healthy
+            and latest_ratio < cfg.ocf_profit_ratio
+        ):
+            signals.append(
+                _signal(
+                    next_id(), "现金质量", "low",
+                    "最新累计期现金含量显著低于上一完整年度", str(latest.report_date),
+                    [
+                        {"label": f"{latest_fy.report_date} 全年经营现金流", "value": _yi(fy_ocf)},
+                        {"label": f"{latest_fy.report_date} 全年归母净利", "value": _yi(fy_profit)},
+                        {"label": "全年经营现金流/净利", "value": f"{annual_ratio:.2f}"},
+                        {"label": f"{latest.report_date} 累计经营现金流", "value": _yi(latest.ocf)},
+                        {"label": f"{latest.report_date} 累计归母净利", "value": _yi(latest.net_profit)},
+                        {"label": "累计期经营现金流/净利", "value": f"{latest_ratio:.2f}"},
+                    ],
+                    f"上一完整年度经营现金流/净利 >= {cfg.cash_conversion_healthy:g}，"
+                    f"而最新累计期 < {cfg.ocf_profit_ratio:g}",
+                    f"上一完整年度经营现金流 {_yi(fy_ocf)} / 归母净利 {_yi(fy_profit)} = "
+                    f"{annual_ratio:.2f}，但 {latest.report_date} 累计口径只有 {latest_ratio:.2f}。"
+                    "两者口径不同（全年 vs 年初至今累计），低比值更多反映回款节奏与季节性；"
+                    "判断盈利质量须以完整年度为主、累计期为辅，并结合应收账款与合同负债变化。",
+                    [f"financials:{latest_fy.report_date}", f"financials:{latest.report_date}"],
+                )
+            )
+    else:
+        coverage["skipped"].append({
+            "check": "全年 vs 最新累计期现金含量对照",
+            "reason": "没有晚于最近完整年度、且同时具备经营现金流与归母净利的累计报告期",
+        })
+    return summary
+
+
+# ---------- 财报原文结构化事实的趋势 / 组合信号 ----------
+
+
+def _scan_evidence_facts(
+    report_facts: dict[str, Any] | None,
+    audit_evidence: dict[str, Any] | None,
+    signals: list[dict[str, Any]],
+    coverage: dict[str, Any],
+    cfg: ForensicsConfig | None = None,
+) -> dict[str, Any]:
+    """把「财报正文抽出的硬数字」转成确定性趋势/组合线索。
+
+    services 层只做章节定位 + 数字抽取 + 原文摘录，本函数只做数值判定；
+    不读文件、不读配置、不调用模型。抽不到就写 coverage.skipped，绝不补数。
+    """
+
+    cfg = cfg or ForensicsConfig()
+    rf = report_facts or {}
+    ae = audit_evidence or {}
+    summary: dict[str, Any] = {
+        "related_party_trend": [], "operating_volume": None, "consolidation_scope": None,
+    }
+    sig_no = 0
+
+    def next_id() -> str:
+        nonlocal sig_no
+        sig_no += 1
+        return f"RPT{sig_no:03d}"
+
+    def as_float(value: Any) -> float | None:
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    # 1. 关联方销售 / 采购占比连续抬升（多期年报趋势，而非单点高值）
+    trend_hits: list[dict[str, Any]] = []
+    for key, label in (
+        ("related_party_sales_pct", "关联方销售占年度销售总额"),
+        ("related_party_purchase_pct", "关联方采购占年度采购总额"),
+    ):
+        rows = [
+            r for r in (rf.get(key) or [])
+            if isinstance(r, dict) and as_float(r.get("value")) is not None
+        ]
+        rows.sort(key=lambda r: str(r.get("period") or ""))
+        values = [as_float(r["value"]) for r in rows]
+        if len(rows) < 2 or any(v is None for v in values):
+            continue
+        delta = values[-1] - values[0]  # type: ignore[operator]
+        rising = all(b >= a for a, b in zip(values, values[1:]))  # type: ignore[operator]
+        summary["related_party_trend"].append({
+            "metric": label, "periods": [str(r.get("period")) for r in rows],
+            "values": values, "change_pp": round(delta, 2), "rising": rising,
+            "source": str(rows[-1].get("source") or ""),
+        })
+        if rising and delta > cfg.related_trend_pp:
+            trend_hits.append({
+                "label": label, "rows": rows, "values": values, "delta": delta,
+            })
+    if trend_hits:
+        facts: list[dict[str, str]] = []
+        for hit in trend_hits:
+            first, last = hit["rows"][0], hit["rows"][-1]
+            facts.append({
+                "label": f"{hit['label']}（{first.get('period')}→{last.get('period')}）",
+                "value": f"{hit['values'][0]:.2f}% → {hit['values'][-1]:.2f}%"
+                         f"（+{hit['delta']:.2f} 个百分点）",
+            })
+            facts.append({
+                "label": f"{hit['label']} 原文出处",
+                "value": f"{last.get('source') or '财报原文'}："
+                         f"{str(last.get('quote') or '')[:90]}",
+            })
+        signals.append(
+            _signal(
+                next_id(), "关联交易", "low", "关联方交易占比连续抬升",
+                str(trend_hits[0]["rows"][-1].get("period") or ""),
+                facts,
+                f"同一占比指标连续 {len(trend_hits[0]['values'])} 期不下降，"
+                f"且首末合计抬升 > {cfg.related_trend_pp:g} 个百分点",
+                "多期年报正文披露的关联方销售/采购占比持续抬升。"
+                "占比上升会改变收入与采购对关联主体的依赖程度，"
+                "需核对关联交易定价、审批程序与同类第三方价格；"
+                "这是可比性与依赖度线索，不是利益输送或造假的结论。",
+                [f"report_facts:{str(h['rows'][-1].get('period') or '')}" for h in trend_hits],
+            )
+        )
+    else:
+        coverage["skipped"].append({
+            "check": "关联方交易占比趋势",
+            "reason": "财报原文未抽到连续两期关联方销售/采购占比，或抬升未达阈值",
+        })
+
+    # 2. 实物量组合：销量下滑 + 库存累积（+ 经销商净减少作为加权证据）
+    volume = next((v for v in (ae.get("operating_volume") or []) if isinstance(v, dict)), None)
+    if not volume:
+        coverage["skipped"].append({
+            "check": "实物量组合信号", "reason": "财报原文未抽到产销存实物量表",
+        })
+    else:
+        sales_yoy = as_float(volume.get("sales_volume_yoy_pct"))
+        inventory_yoy = as_float(volume.get("inventory_volume_yoy_pct"))
+        dealer_change = as_float(volume.get("dealer_change"))
+        summary["operating_volume"] = {
+            "period": volume.get("period"), "source": volume.get("source"),
+            "sales_volume_yoy_pct": sales_yoy, "inventory_volume_yoy_pct": inventory_yoy,
+            "dealer_change": dealer_change,
+        }
+        if (
+            sales_yoy is not None and inventory_yoy is not None
+            and sales_yoy <= -cfg.volume_sales_drop_pct
+            and inventory_yoy >= cfg.volume_inventory_rise_pct
+        ):
+            dealer_hit = dealer_change is not None and dealer_change <= -cfg.dealer_drop_count
+            facts = [
+                {"label": "实物销售量同比", "value": _pct(sales_yoy)},
+                {"label": "实物库存量同比", "value": _pct(inventory_yoy)},
+                {"label": "本期销量 / 上年销量（吨）",
+                 "value": f"{volume.get('sales_volume_ton') or '数据缺失'} / "
+                          f"{volume.get('sales_volume_prev_ton') or '数据缺失'}"},
+                {"label": "经销商净变化", "value":
+                    f"{dealer_change:+.0f} 家" if dealer_change is not None else "数据缺失"},
+                {"label": "原文出处", "value":
+                    f"{volume.get('source') or '财报原文'}："
+                    f"{str(volume.get('quote_volume') or volume.get('quote') or '')[:90]}"},
+            ]
+            signals.append(
+                _signal(
+                    next_id(), "业绩波动", "medium" if dealer_hit else "low",
+                    "实物销量下滑与库存、渠道同步承压",
+                    str(volume.get("period") or ""), facts,
+                    f"销量同比降幅 > {cfg.volume_sales_drop_pct:g}% 且 "
+                    f"库存同比增幅 > {cfg.volume_inventory_rise_pct:g}%"
+                    + (f"，且经销商净减少 > {cfg.dealer_drop_count:d} 家" if dealer_hit else ""),
+                    f"{volume.get('source') or '财报原文'}披露实物销售量同比 {_pct(sales_yoy)}、"
+                    f"库存量同比 {_pct(inventory_yoy)}"
+                    + (f"、经销商净减少 {abs(dealer_change):.0f} 家" if dealer_hit else "")
+                    + "。实物量比财务比率更早反映渠道动销与压货，"
+                    "需核对公司年报对变动原因的说明、库存商品结构与后续去化安排；"
+                    "该组合只说明需要解释，不直接等同收入确认问题。",
+                    [f"report_text:{volume.get('period') or ''}"],
+                )
+            )
+        else:
+            coverage["skipped"].append({
+                "check": "实物量组合信号",
+                "reason": "销量与库存未同时越过阈值，或实物量表缺同比数值",
+            })
+
+    # 3. 合并范围新增主体：会直接改变同比可比性，即便只有 1 家也值得列线索
+    scope = next((s for s in (ae.get("consolidation_scope") or []) if isinstance(s, dict)), None)
+    if cfg.consolidation_min_entities <= 0:
+        coverage["skipped"].append({
+            "check": "合并范围新增主体", "reason": "consolidation_min_entities=0，配置已关闭",
+        })
+    elif not scope:
+        coverage["skipped"].append({
+            "check": "合并范围新增主体", "reason": "财报原文未抽到合并范围变动章节",
+        })
+    else:
+        entities = [str(x) for x in (scope.get("entities") or []) if str(x).strip()]
+        summary["consolidation_scope"] = {
+            "period": scope.get("period"), "applicable": bool(scope.get("applicable")),
+            "entity_count": len(entities), "entities": entities,
+            "source": scope.get("source"),
+        }
+        if scope.get("applicable") and len(entities) >= cfg.consolidation_min_entities:
+            signals.append(
+                _signal(
+                    next_id(), "会计口径", "low", "合并范围新增主体影响同比可比性",
+                    str(scope.get("period") or ""),
+                    [
+                        {"label": "新增主体数", "value": f"{len(entities)} 家"},
+                        {"label": "新增主体", "value": "、".join(entities[:5])},
+                        {"label": "公司披露", "value": str(scope.get("reason") or "")[:120]},
+                        {"label": "原文出处", "value":
+                            f"{scope.get('source') or '财报原文'}："
+                            f"{str(scope.get('quote') or '')[:90]}"},
+                    ],
+                    f"年报明确勾选合并范围发生变动，且抽到 >= "
+                    f"{cfg.consolidation_min_entities:d} 家新增主体",
+                    f"{scope.get('source') or '财报原文'}披露报告期内合并范围发生变动"
+                    f"（新增 {len(entities)} 家主体）。新增主体会把收入、资产与利润并入合并报表，"
+                    "判断营收与利润同比趋势前需先剔除口径影响；"
+                    "这是可比性提示，不代表并表本身存在异常。",
+                    [f"report_text:{scope.get('period') or ''}"],
+                )
+            )
+        else:
+            coverage["skipped"].append({
+                "check": "合并范围新增主体",
+                "reason": "年报标注未发生变动，或抽到的新增主体数未达阈值",
+            })
+    coverage["performed"].append(
+        "财报原文结构化事实判定：关联方占比趋势 / 实物量组合 / 合并范围变动"
+        "（原文由 services 层抽取，本层只做数值比较）"
+    )
+    return summary
+
+
 # ---------- 信号聚合 ----------
 
 
@@ -1758,12 +2201,17 @@ def scan_forensics(
     lookback_periods: int | None = None,
     recent_years: int | None = None,
     config: ForensicsConfig | None = None,
+    report_facts: dict[str, Any] | None = None,
+    audit_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """执行全量取证扫描，返回结构化信号、异常波动、证据与覆盖度。
 
     ``config`` 由 services 层从 ``config/forensics.toml`` 注入；不传时用内置默认值
     （便于测试）。``lookback_periods`` 控制财报结论窗口，``recent_years`` 控制
     事件类证据窗口；显式传入时覆盖配置值。全历史仅作为波动基线。
+
+    ``report_facts`` / ``audit_evidence`` 是 services 层从财报正文抽取的纯 dict
+    （每条附原文摘录），本模块只做数值判定；不传时对应检查写入 coverage.skipped。
     """
 
     cfg = config or ForensicsConfig()
@@ -1813,6 +2261,14 @@ def scan_forensics(
         kline or [], announcements or [], ordered, signals, coverage, cfg=cfg
     )
     external_views = _scan_external_views(intel, signals, coverage, cfg=cfg)
+    # 累计口径差分还原单季 / 全年-累计现金含量对照（只用 financials + cfg）
+    quarterly = _scan_quarterly_distribution(
+        ordered, signals, coverage, cfg=cfg, lookback=lookback
+    )
+    # 财报原文抽取的结构化事实 → 确定性趋势/组合线索（只用传入的纯 dict + cfg）
+    structured = _scan_evidence_facts(
+        report_facts, audit_evidence, signals, coverage, cfg=cfg
+    )
 
     # 趋势聚合 + 统一编号，保证 id 全局唯一且稳定
     signals, merged_count = _consolidate_signals(signals, cfg.consolidate_min_occurrences)
@@ -1830,6 +2286,7 @@ def scan_forensics(
         "capital_operations": capital_ops,
         "price_reactions": price_reactions,
         "external_views": external_views,
+        "structured": structured,
     }
     counts = {level: sum(1 for s in signals if s["severity"] == level) for level in ("high", "medium", "low")}
 
@@ -1852,6 +2309,7 @@ def scan_forensics(
         "signals": signals,
         "anomalies": anomalies,
         "profit_structure": profit_structure,
+        "quarterly": quarterly,
         "evidence": evidence,
         "coverage": coverage,
         "summary": {

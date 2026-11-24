@@ -31,6 +31,11 @@ _RE_A = {
         r"前五名客户销售额中关联方销售额占年度销售总额比例\s*([\d.]+)\s*%", re.S
     ),
     "top5_supplier": re.compile(r"前五名供应商合计采购金额占年度采购总额比例\s*([\d.]+)\s*%", re.S),
+    # 关联方采购占比与关联方销售占比是两张独立的表，跨年抬升是「依赖度变化」
+    # 的直接证据；旧事实卡只抽了销售侧，采购侧的 11.74%→13.38% 完全没进系统。
+    "related_purchase": re.compile(
+        r"前五名供应商采购额中关联方采购额占年度采购总额比例\s*([\d.]+)\s*%", re.S
+    ),
     "nonrecurring_total": re.compile(r"合\s*计\s*([\d,]+\.\d{2})", re.S),
     # 原文表头两种写法：「资本化研发投入占研发投入的比例」/「资本化研发支出…」，
     # 三列依次为当年 / 上年 / 上上年；旧正则只认「支出」，导致 A 股该字段长期为空。
@@ -149,6 +154,12 @@ def _extract_a(text: str, period: str, source: str) -> dict[str, Any]:
             "period": period, "value": _float(m), "source": source,
             "quote": _quote(text, _RE_A["top5_supplier"]),
         }]
+    m = _RE_A["related_purchase"].search(text)
+    if m:
+        out["related_party_purchase_pct"] = [{
+            "period": period, "value": _float(m), "source": source,
+            "quote": _quote(text, _RE_A["related_purchase"]),
+        }]
 
     # 非经常性损益：限定在「八、非经常性损益项目及金额」章节内取合计，避免匹配到别处
     start = text.find("非经常性损益项目及金额")
@@ -246,6 +257,7 @@ def extract_report_facts(
         "symbol": symbol,
         "top5_customer_pct": [],
         "related_party_sales_pct": [],
+        "related_party_purchase_pct": [],
         "top5_supplier_pct": [],
         "nonrecurring_total": [],
         "rd_capitalization_pct": [],
@@ -322,8 +334,8 @@ def extract_report_facts(
             "chars": len(text), "local_path": str(item["path"]),
         })
 
-    for key in ("top5_customer_pct", "related_party_sales_pct", "top5_supplier_pct",
-                "nonrecurring_total", "rd_capitalization_pct",
+    for key in ("top5_customer_pct", "related_party_sales_pct", "related_party_purchase_pct",
+                "top5_supplier_pct", "nonrecurring_total", "rd_capitalization_pct",
                 "accounting_policy_change", "consolidation_change", "audit"):
         if not result[key]:
             result["missing_facts"].append(key)

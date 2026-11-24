@@ -277,20 +277,85 @@ def _counter_evidence(text: str, period: str, source: str) -> list[dict[str, Any
     return out
 
 
+# 「公司实物销售收入是否大于劳务收入」表：销售量 / 生产量 / 库存量三行，
+# 每行依次是本期数、上年数、同比增减。比财务比率更早反映渠道动销与压货。
+_VOLUME_ROWS = {
+    key: re.compile(label + r"\s*吨\s*([\d,]+)\s*([\d,]+)\s*(-?[\d.]+)\s*%", re.S)
+    for key, label in (("sales", "销售量"), ("production", "生产量"),
+                       ("inventory", "库存量"))
+}
+
+
+def _consolidation_scope(text: str, period: str, source: str) -> list[dict[str, Any]]:
+    """「报告期内合并范围是否发生变动」勾选 + 新设/收购主体名称。
+
+    合并范围新增主体会直接把收入与资产并入报表，是同比可比性的硬事实；
+    旧事实卡只认「新纳入合并范围的公司有：」一种措辞，五粮液这类
+    「出资设立…有限公司」的写法抽不到，故单独按这一章节定位。
+    """
+    key = "报告期内合并范围是否发生变动"
+    i = text.find(key)
+    if i < 0:
+        return []
+    seg = text[i: i + 420]
+    checked = re.search(r"(\S)\s*是\s*(\S)\s*否", seg)
+    applicable = (checked.group(1) != "□") if checked else None
+    tail = _clean(seg[checked.end():], 240) if checked else ""
+    # 只保留本段的原因说明，不把下一节标题带进来
+    reason = re.split(r"（\d+）", tail)[0].strip()
+    compact = re.sub(r"\s+", "", reason)
+    entities = re.findall(
+        r"(?:设立|投资|新设|收购)([\u4e00-\u9fa5]{2,20}"
+        r"(?:股份有限公司|有限责任公司|有限公司))", compact
+    )
+    if not entities:
+        entities = re.findall(
+            r"[\u4e00-\u9fa5]{2,20}(?:股份有限公司|有限责任公司|有限公司)", compact
+        )
+    entities = list(dict.fromkeys(entities))[:8]
+    return [{
+        "period": period,
+        "applicable": applicable,
+        "entities": entities,
+        "entity_count": len(entities),
+        "reason": reason,
+        "source": source,
+        "quote": _clean(seg[:220], 220),
+    }]
+
+
 def _operating_volume(text: str, period: str, source: str) -> list[dict[str, Any]]:
     """实物经营量：白酒等行业的销量/库存/产能比财务比率更早反映渠道压货。"""
     section = _section(text, "主要产品生产、销售和库存量", "2、成品酒、半成品酒", 2200)
+    volume_table = _section(
+        text, "公司实物销售收入是否大于劳务收入",
+        "（4）公司已签订的重大销售合同", 1600,
+    )
     capacity = re.search(
         r"设计年产能（万吨）\s*全年实际产能（万吨）\s*在建产能（万吨）\s*"
         r"酒类\s*([\d.]+)\s*([\d.]+)\s*([\d.]+)", text, re.S
     )
-    dealers = re.search(r"小计\s*([\d,]+)\s*(-?\d+)", text, re.S)
-    if not section and not capacity:
+    # 经销商净变化只在「经销商数量情况」章节里取；全文搜第一个「小计」
+    # 会把别的表格合计行串进来，成为虚假的渠道收缩证据。
+    dealer_section = _section(
+        text, "经销商数量情况", "经销客户的主要结算方式", 1500
+    )
+    dealers = (
+        re.search(r"小计\s*([\d,]+)\s*(-?\d+)", dealer_section, re.S)
+        if dealer_section else None
+    )
+    parsed = {key: pattern.search(volume_table) for key, pattern in _VOLUME_ROWS.items()}
+    if not section and not capacity and not any(parsed.values()):
         return []
     util = None
     if capacity:
         design, actual = _num(capacity.group(1)), _num(capacity.group(2))
         util = round(actual / design * 100, 2) if design and actual else None
+
+    def row(key: str, group: int) -> float | None:
+        m = parsed[key]
+        return _num(m.group(group)) if m else None
+
     return [{
         "period": period,
         "design_capacity_wan_ton": _num(capacity.group(1)) if capacity else None,
@@ -299,8 +364,18 @@ def _operating_volume(text: str, period: str, source: str) -> list[dict[str, Any
         "in_build_capacity_wan_ton": _num(capacity.group(3)) if capacity else None,
         "dealer_count": _num(dealers.group(1)) if dealers else None,
         "dealer_change": _num(dealers.group(2)) if dealers else None,
+        "sales_volume_ton": row("sales", 1),
+        "sales_volume_prev_ton": row("sales", 2),
+        "sales_volume_yoy_pct": row("sales", 3),
+        "production_volume_ton": row("production", 1),
+        "production_volume_prev_ton": row("production", 2),
+        "production_volume_yoy_pct": row("production", 3),
+        "inventory_volume_ton": row("inventory", 1),
+        "inventory_volume_prev_ton": row("inventory", 2),
+        "inventory_volume_yoy_pct": row("inventory", 3),
         "source": source,
         "quote": _clean(section[:420], 420),
+        "quote_volume": _clean(volume_table[:420], 420),
     }]
 
 
@@ -315,6 +390,7 @@ _EXTRACTORS = (
     ("internal_control", _internal_control),
     ("counter_evidence", _counter_evidence),
     ("operating_volume", _operating_volume),
+    ("consolidation_scope", _consolidation_scope),
 )
 
 

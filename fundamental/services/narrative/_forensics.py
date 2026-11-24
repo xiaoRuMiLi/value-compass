@@ -64,7 +64,7 @@ from ._common import (
 
 # 提示词/输出结构升级时递增，使旧报告缓存失效。
 # 阈值改动不改变版本号，而是由 thresholds_fingerprint 让缓存自动失效。
-_FORENSICS_VERSION = 23
+_FORENSICS_VERSION = 25
 
 _logger = get_logger(__name__)
 
@@ -325,6 +325,7 @@ def _brief_audit_evidence(audit: dict[str, Any]) -> dict[str, Any]:
         "dividend_coverage": slim("dividend_coverage", 1),
         "internal_control": slim("internal_control", 1),
         "operating_volume": slim("operating_volume", 1),
+        "consolidation_scope": slim("consolidation_scope", 1),
         "counter_evidence": counter_rows[:8],
         "missing": audit.get("missing") or [],
     }
@@ -393,6 +394,12 @@ def _facts(
             "不得只堆风险点而隐去公司披露的正面事实；但也不要用反证直接否定已触发的量化信号。"
             "④ 引用任何 audit_evidence 事实须注明来自哪一期财报原文，"
             "且不得与公司已实现事实、第三方研报观点混同。"
+            "quarterly 是代码把 Q1/H1/Q3/FY 累计值差分还原出的单季增量与两组现金含量："
+            "annual_cash_conversion 是最近完整年度的全年口径，"
+            "latest_cumulative_cash_conversion 是最新报告期的年初至今累计口径，两者不可相减、"
+            "也不可只凭累计期低比值就判定全年盈利质量恶化；解释须落到具体金额与报告期。"
+            "evidence.structured 是财报原文数字的趋势/组合判定（关联方占比、实物量、合并范围），"
+            "同样只作线索，引用时注明来源年报。"
         ),
         "company": {"symbol": symbol, "name": inputs["name"], "industry": inputs["industry"]},
         "fraud_patterns": {
@@ -413,6 +420,14 @@ def _facts(
         "periods": scan["periods"],
         "summary": scan["summary"],
         "profit_structure": scan.get("profit_structure", []),
+        "quarterly": {
+            "method": (scan.get("quarterly") or {}).get("method", ""),
+            "annual_cash_conversion": (scan.get("quarterly") or {}).get("annual_cash_conversion"),
+            "latest_cumulative_cash_conversion": (
+                (scan.get("quarterly") or {}).get("latest_cumulative_cash_conversion")
+            ),
+            "quarters": ((scan.get("quarterly") or {}).get("quarters") or [])[-8:],
+        },
         "signals": [_brief_signal(s, evidence_map) for s in scan["signals"][:max_signals]],
         "signals_omitted": max(0, len(scan["signals"]) - max_signals),
         "official_explanation_coverage": {
@@ -440,6 +455,7 @@ def _facts(
             "forecast_checks": (ev.get("forecast_checks") or [])[:8],
             "capital_moves": ev.get("capital_moves") or {},
             "price_reactions": (ev.get("price_reactions") or [])[:8],
+            "structured": ev.get("structured") or {},
             "external_views": [
                 {k: v.get(k) for k in ("kind", "date", "org", "title", "keywords", "excerpt")}
                 for v in (ev.get("external_views") or [])[:6]
@@ -597,10 +613,12 @@ def _citations(
     scan: dict[str, Any],
     intel: dict[str, Any] | None,
     audit_evidence: dict[str, Any] | None = None,
+    report_facts: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     ev = scan["evidence"]
     intel = intel or {}
     audit_evidence = audit_evidence or {}
+    report_facts = report_facts or {}
     items: list[dict[str, str]] = []
 
     def add(kind: str, date: Any, org: Any, title: Any, url: Any) -> None:
@@ -637,6 +655,25 @@ def _citations(
     add_source("分季度口径重大差异", qd)
     add_source("关联财务公司存款", first("finance_company_deposit"))
     add_source("现金分红覆盖", first("dividend_coverage"))
+    # 本轮新增的三类原文事实也进引用清单：趋势与组合信号必须能回到具体年报。
+    volume = first("operating_volume")
+    if volume:
+        add("财报原文·实物产销存", volume.get("period"), volume.get("source"),
+            "实物量：" + str(volume.get("quote_volume") or volume.get("quote") or "")[:110], "")
+    scope = first("consolidation_scope")
+    if scope and scope.get("applicable"):
+        add("财报原文·合并范围变动", scope.get("period"), scope.get("source"),
+            "新增主体：" + "、".join(scope.get("entities") or [])[:110], "")
+    for key, label in (("related_party_purchase_pct", "关联方采购占比"),
+                       ("related_party_sales_pct", "关联方销售占比")):
+        rows = report_facts.get(key) or []
+        if len(rows) >= 2:
+            # 事实卡按报告期倒序追加，引用清单必须显式按年份升序，
+            # 否则会写成「13.38% → 11.74%」这种方向相反的抬升/回落。
+            ordered_rows = sorted(rows, key=lambda r: str(r.get("period") or ""))
+            first_row, last_row = ordered_rows[0], ordered_rows[-1]
+            add("财报原文·" + label, last_row.get("period"), last_row.get("source"),
+                f"{label}：{first_row.get('value')}% → {last_row.get('value')}%", "")
     for row in (audit_evidence.get("counter_evidence") or [])[:2]:
         add("财报原文·反证", row.get("period"), row.get("source"),
             f"{row.get('item')}：{str(row.get('quote') or '')[:90]}", "")
@@ -760,6 +797,25 @@ def generate_financial_forensics(
     max_signals = cfg.max_signals
     max_anomalies = cfg.max_anomalies
 
+    # 原文事实层先于扫描：它们是纯 dict（每条附原文摘录），由 services 层读取
+    # 归档文本得到，再交给 analysis 层做确定性趋势/组合判定。这样扫描器依旧
+    # 不读文件、不依赖 provider，仍然只有「数据进、结论出」一条依赖方向。
+    # 财务戏法线索是独立于 scan.signals 的并列检查，不占用原有风险点名额。
+    try:
+        report_facts = extract_report_facts(symbol, db_path=db_path)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("财报结构化事实抽取失败 %s: %s", symbol, exc)
+        report_facts = {"error": str(exc), "source_docs": [], "missing_facts": ["抽取失败"]}
+    # 审计视角 / 会计口径 / 资金动向 / 反证 / 实物量 / 合并范围：确定性抽取。
+    # 这类事实全是文字与表格，进不了结构化扫描；不补这一层，LLM 只能碰运气。
+    try:
+        audit_evidence = extract_audit_evidence(symbol, db_path=db_path)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("审计视角事实抽取失败 %s: %s", symbol, exc)
+        audit_evidence = {"error": str(exc), "source_docs": [], "missing": ["抽取失败"],
+                          "alerts": [], "counter_evidence": [], "operating_volume": [],
+                          "consolidation_scope": []}
+
     scan = scan_forensics(
         symbol,
         financials=inputs["financials"],
@@ -776,24 +832,9 @@ def generate_financial_forensics(
         lookback_periods=lookback,
         recent_years=recent_years,
         config=cfg,
+        report_facts=report_facts,
+        audit_evidence=audit_evidence,
     )
-
-    # 财务戏法线索：独立于 scan.signals 的并列检查，不占用原有风险点名额、
-    # 不进入逐条剖析数组，因此不会影响既有 25 条规则与 LLM 剖析完整性。
-    # 事实卡只读归档文本，扫描只吃纯数据；任一环节失败都写进报告状态，不静默。
-    try:
-        report_facts = extract_report_facts(symbol, db_path=db_path)
-    except Exception as exc:  # noqa: BLE001
-        _logger.warning("财报结构化事实抽取失败 %s: %s", symbol, exc)
-        report_facts = {"error": str(exc), "source_docs": [], "missing_facts": ["抽取失败"]}
-    # 审计视角 / 会计口径 / 资金动向 / 反证：只读归档财报原文，确定性抽取。
-    # 这类事实全是文字与表格，进不了结构化扫描；不补这一层，LLM 只能碰运气。
-    try:
-        audit_evidence = extract_audit_evidence(symbol, db_path=db_path)
-    except Exception as exc:  # noqa: BLE001
-        _logger.warning("审计视角事实抽取失败 %s: %s", symbol, exc)
-        audit_evidence = {"error": str(exc), "source_docs": [], "missing": ["抽取失败"],
-                          "alerts": [], "counter_evidence": []}
 
     market = "HK" if str(symbol).upper().endswith(".HK") else "A"
     try:
@@ -884,6 +925,12 @@ def generate_financial_forensics(
 
     # 免责声明是硬兜底，即使 LLM 输出遗漏也必须存在
     caveats = list(report["caveats"])
+    failed_segments = (mining or {}).get("failed_segments") or []
+    if failed_segments:
+        caveats.append(
+            f"财报原文分段通读有 {len(failed_segments)} 段返回非法 JSON 且重试未成功，"
+            "这些段落的线索可能缺失；可点「重新分析」重跑，未检出不等同于不存在。"
+        )
     disclaimer = "本报告基于公开财报与公开资料，不构成审计意见、监管结论或投资建议。"
     if not any("不构成" in c for c in caveats):
         caveats.append(disclaimer)
@@ -904,7 +951,7 @@ def generate_financial_forensics(
         "fraud_patterns": fraud,
         "report_facts": report_facts,
         "audit_evidence": audit_evidence,
-        "citations": _citations(scan, intel, audit_evidence),
+        "citations": _citations(scan, intel, audit_evidence, report_facts),
         "coverage": scan["coverage"],
         **report,
     }

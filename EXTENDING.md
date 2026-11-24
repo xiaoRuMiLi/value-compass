@@ -155,7 +155,7 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
 `ForensicsConfig` 注入；字段含义与调参方向写在配置文件每个分组的注释里，原则是**数值调大＝触发更少**。
 
 - `[forensics]`：结论窗口期数、事件证据年限、送入 LLM 的信号/波动上限、原文守卫下限与补档份数。
-- `[forensics.thresholds]`：离群倍数、各率类百分点阈值、预告容差、质押/减持门槛、聚合门限、风险等级门槛与线索关键词（主扫描 `analysis/forensics.py`）。
+- `[forensics.thresholds]`：离群倍数、各率类百分点阈值、预告容差、质押/减持门槛、聚合门限、风险等级门槛与线索关键词（主扫描 `analysis/forensics.py`）；末尾两组 `十一·B / 十一·C` 分别控制「单季还原 + 全年-累计现金含量对照」与「财报原文事实的趋势/组合信号」，同样遵循「调大＝触发更少」。
 - `[forensics.thresholds.fraud_patterns]`：财务戏法检查 11 项的全部判定值，独立子表，对应 `FraudPatternConfig`。同样遵循「调大＝触发更少」，并随 `ForensicsConfig.fingerprint()` 一起让缓存自动重算。
 - 嫌风险点太多：调大 `net_margin_pp` / `roe_pp` / `expense_ratio_pp` / `revenue_yoy_swing_pp`；
   或把 `rate_require_outlier` 改成四项全开（率类异动还必须偏离自身同口径历史波动）。
@@ -172,8 +172,17 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
   注册进 `scan_fraud_patterns()` 的 `checks` 列表；阈值加到 `FraudPatternConfig` 字段与 `[forensics.thresholds.fraud_patterns]` 子表
   （`from_mapping()` 会按字段类型自动逐项兜底，无需手写 `pick`）；前端 `forensics.js` 的 `FACT_LABELS` 补中文标签。
   组合条件、同报告期同比、结论窗口与 `coverage` 三分沿用现有约定，不要退回单点异动报警。
+- 新增「依赖财报原文文字」的信号，分层是固定的：services 层（`_report_facts.py` / `_audit_evidence.py`）只做章节定位 + 数字抽取 + 原文摘录，
+  抽不到写 `missing`/`missing_facts`；把结果当**纯 dict** 通过 `scan_forensics(report_facts=..., audit_evidence=...)` 传入，
+  `analysis/forensics.py` 的 `_scan_evidence_facts()` 只做数值比较并写 `coverage`；判定阈值仍放 `ForensicsConfig`。
+  `analysis` 层不读文件、不查库、不 import provider，依赖方向不反转。
+- 单季信号只能用 `_derive_quarters()` 的**同一自然年内累计差分**结果，禁止拿 FY 与 Q3 跨年相减，
+  也禁止把缺期造成的「多期合并增量」当成单季；`is_single=False` 的条目只进事实序列。
 - 两个扫描器都**不要**留第二份硬编码，也**不要**让 `analysis` 层反过来读配置文件；配置对象由 services 层注入。
   `analysis` 出参走 `models.py` 的 dataclass，services 层在报告出口 `dataclasses.asdict` 转 dict 后再交给 Web 层。
+- 模型返回非法 JSON 时，provider 的 `_extract_json()` 只做**不改变内容**的清洗（去代码围栏、截取首尾、去尾逗号），
+  不给截断的 JSON 补右括号或补字符串结尾（那会捏造数字与摘录）；分段挖掘 `_chat_segment_json()` 会带严格格式指令重试一次，
+  仍失败则把该段写进 `report_mining.failed_segments` 并在 `caveats` 声明，绝不显示成「通读无发现」。
 
 ## 6. 快速清单
 

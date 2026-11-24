@@ -40,7 +40,15 @@ from ._quality import excerpt_quality, is_numeric_quote
 _logger = get_logger(__name__)
 
 # 挖掘结果结构与提示词变化时递增，触发缓存失效
-_MINING_VERSION = 9
+_MINING_VERSION = 10
+
+# 单段模型输出非法 JSON 时的重试指令：只要求格式，不补充任何内容。
+_JSON_RETRY_INSTRUCTION = (
+    "上一次输出不是合法 JSON。请严格只输出一个 JSON 对象，"
+    "不要 Markdown 代码块、不要任何解释文字；字段保持 excerpts / summary / new_findings。"
+    "若本段确实没有可用内容，就输出 "
+    "{\"excerpts\": [], \"summary\": \"\", \"new_findings\": []}。"
+)
 
 # 同时通读的年报份数：最新一份为主、其余年份佐证判断。
 # 通过 narrative.mining_report_count 配置，默认 2（当期 + 上年）。
@@ -330,6 +338,33 @@ def _write_cache(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
+def _chat_segment_json(messages: list[ChatMessage], max_tokens: int = 2600) -> dict[str, Any]:
+    """单段挖掘的 JSON 调用：非法 JSON 时用「只输出 JSON」指令重试一次。
+
+    不本地拼接/补全截断内容（会捏造摘录）；仍失败就抛错，由调用方把该段
+    记入 failed_segments，避免线索静默丢失却显示成「通读无发现」。
+    """
+
+    failure = "未知错误"
+    try:
+        raw = chat_json(messages, max_tokens=max_tokens)
+        if isinstance(raw, dict):
+            return raw
+        failure = "返回内容不是 JSON 对象"
+    except Exception as exc:  # noqa: BLE001
+        failure = f"{type(exc).__name__}: {exc}"
+    retry = list(messages) + [ChatMessage("user", _JSON_RETRY_INSTRUCTION)]
+    try:
+        raw = chat_json(retry, temperature=0, max_tokens=max_tokens)
+        if isinstance(raw, dict):
+            _logger.info("财报分段挖掘 JSON 重试成功")
+            return raw
+        failure = "重试后仍不是 JSON 对象"
+    except Exception as exc:  # noqa: BLE001
+        failure = f"重试失败 {type(exc).__name__}: {exc}"
+    raise ValueError(failure)
+
+
 def _map_segment(
     segment: dict[str, str],
     briefs: list[dict[str, Any]],
@@ -364,12 +399,10 @@ def _map_segment(
         "seq": doc_meta.get("seq", 0),
     }
     try:
-        raw = chat_json(
+        raw = _chat_segment_json(
             [ChatMessage("system", system), ChatMessage("user", user)],
             max_tokens=2600,
         )
-        if not isinstance(raw, dict):
-            return empty
         excerpts = []
         for item in (raw.get("excerpts") or [])[:20]:
             if not isinstance(item, dict):
@@ -426,7 +459,7 @@ def _map_segment(
         }
     except Exception as exc:  # noqa: BLE001
         _logger.warning("财报分段挖掘失败 %s: %s", segment["section"], exc)
-        return empty
+        return {**empty, "parse_failed": True, "failure": str(exc)[:200]}
 
 
 def _dedup(items: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
@@ -487,6 +520,7 @@ def mine_report_evidence(
       "new_findings": [{"description","quote","section","source","period","is_current"}],
       "source_doc": "最新年报（当期）", "period": "2025",
       "source_docs": [{"title","period","is_current"}], "segments": N,
+      "failed_segments": [{"section","source","period","reason"}],
       "fingerprint": "...", "generated_at": "..."
     }
     多份年报：当期（最新）为主，其余年份佐证，每条证据都标注来源与是否当期。
@@ -495,6 +529,7 @@ def mine_report_evidence(
     empty: dict[str, Any] = {
         "signal_evidence": {}, "summaries": [], "new_findings": [],
         "source_doc": "", "period": "", "source_docs": [], "segments": 0,
+        "failed_segments": [],
     }
     if not signals or not has_live_llm():
         return empty
@@ -572,6 +607,22 @@ def mine_report_evidence(
         ]
         for future in as_completed(futures):
             results.append(future.result())
+
+    # 解析失败（含重试失败）的段落显式记账，避免「通读无发现」掩盖缺失
+    failed_segments = [
+        {
+            "section": str(res.get("section") or ""),
+            "source": str(res.get("source") or ""),
+            "period": str(res.get("period") or ""),
+            "reason": str(res.get("failure") or ""),
+        }
+        for res in results if res.get("parse_failed")
+    ]
+    if failed_segments:
+        _logger.warning(
+            "财报挖掘 %s：%d / %d 段返回非法 JSON 且重试未成功，已在报告中声明",
+            symbol, len(failed_segments), len(tagged_segments),
+        )
 
     # 来源清单：按报告期时效分降序（最新季报 -> 当期年报 -> 历史佐证）
     source_docs = [
@@ -670,12 +721,15 @@ def mine_report_evidence(
         "latest_period": latest_period,
         "source_docs": source_docs,
         "segments": len(tagged_segments),
+        "failed_segments": failed_segments,
         "fingerprint": fingerprint,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
     _write_cache(cache_file, output)
     _logger.info(
-        "财报挖掘完成 %s：%d 份年报 / %d 段，%d 个风险点拿到证据，%d 条新线索",
-        symbol, len(source_docs), len(tagged_segments), len(signal_evidence), len(findings),
+        "财报挖掘完成 %s：%d 份年报 / %d 段（%d 段解析失败），"
+        "%d 个风险点拿到证据，%d 条新线索",
+        symbol, len(source_docs), len(tagged_segments), len(failed_segments),
+        len(signal_evidence), len(findings),
     )
     return output

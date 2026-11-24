@@ -126,6 +126,7 @@
     const payout = pick("dividend_coverage");
     const ic = pick("internal_control");
     const volume = pick("operating_volume");
+    const scope = pick("consolidation_scope");
 
     const factRows = [];
     const pushFact = (label, value, source) => {
@@ -145,6 +146,20 @@
     if (payout) pushFact("现金分红 / 归母净利", `${payout.cash_dividend_yi} / ${payout.net_profit_yi} 亿元 = ${payout.payout_ratio_pct}%`, payout.source);
     if (ic) pushFact("内控审计", `${ic.opinion || "-"} · 重大缺陷 ${ic.major_defects ?? "-"} 个`, ic.source);
     if (volume) pushFact("产能利用率", `${volume.capacity_utilization_pct}% · 在建 ${volume.in_build_capacity_wan_ton ?? "-"} 万吨`, volume.source);
+    if (volume && volume.sales_volume_yoy_pct !== null && volume.sales_volume_yoy_pct !== undefined) {
+      pushFact(
+        "实物销量 / 库存 / 经销商",
+        `${volume.sales_volume_yoy_pct}% · ${volume.inventory_volume_yoy_pct ?? "-"}% · ${volume.dealer_change ?? "-"} 家`,
+        volume.source
+      );
+    }
+    if (scope) {
+      pushFact(
+        "合并范围变动",
+        scope.applicable ? `是 · 新增 ${scope.entity_count || 0} 家` : "否",
+        scope.source
+      );
+    }
 
     if (!alerts.length && !factRows.length && !counter.length) return null;
 
@@ -457,7 +472,8 @@
     const mining = data.report_mining || {};
     const findings = mining.new_findings || [];
     const summaries = mining.summaries || mining.report_summaries || [];
-    if (!findings.length && !summaries.length) return null;
+    const failed = mining.failed_segments || [];
+    if (!findings.length && !summaries.length && !failed.length) return null;
     const wrap = el("div", "fx-mining");
     wrap.id = "fx-mining";
     const sourceDocs = mining.source_docs || [];
@@ -484,6 +500,12 @@
     wrap.appendChild(
       el("p", "fx-mining-note", "模型逐段通读财报原文后发现、但规则扫描未覆盖的线索。仅作提示，每条附原文摘录供核验。")
     );
+    if (failed.length) {
+      wrap.appendChild(
+        el("p", "fx-mining-note",
+          `有 ${failed.length} 段原文返回非法 JSON 且重试未成功，这些段落的线索可能缺失；可点「重新分析」重跑，未检出不等同于不存在。`)
+      );
+    }
     if (findings.length) {
       const list = el("div", "fx-mining-list");
       findings.forEach((f, i) => {
@@ -904,6 +926,7 @@
       const rows = [
         ["前五名客户占比", "top5_customer_pct", "%"],
         ["关联方销售占比", "related_party_sales_pct", "%"],
+        ["关联方采购占比", "related_party_purchase_pct", "%"],
         ["前五名供应商占比", "top5_supplier_pct", "%"],
         ["研发资本化率", "rd_capitalization_pct", "%"],
         ["非经常性损益合计", "nonrecurring_total", " 元"],

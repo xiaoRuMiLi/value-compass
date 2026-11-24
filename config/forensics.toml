@@ -164,6 +164,25 @@ regulatory_routine_patterns = [
     "年度报告.*(?:股东户数|相关期间表述)的更正公告",
 ]
 
+# ---------- 十一·B、单季还原（累计差分）与现金含量对照 ----------
+# Q1/H1/Q3/FY 都是累计口径，单季值 = 本期累计 - 上期累计（同一自然年内，不跨年差分）。
+# 这一层专门解决「只看最新累计期会误判」：例如全年经营现金流/净利 3.3 倍，
+# 但最新三季报累计只有 0.005 倍；也用来把单季利润塌陷、单季现金流大额流出单独列线索。
+# 结论窗口与 lookback_periods 一致，不对全历史逐季报。
+quarter_min_periods = 4            # 一年内至少还原出 N 个单季，才判定「分布不均」
+quarter_profit_gap_x = 4.0         # 最小单季净利 < 年均单季净利的 1/N 倍才算塌陷（调大更钝）
+quarter_ocf_outflow_pct = 20.0     # 单季经营现金流净流出 > 上一完整年度归母净利的 N%
+cash_conversion_healthy = 1.0      # 上一完整年度经营现金流/归母净利 >= N 才做年度-累计期对照
+
+# ---------- 十一·C、财报原文结构化事实的趋势 / 组合信号 ----------
+# 这些数字只存在于年报正文/附注，接口字段没有；services 层只负责抽取并附原文，
+# 是否触发由 analysis 层按下面阈值确定性判定，LLM 仍只做解释。
+related_trend_pp = 1.0             # 关联方销售/采购占比连续抬升合计 > N 个百分点
+volume_sales_drop_pct = 20.0       # 实物销量同比降幅 > N%
+volume_inventory_rise_pct = 20.0   # 实物库存同比增幅 > N%
+dealer_drop_count = 50             # 经销商净减少 > N 家（作为组合证据之一，不单独触发）
+consolidation_min_entities = 1     # 合并范围新增主体达到 N 家才提示（填 0 关闭该项）
+
 # 资本运作公告标题关键词（命中即列线索，不代表违规）。
 # 作为独立子表放在末尾，避免其表头影响上方 [forensics.thresholds] 的其他键。
 [forensics.thresholds.capital_action_keywords]

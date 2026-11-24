@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import requests
@@ -14,17 +15,50 @@ from fundamental.providers.registry import register
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
 
+def _strip_fences(text: str) -> str:
+    """去掉模型常见的 ```json ... ``` 包裹，保留内部原文。"""
+
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    first_newline = stripped.find("\n")
+    if first_newline < 0:
+        return stripped.strip("`")
+    body = stripped[first_newline + 1:]
+    end = body.rfind("```")
+    if end >= 0:
+        body = body[:end]
+    return body.strip()
+
+
 def _extract_json(text: str) -> Any:
-    text = text.strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
+    """按「原样 → 去围栏 → 截取首尾 → 去尾逗号」逐级尝试解析。
+
+    刻意**不**给截断的 JSON 补右括号/补字符串结尾：那等于凭空捏造半截数字或
+    摘录，与「原文取证零改写」冲突。解析不了就明确抛 LlmError，由叙述层重试
+    一次并把失败段写进报告，而不是制造看似合理的假证据。
+    JSONDecodeError 是 ValueError，会绕过叙述层的 LlmError 降级分支，
+    因此这里统一收敛异常类型。
+    """
+
+    original = (text or "").strip()
+    candidates = [original, _strip_fences(original)]
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    # 正文里夹解释时，取最外层对象/数组再试；只做不改变内容的清洗
     for left, right in (("{", "}"), ("[", "]")):
-        start = text.find(left)
-        end = text.rfind(right)
+        start = candidates[-1].find(left)
+        end = candidates[-1].rfind(right)
         if start != -1 and end > start:
-            return json.loads(text[start : end + 1])
+            sliced = candidates[-1][start: end + 1]
+            for attempt in (sliced, re.sub(r",\s*([}\]])", r"\1", sliced)):
+                try:
+                    return json.loads(attempt)
+                except json.JSONDecodeError:
+                    continue
     raise LlmError("模型未返回合法 JSON")
 
 

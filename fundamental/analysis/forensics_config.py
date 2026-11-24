@@ -179,6 +179,19 @@ class ForensicsConfig:
     ocf_profit_ratio: float = 0.65
     ocf_consecutive_periods: int = 3
 
+    # 单季还原（累计差分）与现金含量对照
+    quarter_min_periods: int = 4
+    quarter_profit_gap_x: float = 4.0
+    quarter_ocf_outflow_pct: float = 20.0
+    cash_conversion_healthy: float = 1.0
+
+    # 财报原文结构化事实的趋势 / 组合信号
+    related_trend_pp: float = 1.0
+    volume_sales_drop_pct: float = 20.0
+    volume_inventory_rise_pct: float = 20.0
+    dealer_drop_count: int = 50
+    consolidation_min_entities: int = 1
+
     # 费用与成本
     expense_ratio_pp: float = 5.0
     expense_cluster_min_items: int = 2
@@ -330,6 +343,15 @@ class ForensicsConfig:
             roe_drop_high_pp=pick("roe_drop_high_pp", float),
             ocf_profit_ratio=pick("ocf_profit_ratio", float, minimum=0.0),
             ocf_consecutive_periods=pick("ocf_consecutive_periods", int, minimum=1),
+            quarter_min_periods=pick("quarter_min_periods", int, minimum=1),
+            quarter_profit_gap_x=pick("quarter_profit_gap_x", float, minimum=1.0),
+            quarter_ocf_outflow_pct=pick("quarter_ocf_outflow_pct", float, minimum=0.0),
+            cash_conversion_healthy=pick("cash_conversion_healthy", float, minimum=0.0),
+            related_trend_pp=pick("related_trend_pp", float, minimum=0.0),
+            volume_sales_drop_pct=pick("volume_sales_drop_pct", float, minimum=0.0),
+            volume_inventory_rise_pct=pick("volume_inventory_rise_pct", float, minimum=0.0),
+            dealer_drop_count=pick("dealer_drop_count", int, minimum=0),
+            consolidation_min_entities=pick("consolidation_min_entities", int, minimum=0),
             expense_ratio_pp=pick("expense_ratio_pp", float, minimum=0.0),
             expense_cluster_min_items=pick("expense_cluster_min_items", int, minimum=0),
             forecast_deviation=pick("forecast_deviation", float, minimum=0.0),

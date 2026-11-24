@@ -109,10 +109,12 @@ class TestExtractReportFactsContract(unittest.TestCase):
                  patch.object(rf.paths, "documents_dir", return_value=Path(tmp)):
                 out = rf.extract_report_facts("300308.SZ")
         self.assertEqual(out["source_docs"], [])
-        self.assertEqual(len(out["missing_facts"]), 8)
-        for key in ("top5_customer_pct", "related_party_sales_pct", "audit",
-                    "share_buyback", "rd_capitalization_pct", "consolidation_change"):
+        self.assertEqual(len(out["missing_facts"]), 9)
+        for key in ("top5_customer_pct", "related_party_sales_pct",
+                    "related_party_purchase_pct", "audit", "share_buyback",
+                    "rd_capitalization_pct", "consolidation_change"):
             self.assertIn(key, out)
+        self.assertIn("related_party_purchase_pct", out["missing_facts"])
 
     def test_disk_full_annual_overrides_db_shell_record(self):
         """documents 表只登记业绩公告壳时，事实卡仍要读到磁盘上的完整年报。"""
