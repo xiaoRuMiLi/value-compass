@@ -32,13 +32,17 @@ _RE_A = {
     ),
     "top5_supplier": re.compile(r"前五名供应商合计采购金额占年度采购总额比例\s*([\d.]+)\s*%", re.S),
     "nonrecurring_total": re.compile(r"合\s*计\s*([\d,]+\.\d{2})", re.S),
+    # 原文表头两种写法：「资本化研发投入占研发投入的比例」/「资本化研发支出…」，
+    # 三列依次为当年 / 上年 / 上上年；旧正则只认「支出」，导致 A 股该字段长期为空。
     "rd_cap_rate": re.compile(
-        r"资本化研发支出占研发投入\s*的比例\s*([\d.]+)\s*%\s*([\d.]+)\s*%\s*([\d.]+)\s*%", re.S
+        r"资本化研发[投入支出]{2}占研发投入\s*的比例\s*([\d.]+)\s*%\s*([\d.]+)\s*%\s*([\d.]+)\s*%", re.S
     ),
     "rd_cap_profit": re.compile(
         r"资本化研发支出占当期净利\s*润的比重\s*([\d.]+)\s*%", re.S
     ),
-    "policy_title": re.compile(r"会计政策、会计估计变更或重大会计差错更正的说明"),
+    # A 股年报完整写法是「…或重大会计差错更正的情况说明」，
+    # 旧正则漏了「的情况」，会计政策变更事实卡一直抽不到。
+    "policy_title": re.compile(r"会计政策、会计估计变更或重大会计差错更正(?:的情况)?说明"),
     "consolidation_title": re.compile(r"合并报表范围发生变化的情况说明"),
     "nonstandard_title": re.compile(r"非标准审计报告"),
     "new_entities": re.compile(r"新纳入合并范围的公司有[：:]\s*([\s\S]{0,400}?)。", re.S),

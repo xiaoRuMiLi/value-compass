@@ -102,6 +102,7 @@ value-compass/
 │   │       ├── _source_guard.py      # 原文前置守卫：不足则自动补档多期，再进入扫描
 │   │       ├── _report_mining.py     # 逐段通读多期财报原文，产 summaries / new_findings / 逐信号证据
 │   │       ├── _report_facts.py      # 从年报原文抽结构化事实卡（客户集中度 / 关联方 / 研发资本化 / 审计等）
+│   │       ├── _audit_evidence.py    # 审计视角/会计口径/资金动向/反证事实层（只读原文，确定性抽取）
 │   │       └── _forensics.py         # 财报深度体检（确定性取证扫描 → LLM 逐条剖析 → 结构化报告，含趋势型风险点）
 │   ├── analysis/                     # 纯计算，不 import 任何具体数据源
 │   │   ├── financial.py              # 财务质量评分
@@ -212,7 +213,8 @@ value-compass/
 │   ├── test_narrative.py
 │   ├── test_fraud_patterns.py        # 财务戏法检查（准确度 / 配置化 / 出参契约）
 │   ├── test_report_facts.py          # 财报原文结构化事实卡抽取
-│   ├── test_forensic_markers.py      # 前端 K 线事件带与判定依据渲染（Node vm）
+│   ├── test_audit_evidence.py        # 审计视角事实抽取 + 例行合规披露降噪
+│   ├── test_forensic_markers.py      # 前端 K 线事件带 / 判定依据 / 审计视角渲染（Node vm）
 │   ├── test_source_guard.py          # 原文前置守卫与壳文档过滤
 │   ├── test_pdf_cid.py               # PDF CID 乱码检测 / 偏移推断 / 还原守卫
 │   └── baselines/                    # capability_baseline.json（能力回归基线快照）
@@ -467,6 +469,8 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 - **PDF 文本层 CID 乱码还原**：部分港交所中文财报（如小米 2022~2026 中报）的 `HYQiHei-*-GBK-EUC-H` 子集字体是 `Identity-H` 且没有 `/ToUnicode`，内嵌字体也没有 `cmap` 表，提取器只能把字形 ID（CID）当 Unicode 输出，表现为「㛮暈⛚㕾」这类乱码。`utils/pdf.py` 检测「疑似 CID 字符占全部字符比例 + 绝对数量」，按字体用「四位年份后字符＝年」锚点配合高频汉字打分自动推断 `CID → Unicode` 线性偏移（不硬编码），再**按页**建立字符映射、在 `page.get_text()` 原文上原地替换：按页避免误伤有 ToUnicode 的封面字体，原地替换保持分行结构，正常 PDF 输出逐字不变。乱码文本同时被 `is_source_text_usable()` 与三处原文读取点拒绝，**绝不送进 LLM**（否则模型会对着乱码生成幻觉式中文结论）。
 - **原文取证与通读**：`_evidence.py` 做关键词/解释句检索（含繁体同义词），`_report_mining.py` 逐段通读最近 3 份季报 + 2 份年报，产出分段摘要、逐信号原文证据与 `new_findings`（规则扫描未覆盖的线索）；两者交错保留名额，避免当期摘录挤掉历史关键原文。
 - **财报原文结构化事实卡**：`_report_facts.py` 从最近 3 份年报正文按章节表头抽确定性数字（前五名客户/供应商占比、关联方销售、非经常性损益合计、研发资本化率、会计政策变更、合并范围新增主体、审计意见、股份回购），只抽取不判断，抽不到写 `missing_facts`。同一报告期若 `documents` 表只登记了业绩公告壳，则按文本体积从磁盘补读完整年报。
+- **审计视角 / 会计口径 / 资金动向 / 反证**：`_audit_evidence.py` 补齐结构化扫描够不到的文字与表格事实——审计意见与关键审计事项、分季度数据与已披露季报的「重大差异 ☑是」及收入确认口径调整、关联财务公司存款占货币资金比重、分红/归母净利覆盖、受限资产、内控缺陷数、产能利用率，以及公司明确披露的反证（无资金占用/无违规担保/无重大诉讼、诚信状况良好、大股东增持等）。只做章节定位 + 数字抽取 + 原文摘录，抽不到写 `missing`；阈值在 `[forensics.audit_evidence]`，生成的 `alerts` 是确定性待核查提示。报告独立回传 `audit_evidence{}`（前端单独渲染「审计视角」与「反证与缓释证据」两块，不依赖 LLM 是否提及），`citations` 同时补上财报原文引用（此前只有公告 URL 与卖方研报）。
+- **例行合规披露降噪**：`config/forensics.toml` 的 `regulatory_routine_patterns` 识别「年度关联方资金占用专项审计报告/汇总表」「独立董事候选人声明与承诺」「自愿承诺不减持」「差错责任追究制度」等按期披露的合规材料。这类文件标题里的「资金占用/差错/承诺」不等于发生了占用、差错或违规，命中后降为 `low`、标 `routine=true`、不计入高严重度、不送进 LLM、不进引用清单；只有剩余的实质性监管记录才生成 `REG001`/`REG002` 信号。实测五粮液 18 条诚信记录中 17 条属于此类，修正前被写成「高严重度 6 条」并放大进 verdict。
 - **财务戏法检查**：`analysis/forensic_patterns.py` 以 11 项组合条件扫描虚增利润/收入质量、财务洗澡、关联交易、会计估计与资本运作四类线索，输出 `FraudPatternScan`（含 `FraudPattern` 列表）dataclass。刻意**不并入 `scan.signals`**：作为报告并列字段 `fraud_patterns` 输出，不占 `max_signals` 名额、不进 `analyses` 逐条剖析数组，因此既有 25 条规则与 LLM 剖析链路零改动；services 层在报告出口用 `dataclasses.asdict` 转 dict，Web API 与前端结构不变。准确度靠组合条件、同报告期同比、结论窗口（全历史只作基数）与 `coverage` 三分（已执行未触发 / 制度不适用 / 数据不足）；只输出待核查线索，绝不下「财务造假」定性结论。
 - **能力回归基线**：`scripts/verify_capability.py` + `tests/baselines/capability_baseline.json` 固化两份线上体检报告的关键指标（原文取证、信号数、剖析完整率、K 线事件点、source_guard），只允许变多不允许变少；原有风险点按标题判定、关键原文证据用容错正则，避免 signal 重编号与 LLM 措辞差异误报降级。
 - 汇总整合 `redflags.py`、`fraud_score.py`、`delisting.py` 的结论，做多期交叉检查：营收 vs 现金流、利润 vs 应收账款、毛利率异常、审计意见、财务重述。

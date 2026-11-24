@@ -10,7 +10,7 @@ timeout_seconds = 120
 # 输入上下文软预算（估算 token）。中文约 1 字 1 token、英文约 4 字符 1 token。
 # 超出仅在日志告警，不截断（截断 JSON 会诱发幻觉）；超过 2 倍才做中段截断兜底。
 # 质量优先：默认给足，模型上限允许时可继续调大（如 64000 / 128000）。
-max_input_tokens = 32000
+max_input_tokens = 48000
 
 [llm.providers.deepseek]
 adapter = "openai_compat"

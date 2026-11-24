@@ -49,6 +49,7 @@ from fundamental.utils.prompts import load_prompt
 from fundamental.utils.symbols import parse_symbol
 
 from ._evidence import retrieve_evidence
+from ._audit_evidence import extract_audit_evidence
 from ._quality import excerpt_quality as _excerpt_quality
 from ._report_facts import extract_report_facts
 from ._source_guard import ensure_source_documents
@@ -63,7 +64,7 @@ from ._common import (
 
 # 提示词/输出结构升级时递增，使旧报告缓存失效。
 # 阈值改动不改变版本号，而是由 thresholds_fingerprint 让缓存自动失效。
-_FORENSICS_VERSION = 22
+_FORENSICS_VERSION = 23
 
 _logger = get_logger(__name__)
 
@@ -283,6 +284,52 @@ def _brief_signal(
     return out
 
 
+def _brief_audit_evidence(audit: dict[str, Any]) -> dict[str, Any]:
+    """送给 LLM 的审计视角事实：保留最新期、压短摘录，避免挤占上下文预算。"""
+
+    def slim(key: str, limit: int = 2) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for item in (audit.get(key) or [])[:limit]:
+            row = {k: v for k, v in item.items()
+                   if k not in ("quote", "items", "source_docs", "local_path")}
+            row["quote"] = str(item.get("quote") or "")[:200]
+            if isinstance(item.get("items"), list):
+                row["items"] = [
+                    {"title": x.get("title"), "quote": str(x.get("quote") or "")[:120]}
+                    for x in item["items"][:4]
+                ]
+            out.append(row)
+        return out
+
+    counter = audit.get("counter_evidence") or []
+    current_period = counter[0].get("period") if counter else ""
+    seen: set[str] = set()
+    counter_rows: list[dict[str, Any]] = []
+    for item in counter:
+        label = str(item.get("item") or "")
+        if item.get("period") != current_period or label in seen:
+            continue
+        seen.add(label)
+        counter_rows.append({
+            "item": label, "source": item.get("source"),
+            "quote": str(item.get("quote") or "")[:140],
+        })
+
+    return {
+        "alerts": (audit.get("alerts") or [])[:8],
+        "audit_opinion": slim("audit_opinion", 1),
+        "key_audit_matters": slim("key_audit_matters", 1),
+        "quarterly_discrepancy": slim("quarterly_discrepancy", 1),
+        "accounting_change": slim("accounting_change", 1),
+        "finance_company_deposit": slim("finance_company_deposit", 2),
+        "dividend_coverage": slim("dividend_coverage", 1),
+        "internal_control": slim("internal_control", 1),
+        "operating_volume": slim("operating_volume", 1),
+        "counter_evidence": counter_rows[:8],
+        "missing": audit.get("missing") or [],
+    }
+
+
 def _facts(
     symbol: str,
     inputs: dict[str, Any],
@@ -293,11 +340,13 @@ def _facts(
     evidence_map: dict[str, list[dict[str, str]]] | None = None,
     mining: dict[str, Any] | None = None,
     fraud: dict[str, Any] | None = None,
+    audit_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ev = scan["evidence"]
     fraud = fraud or {}
     intel = intel or {}
     evidence_map = evidence_map or {}
+    audit_evidence = audit_evidence or {}
     covered = sum(1 for s in scan["signals"][:max_signals] if s["id"] in evidence_map)
     return {
         "instruction": (
@@ -329,6 +378,21 @@ def _facts(
             "但绝不能据此下「财务造假/粉饰/操纵」定性结论；未触发的检查不等于没有问题。"
             "无论新增多少线索，essence 都必须保留至少一处公司财报原文里的具体科目与金额"
             "（来自 official_explanations），并注明报告期；不得用新增线索替换掉原有的原文取证。"
+            "audit_evidence 是代码从财报原文抽取的「审计视角/会计口径/资金动向/反证」硬事实，"
+            "每条都带 quote 原文摘录与 source 报告期："
+            "① alerts 是确定性待核查提示（如年报分季度数据与已披露季报存在重大差异、"
+            "收入确认核算调整、关联财务公司存款占货币资金比重、分红超出当年净利），"
+            "verdict.essence 与 cross_checks 必须纳入其中最实质的 1~2 条并解释因果链；"
+            "特别是当 quarterly_discrepancy.applicable=true 时，"
+            "不得把营收同比降幅直接当作纯经营下滑，须提示口径调整对可比性的影响。"
+            "② audit_opinion / key_audit_matters 是审计师意见与最关注领域，"
+            "关键审计事项不等于存在错报，不得据此推断财务造假。"
+            "③ counter_evidence 是公司在财报里白纸黑字披露的反证"
+            "（标准无保留意见、内控 0 缺陷、无资金占用/违规担保/重大诉讼、诚信状况良好、大股东增持等），"
+            "必须在 verdict 或 cross_checks 中至少提及一条以平衡风险叙事，"
+            "不得只堆风险点而隐去公司披露的正面事实；但也不要用反证直接否定已触发的量化信号。"
+            "④ 引用任何 audit_evidence 事实须注明来自哪一期财报原文，"
+            "且不得与公司已实现事实、第三方研报观点混同。"
         ),
         "company": {"symbol": symbol, "name": inputs["name"], "industry": inputs["industry"]},
         "fraud_patterns": {
@@ -366,8 +430,13 @@ def _facts(
         },
         "anomalies": scan["anomalies"][:max_anomalies],
         "evidence": {
-            "regulatory": (ev.get("regulatory") or [])[:8],
-            "announcement_hits": (ev.get("announcement_hits") or [])[:8],
+            # 例行合规披露（年度资金占用专项说明、独董声明与承诺等）不送进 LLM，
+            # 否则模型会把它们当成处罚证据，重新制造「治理风险叠加」的误判。
+            "regulatory": [r for r in (ev.get("regulatory") or []) if not r.get("routine")][:8],
+            "announcement_hits": [h for h in (ev.get("announcement_hits") or []) if not h.get("routine")][:8],
+            "routine_disclosures_excluded": sum(
+                1 for r in (ev.get("regulatory") or []) if r.get("routine")
+            ) + sum(1 for h in (ev.get("announcement_hits") or []) if h.get("routine")),
             "forecast_checks": (ev.get("forecast_checks") or [])[:8],
             "capital_moves": ev.get("capital_moves") or {},
             "price_reactions": (ev.get("price_reactions") or [])[:8],
@@ -391,6 +460,7 @@ def _facts(
                 for r in (intel.get("surveys") or [])[:3]
             ],
         },
+        "audit_evidence": _brief_audit_evidence(audit_evidence),
         "coverage": scan["coverage"],
     }
 
@@ -523,9 +593,14 @@ def _template(symbol: str, scan: dict[str, Any]) -> dict[str, Any]:
 # ---------- 引用清单 ----------
 
 
-def _citations(scan: dict[str, Any], intel: dict[str, Any] | None) -> list[dict[str, str]]:
+def _citations(
+    scan: dict[str, Any],
+    intel: dict[str, Any] | None,
+    audit_evidence: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
     ev = scan["evidence"]
     intel = intel or {}
+    audit_evidence = audit_evidence or {}
     items: list[dict[str, str]] = []
 
     def add(kind: str, date: Any, org: Any, title: Any, url: Any) -> None:
@@ -539,9 +614,41 @@ def _citations(scan: dict[str, Any], intel: dict[str, Any] | None) -> list[dict[
             }
         )
 
+    # 财报原文引用：审计意见、关键审计事项、口径差异、关联存款、反证。
+    # 原来的引用清单只有公告 URL 与卖方研报，一条财报原文都没有；
+    # 这些条目让「引用可溯源」真正落到公司自己披露的文件上。
+    def add_source(label: str, row: dict[str, Any] | None) -> None:
+        if not row:
+            return
+        add(f"财报原文·{label}", row.get("period"), row.get("source"),
+            label + "：" + str(row.get("quote") or "")[:110], "")
+
+    def first(key: str) -> dict[str, Any] | None:
+        rows = audit_evidence.get(key) or []
+        return rows[0] if rows else None
+    add_source("审计意见", first("audit_opinion"))
+    kam = first("key_audit_matters")
+    if kam:
+        add("财报原文·关键审计事项", kam.get("period"), kam.get("source"),
+            "关键审计事项：" + "、".join(
+                str(x.get("title")) for x in (kam.get("items") or [])[:4]), "")
+    qd = next((q for q in (audit_evidence.get("quarterly_discrepancy") or [])
+               if q.get("applicable")), None)
+    add_source("分季度口径重大差异", qd)
+    add_source("关联财务公司存款", first("finance_company_deposit"))
+    add_source("现金分红覆盖", first("dividend_coverage"))
+    for row in (audit_evidence.get("counter_evidence") or [])[:2]:
+        add("财报原文·反证", row.get("period"), row.get("source"),
+            f"{row.get('item')}：{str(row.get('quote') or '')[:90]}", "")
+
     for r in (ev.get("regulatory") or [])[:8]:
+        # 例行合规披露不是风险证据，不进引用清单
+        if r.get("routine"):
+            continue
         add("监管/诚信记录", r.get("date"), r.get("source"), r.get("title"), r.get("url"))
     for h in (ev.get("announcement_hits") or [])[:6]:
+        if h.get("routine"):
+            continue
         add("公告线索", h.get("date"), h.get("source"), h.get("title"), h.get("url"))
     for v in (ev.get("external_views") or [])[:6]:
         add(f"第三方印证·{v.get('kind', '')}", v.get("date"), v.get("org"), v.get("title"), v.get("url"))
@@ -679,6 +786,15 @@ def generate_financial_forensics(
     except Exception as exc:  # noqa: BLE001
         _logger.warning("财报结构化事实抽取失败 %s: %s", symbol, exc)
         report_facts = {"error": str(exc), "source_docs": [], "missing_facts": ["抽取失败"]}
+    # 审计视角 / 会计口径 / 资金动向 / 反证：只读归档财报原文，确定性抽取。
+    # 这类事实全是文字与表格，进不了结构化扫描；不补这一层，LLM 只能碰运气。
+    try:
+        audit_evidence = extract_audit_evidence(symbol, db_path=db_path)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("审计视角事实抽取失败 %s: %s", symbol, exc)
+        audit_evidence = {"error": str(exc), "source_docs": [], "missing": ["抽取失败"],
+                          "alerts": [], "counter_evidence": []}
+
     market = "HK" if str(symbol).upper().endswith(".HK") else "A"
     try:
         fraud_scan = scan_fraud_patterns(
@@ -743,6 +859,7 @@ def generate_financial_forensics(
     facts = _facts(
         symbol, inputs, scan, intel, max_signals, max_anomalies,
         evidence_map=evidence_map, mining=mining, fraud=fraud,
+        audit_evidence=audit_evidence,
     )
 
     report: dict[str, Any] | None = None
@@ -786,7 +903,8 @@ def generate_financial_forensics(
         "report_mining": mining,
         "fraud_patterns": fraud,
         "report_facts": report_facts,
-        "citations": _citations(scan, intel),
+        "audit_evidence": audit_evidence,
+        "citations": _citations(scan, intel, audit_evidence),
         "coverage": scan["coverage"],
         **report,
     }

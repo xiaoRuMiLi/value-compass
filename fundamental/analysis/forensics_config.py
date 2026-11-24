@@ -31,6 +31,21 @@ _DEFAULT_SEVERE_CATEGORIES: tuple[str, ...] = (
     "penalty", "financial_restatement", "misleading_disclosure", "inquiry",
     "violation_guarantee", "fund_occupation", "broken_promise",
 )
+# 「例行合规披露」标题正则：这类文件是上市公司按格式要求定期披露的合规材料
+# （年度资金占用专项说明/汇总表、独董声明与承诺、差错责任追究制度等），
+# 标题里的「资金占用/差错/承诺」不等于发生了占用、差错或违规。
+# 实测五粮液 34 条诚信档案里绝大多数属于此类，曾被误计为 high 风险写进结论。
+_DEFAULT_REGULATORY_ROUTINE_PATTERNS: tuple[str, ...] = (
+    r"(?:资金占用|关联资金往来).*(?:专项说明|专项审核|专项审计|汇总表|情况汇总)",
+    r"非经营性资金占用.*汇总表",
+    r"(?:关联方|控股股东).*资金占用.*(?:专项|汇总表)",
+    r"独立董事.*(?:声明|承诺|提名人)",
+    r"(?:候选人|提名人)声明与承诺",
+    r"自愿承诺不减持",
+    r"现金分红承诺",
+    r"年报信息披露重大差错责任追究制度",
+    r"年度报告.*(?:股东户数|相关期间表述)的更正公告",
+)
 
 # 资本运作/治理线索的公告标题关键词（只列已披露事实，不代表存在问题）
 _DEFAULT_CAPITAL_ACTION_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -214,6 +229,7 @@ class ForensicsConfig:
     risk_title_keywords: tuple[str, ...] = _DEFAULT_RISK_TITLE_KEYWORDS
     negative_view_keywords: tuple[str, ...] = _DEFAULT_NEGATIVE_VIEW_KEYWORDS
     regulatory_severe_categories: tuple[str, ...] = _DEFAULT_SEVERE_CATEGORIES
+    regulatory_routine_patterns: tuple[str, ...] = _DEFAULT_REGULATORY_ROUTINE_PATTERNS
 
     # 财务戏法检查阈值（独立子表，随 fingerprint 一起变更）
     fraud_patterns: FraudPatternConfig = dataclasses.field(
@@ -344,6 +360,7 @@ class ForensicsConfig:
             risk_title_keywords=pick_terms("risk_title_keywords"),
             negative_view_keywords=pick_terms("negative_view_keywords"),
             regulatory_severe_categories=pick_terms("regulatory_severe_categories"),
+            regulatory_routine_patterns=pick_terms("regulatory_routine_patterns"),
             fraud_patterns=FraudPatternConfig.from_mapping(merged.get("fraud_patterns")),
         )
 

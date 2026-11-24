@@ -99,6 +99,121 @@
     return card;
   }
 
+  /** 审计视角 / 会计口径 / 资金动向 / 反证：财报正文与附注里的硬事实。
+   * 这一层完全由后端代码抽取，不依赖 LLM；放在结论卡之后，用来平衡单向风险叙事。
+   */
+  function renderAuditEvidence(data) {
+    const a = data.audit_evidence || {};
+    const alerts = a.alerts || [];
+    const docs = a.source_docs || [];
+
+    // 反证按「最新报告期 + 事项去重」，避免多期年报重复堆同一条
+    const counterAll = a.counter_evidence || [];
+    const currentPeriod = counterAll.length ? counterAll[0].period : "";
+    const seen = new Set();
+    const counter = counterAll.filter((c) => {
+      if (c.period !== currentPeriod || seen.has(c.item)) return false;
+      seen.add(c.item);
+      return true;
+    });
+
+    const pick = (key) => (a[key] || [])[0];
+    const opinion = pick("audit_opinion");
+    const kam = pick("key_audit_matters");
+    const qd = (a.quarterly_discrepancy || []).find((q) => q.applicable) || pick("quarterly_discrepancy");
+    const acct = pick("accounting_change");
+    const deposit = pick("finance_company_deposit");
+    const payout = pick("dividend_coverage");
+    const ic = pick("internal_control");
+    const volume = pick("operating_volume");
+
+    const factRows = [];
+    const pushFact = (label, value, source) => {
+      if (value !== null && value !== undefined && value !== "") factRows.push({ label, value, source });
+    };
+    if (opinion) pushFact("审计意见", `${opinion.opinion}${opinion.firm ? " · " + opinion.firm : ""}`, opinion.source);
+    if (kam) pushFact("关键审计事项", (kam.items || []).map((x) => x.title).join("、"), kam.source);
+    if (qd) pushFact("分季度口径差异", qd.applicable ? "是 · " + (qd.reason || "见原文") : "否", qd.source);
+    if (acct) pushFact("会计政策/差错更正", acct.applicable ? "有" : "无", acct.source);
+    if (deposit) {
+      pushFact(
+        "关联财务公司存款",
+        `${deposit.balance_yi} 亿元 · 占货币资金 ${deposit.share_of_cash_pct ?? "-"}% · 限额 ${deposit.limit_yi ?? "-"} 亿元`,
+        deposit.source
+      );
+    }
+    if (payout) pushFact("现金分红 / 归母净利", `${payout.cash_dividend_yi} / ${payout.net_profit_yi} 亿元 = ${payout.payout_ratio_pct}%`, payout.source);
+    if (ic) pushFact("内控审计", `${ic.opinion || "-"} · 重大缺陷 ${ic.major_defects ?? "-"} 个`, ic.source);
+    if (volume) pushFact("产能利用率", `${volume.capacity_utilization_pct}% · 在建 ${volume.in_build_capacity_wan_ton ?? "-"} 万吨`, volume.source);
+
+    if (!alerts.length && !factRows.length && !counter.length) return null;
+
+    const wrap = el("div", "fx-mining fx-audit");
+    wrap.id = "fx-audit";
+    wrap.appendChild(
+      sectionTitle(
+        "审计视角 · 会计口径 · 资金动向",
+        docs.length ? `通读 ${docs.length} 份原文 · 代码抽取，非模型推断` : "代码抽取，非模型推断"
+      )
+    );
+    wrap.appendChild(
+      el(
+        "p",
+        "fx-mining-note",
+        "规则扫描只吃结构化财务数据，下列审计意见、关键审计事项、口径调整、资金存放与分红覆盖均取自财报正文/附注；每条附原文摘录供核验。"
+      )
+    );
+
+    if (alerts.length) {
+      const list = el("div", "fx-mining-list");
+      alerts.forEach((it) => {
+        const item = el("div", "fx-mining-item");
+        const head = el("div", "fx-mining-head");
+        const levelCls = it.level === "high" ? "high" : it.level === "medium" ? "medium" : it.level === "info" ? "confirmed" : "low";
+        head.appendChild(chip(it.level === "info" ? "审计关注" : it.level === "high" ? "重点核查" : "待核查", levelCls));
+        if (it.source) head.appendChild(chip(it.source, "plain"));
+        head.appendChild(el("span", "fx-mining-desc", it.title || ""));
+        item.appendChild(head);
+        if (it.detail) item.appendChild(el("p", "fx-audit-detail", it.detail));
+        if (it.quote) item.appendChild(el("p", "fx-mining-quote", `“${it.quote}”`));
+        list.appendChild(item);
+      });
+      wrap.appendChild(list);
+    }
+
+    if (factRows.length) {
+      const grid = el("div", "fx-audit-grid");
+      factRows.forEach((row) => {
+        const box = el("div", "fx-audit-fact");
+        box.appendChild(el("div", "fx-fact-label", row.label));
+        box.appendChild(el("div", "fx-fact-value", row.value));
+        if (row.source) box.appendChild(el("div", "fx-audit-source", row.source));
+        grid.appendChild(box);
+      });
+      wrap.appendChild(grid);
+    }
+
+    if (counter.length) {
+      const counterWrap = el("div", "fx-counter");
+      counterWrap.appendChild(
+        el("div", "fx-block-label", `反证与缓释证据 · ${currentPeriod} 年报告期公司披露`)
+      );
+      counterWrap.appendChild(
+        el("p", "fx-counter-note", "以下为公司财报原文明确披露的事实，用于平衡风险叙事；不构成对已触发量化信号的否定，也不能替代独立核查。")
+      );
+      const list = el("div", "fx-counter-list");
+      counter.forEach((c) => {
+        const row = el("div", "fx-counter-item");
+        row.appendChild(chip(c.item || "", "clear"));
+        row.appendChild(el("span", "fx-counter-quote", c.quote || ""));
+        list.appendChild(row);
+      });
+      counterWrap.appendChild(list);
+      wrap.appendChild(counterWrap);
+    }
+    return wrap;
+  }
+
   function renderFacts(signal) {
     const wrap = el("div", "fx-facts");
     wrap.appendChild(el("div", "fx-block-label", "客观证据（代码计算）"));
@@ -866,6 +981,7 @@
   }
 
   VC.renderFraudPatterns = renderFraudPatterns;
+  VC.renderAuditEvidence = renderAuditEvidence;
 
   VC.renderForensics = function renderForensics(container, data) {
     if (!container) return;
@@ -876,6 +992,8 @@
     }
     const wrap = el("div", "fx-wrap");
     wrap.appendChild(renderVerdict(data));
+    const audit = renderAuditEvidence(data);
+    if (audit) wrap.appendChild(audit);
     wrap.appendChild(renderSignals(data));
     const mining = renderMiningFindings(data);
     if (mining) wrap.appendChild(mining);

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import shutil
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -227,17 +228,91 @@ assert.strictEqual(thText.indexOf('[object Object]'), -1, thText);
 console.log('MARKER_LOGIC_OK');
 """
 
+# 审计视角板块用极简 DOM mock 真实渲染一次：验证告警、关键事实、反证去重都在页面上，
+# 且没有 audit_evidence 时安静降级（旧缓存报告仍能正常打开）。
+_NODE_AUDIT_CHECK = r"""
+const fs = require('fs'), vm = require('vm'), assert = require('assert');
+function makeNode(tag) {
+  return {
+    tagName: tag, className: '', textContent: '', children: [], id: '', attrs: {},
+    appendChild(c) { this.children.push(c); return c; },
+    setAttribute(k, v) { this.attrs[k] = v; },
+  };
+}
+const ctx = { window: { VC: {} }, console: console,
+  document: { createElement: makeNode, getElementById: () => null },
+  setTimeout: () => {} };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), ctx);
+const VC = ctx.window.VC;
+const data = { audit_evidence: {
+  source_docs: [{ period: '2025', report_label: '2025 年报' }],
+  alerts: [
+    { level: 'high', title: '口径差异', detail: '营收降幅含口径调整', quote: '原文1', source: '2025 年报' },
+    { level: 'medium', title: '关联存款', detail: '大额资金存放', quote: '原文2', source: '2025 年报' },
+  ],
+  audit_opinion: [{ period: '2025', source: '2025 年报', opinion: '标准的无保留意见', firm: '天职国际', quote: 'q' }],
+  key_audit_matters: [{ period: '2025', source: '2025 年报', items: [
+    { title: '货币资金的存在性和完整性' }, { title: '营业收入的确认' }], quote: 'q' }],
+  quarterly_discrepancy: [{ period: '2025', source: '2025 年报', applicable: true, reason: '调整收入确认', quote: 'q' }],
+  accounting_change: [{ period: '2025', source: '2025 年报', applicable: false, quote: 'q' }],
+  finance_company_deposit: [{ period: '2025', source: '2025 年报', balance_yi: 479.77,
+    share_of_cash_pct: 37.77, limit_yi: 550, quote: 'q' }],
+  dividend_coverage: [{ period: '2025', source: '2025 年报', cash_dividend_yi: 223.08,
+    net_profit_yi: 89.54, payout_ratio_pct: 249.13, quote: 'q' }],
+  internal_control: [{ period: '2025', source: '2025 年报', opinion: '标准无保留意见', major_defects: 0, quote: 'q' }],
+  operating_volume: [{ period: '2025', source: '2025 年报', capacity_utilization_pct: 63.4,
+    in_build_capacity_wan_ton: 3.95, quote: 'q' }],
+  counter_evidence: [
+    { period: '2025', item: '诚信状况良好', source: '2025 年报', quote: '公司及控股股东诚信状况良好。' },
+    { period: '2025', item: '诚信状况良好', source: '2025 年报', quote: '重复项应被去重' },
+    { period: '2024', item: '诚信状况良好', source: '2024 年报', quote: '旧年份不应展示' },
+    { period: '2025', item: '内控有效', source: '2025 年报', quote: '在所有重大方面保持了有效的财务报告内部控制。' },
+  ],
+}};
+const node = VC.renderAuditEvidence(data);
+assert.ok(node, 'audit_evidence 存在时应渲染板块');
+function walk(n, out) { out.push(n); (n.children || []).forEach((c) => walk(c, out)); return out; }
+const texts = walk(node, []).map((n) => String(n.textContent || ''));
+assert.ok(texts.some((t) => t.indexOf('审计视角') >= 0), '缺少板块标题');
+assert.ok(texts.some((t) => t.indexOf('口径差异') >= 0), '缺少 high 告警');
+assert.ok(texts.some((t) => t.indexOf('关联存款') >= 0), '缺少 medium 告警');
+assert.ok(texts.some((t) => t.indexOf('479.77') >= 0), '缺少关联存款事实');
+assert.ok(texts.some((t) => t.indexOf('货币资金的存在性和完整性') >= 0), '缺少关键审计事项');
+assert.ok(texts.some((t) => t.indexOf('调整收入确认') >= 0), '缺少口径差异事实');
+assert.strictEqual(texts.filter((t) => t === '诚信状况良好').length, 1, '反证未按最新期去重');
+assert.strictEqual(texts.filter((t) => t.indexOf('旧年份') >= 0).length, 0, '不应展示旧年份反证');
+assert.strictEqual(VC.renderAuditEvidence({}), null, '无 audit_evidence 时应安静降级');
+console.log('AUDIT_RENDER_OK');
+"""
+
 
 class StaticWiringTests(unittest.TestCase):
     def test_report_page_has_event_band_container(self):
         html = _REPORT_HTML.read_text(encoding="utf-8")
         self.assertIn('id="klineMarkerLegend"', html)
         self.assertIn("财报关键点事件带", html)
-        self.assertIn('src="/static/js/forensics.js?v=20261123e"', html)
-        self.assertIn('src="/static/js/report.js?v=20261123e"', html)
+        # 静态资源版本会随功能升级而变化，这里只校验「带了版本号且各资源一致」，
+        # 避免每次升版本都要改测试（写死版本的断言会让升级被误判为回归）。
+        versions = re.findall(r"/static/(?:js|css)/[\w.-]+\?v=([\w]+)", html)
+        self.assertTrue(versions, "report.html 未带静态资源版本号")
+        self.assertEqual(len(set(versions)), 1, f"report.html 静态资源版本不一致: {set(versions)}")
+        self.assertIn(f'/static/js/forensics.js?v={versions[0]}', html)
+        self.assertIn(f'/static/js/report.js?v={versions[0]}', html)
 
     def test_review_page_uses_same_asset_version(self):
-        self.assertIn("?v=20261123e", _REVIEW_HTML.read_text(encoding="utf-8"))
+        report_versions = re.findall(
+            r"/static/(?:js|css)/[\w.-]+\?v=([\w]+)",
+            _REPORT_HTML.read_text(encoding="utf-8"),
+        )
+        review_versions = re.findall(
+            r"/static/(?:js|css)/[\w.-]+\?v=([\w]+)",
+            _REVIEW_HTML.read_text(encoding="utf-8"),
+        )
+        self.assertTrue(review_versions, "review.html 未带静态资源版本号")
+        self.assertEqual(len(set(review_versions)), 1)
+        self.assertEqual(set(report_versions), set(review_versions),
+                         "report 与 review 的静态资源版本必须一致")
 
     def test_fraud_patterns_are_wired_and_styled(self):
         js = _FORENSICS_JS.read_text(encoding="utf-8")
@@ -297,6 +372,18 @@ class MarkerLogicTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("MARKER_LOGIC_OK", result.stdout)
+
+    def test_render_audit_evidence(self):
+        result = subprocess.run(
+            ["node", "-e", _NODE_AUDIT_CHECK, str(_FORENSICS_JS)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("AUDIT_RENDER_OK", result.stdout)
 
 
 if __name__ == "__main__":

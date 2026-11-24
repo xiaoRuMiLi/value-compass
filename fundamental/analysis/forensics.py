@@ -1082,44 +1082,67 @@ def _scan_regulatory(
 
     cfg = cfg or ForensicsConfig()
     severe_categories = set(cfg.regulatory_severe_categories)
+    routine_patterns = tuple(cfg.regulatory_routine_patterns)
+
+    def is_routine(title: str) -> bool:
+        """标题是否为按期披露的例行合规材料（非处罚、非违规证据）。"""
+        return any(re.search(p, title or "") for p in routine_patterns)
+
     regulatory: list[dict[str, Any]] = []
     for item in integrity or []:
         cat = item.category.value if hasattr(item.category, "value") else str(item.category or "")
         sev = item.severity.value if hasattr(item.severity, "value") else str(item.severity or "")
         if cat not in severe_categories:
             continue
+        routine = is_routine(item.title or "")
         regulatory.append(
             {
                 "date": item.record_date or "",
                 "category": cat,
-                "severity": sev,
+                # 例行合规披露不计入高严重度：标题关键词不等于发生了违规
+                "severity": "low" if routine else sev,
+                "original_severity": sev,
+                "routine": routine,
                 "title": item.title,
                 "description": (item.description or "")[:160],
                 "source": item.source or "",
                 "url": item.source_url or "",
-                "kind": "已披露监管/诚信记录",
+                "kind": "例行合规披露（非处罚）" if routine else "已披露监管/诚信记录",
             }
         )
-    if regulatory:
-        high = [r for r in regulatory if r["severity"] == "high"]
+
+    substantive = [r for r in regulatory if not r["routine"]]
+    routine_items = [r for r in regulatory if r["routine"]]
+    if substantive:
+        high = [r for r in substantive if r["severity"] == "high"]
         signals.append(
             _signal(
                 "REG001", "监管与法律", "high" if high else "medium",
                 "监管与诚信记录线索",
-                f"{min(r['date'] for r in regulatory)} ~ {max(r['date'] for r in regulatory)}",
+                f"{min(r['date'] for r in substantive)} ~ {max(r['date'] for r in substantive)}",
                 [
-                    {"label": "记录条数", "value": f"{len(regulatory)} 条"},
+                    {"label": "实质性记录条数", "value": f"{len(substantive)} 条"},
                     {"label": "高严重度", "value": f"{len(high)} 条"},
-                    {"label": "会计差错更正/重述", "value": f"{sum(1 for r in regulatory if r['category'] == 'financial_restatement')} 条"},
+                    {"label": "例行合规披露（已剔除）", "value": f"{len(routine_items)} 条"},
+                    {"label": "会计差错更正/重述", "value": f"{sum(1 for r in substantive if r['category'] == 'financial_restatement')} 条"},
                 ],
-                "存在处罚/重述/资金占用/承诺类等已披露记录",
-                f"诚信档案共 {len(regulatory)} 条相关记录（高严重度 {len(high)} 条）。"
+                "存在处罚/重述/问询/立案等已披露记录（已剔除例行合规披露）",
+                f"诚信档案中实质性监管/诚信记录 {len(substantive)} 条（高严重度 {len(high)} 条）；"
+                f"另有 {len(routine_items)} 条例行合规披露（年度资金占用专项说明/汇总表、"
+                "独董声明与承诺、差错责任追究制度等），这类文件是按期披露的合规材料，"
+                "不构成违规或处罚证据，已从风险计数中剔除。"
                 "以下为已披露事实清单，是否为实质性问题须结合公告原文与监管结论判断。",
-                [f"integrity:{r['date']}:{r['title'][:24]}" for r in regulatory[:5]],
+                [f"integrity:{r['date']}:{r['title'][:24]}" for r in substantive[:5]],
             )
         )
     else:
-        coverage["skipped"].append({"check": "监管与诚信记录", "reason": "无相关记录或数据未同步"})
+        coverage["skipped"].append({
+            "check": "监管与诚信记录",
+            "reason": (
+                f"近 {len(regulatory)} 条记录均为例行合规披露（非处罚/非违规），无实质性监管记录"
+                if regulatory else "无相关记录或数据未同步"
+            ),
+        })
 
     hits: list[dict[str, Any]] = []
     for ann in announcements or []:
@@ -1127,6 +1150,7 @@ def _scan_regulatory(
         matched = [kw for kw in cfg.risk_title_keywords if kw in title]
         if not matched:
             continue
+        routine = is_routine(title)
         hits.append(
             {
                 "date": ann.publish_date or "",
@@ -1134,22 +1158,32 @@ def _scan_regulatory(
                 "keywords": ",".join(matched[:4]),
                 "source": ann.source or "",
                 "url": ann.source_url or ann.pdf_url or "",
-                "kind": "公告标题风险词命中",
+                "routine": routine,
+                "kind": "例行合规披露（非处罚）" if routine else "公告标题风险词命中",
             }
         )
-    if hits:
+    substantive_hits = [h for h in hits if not h["routine"]]
+    if substantive_hits:
         signals.append(
             _signal(
                 "REG002", "监管与法律", "medium", "公告中出现风险类关键词",
-                f"{min(h['date'] for h in hits if h['date']) or '-'} ~ {max(h['date'] for h in hits if h['date']) or '-'}",
-                [{"label": "命中公告数", "value": f"{len(hits)} 条"}],
-                "公告标题命中立案/处罚/问询/差错更正/资金占用等关键词",
-                f"共 {len(hits)} 条公告标题命中风险关键词（关键词匹配仅为线索，不代表存在违规）。",
-                [f"announcement:{h['date']}:{h['title'][:24]}" for h in hits[:5]],
+                f"{min(h['date'] for h in substantive_hits if h['date']) or '-'} ~ {max(h['date'] for h in substantive_hits if h['date']) or '-'}",
+                [
+                    {"label": "命中公告数", "value": f"{len(substantive_hits)} 条"},
+                    {"label": "例行合规披露（已剔除）", "value": f"{len(hits) - len(substantive_hits)} 条"},
+                ],
+                "公告标题命中立案/处罚/问询/差错更正等关键词（已剔除例行合规披露）",
+                f"共 {len(substantive_hits)} 条公告标题命中风险关键词"
+                f"（另有 {len(hits) - len(substantive_hits)} 条例行合规披露已剔除）；"
+                "关键词匹配仅为线索，不代表存在违规。",
+                [f"announcement:{h['date']}:{h['title'][:24]}" for h in substantive_hits[:5]],
             )
         )
     else:
-        coverage["skipped"].append({"check": "公告风险关键词", "reason": "无命中或公告数据未同步"})
+        coverage["skipped"].append({
+            "check": "公告风险关键词",
+            "reason": (f"{len(hits)} 条命中均为例行合规披露" if hits else "无命中或公告数据未同步"),
+        })
 
     return {"regulatory": regulatory, "announcement_hits": hits}
 
