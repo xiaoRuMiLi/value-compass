@@ -179,6 +179,7 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
 
 - 调财报体检阈值（主扫描 + 财务戏法）：只动 `config/forensics.toml`，含 `[forensics.thresholds.fraud_patterns]` 子表。
 - 改数据源：只动 provider 文件 + `providers.toml`。
+- 改 PDF 文本提取：只动 `fundamental/utils/pdf.py`；新增 PDF 源若出现「㛮暈⛚㕾」式乱码，先查字体有没有 `/ToUnicode`，偏移由 `infer_cid_offset()` 自动推断、不要硬编码，且必须重跑归档 `.txt`（不要手改已抽出的文本）。
 - 改分析：只动 `analysis/` + `models.py` + `analyze.py`。
 - 改展示：只动 `pages/` + `web/`。
 - 改存储：四处同步（SCHEMA/schema.sql/models/sync）。

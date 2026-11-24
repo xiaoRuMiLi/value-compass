@@ -31,6 +31,7 @@ from fundamental.models import ChatMessage
 from fundamental.services.llm import chat_json, has_live_llm, input_budget
 from fundamental.utils import paths
 from fundamental.utils.logging import get_logger
+from fundamental.utils.pdf import is_garbled_text
 from fundamental.utils.prompts import load_prompt
 
 from ._evidence import _load_documents, _text_path
@@ -39,7 +40,7 @@ from ._quality import excerpt_quality, is_numeric_quote
 _logger = get_logger(__name__)
 
 # 挖掘结果结构与提示词变化时递增，触发缓存失效
-_MINING_VERSION = 8
+_MINING_VERSION = 9
 
 # 同时通读的年报份数：最新一份为主、其余年份佐证判断。
 # 通过 narrative.mining_report_count 配置，默认 2（当期 + 上年）。
@@ -512,6 +513,11 @@ def mine_report_evidence(
             if txt_path is None:
                 continue
             raw = txt_path.read_text(encoding="utf-8", errors="ignore")
+            # 乱码文本层（CID 无 ToUnicode）绝不能进 LLM：模型会对着
+            # 「㛮暈⛚㕾」生成看似合理的中文结论，属于幻觉式解读。
+            if is_garbled_text(raw):
+                _logger.warning("跳过 CID 乱码财报文本 %s", txt_path)
+                continue
             period = str(d.get("period") or "")
             source = str(d.get("title") or f"{period} 年年度报告")
             label = _report_label(d)

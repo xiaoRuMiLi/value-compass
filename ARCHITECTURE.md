@@ -142,7 +142,7 @@ value-compass/
 │       ├── symbols.py                # 代码/市场归一化
 │       ├── prompts.py                # 提示词模板加载（prompts/*.md、prompts/masters/*.md）
 │       ├── logging.py
-│       ├── pdf.py                    # PDF 文本提取
+│       ├── pdf.py                    # PDF 文本提取 + 港交所 CID 乱码还原（按字体推断偏移）
 │       ├── research_text.py          # 东财研报正文与元数据抓取（schema 版本/TTL/按篇复用/失败降级）
 │       ├── intel.py                  # 统一情报门面：个股研报 + 行业研报 + 机构调研（分类型 TTL 缓存/失败降级）
 │       └── paths.py
@@ -214,6 +214,7 @@ value-compass/
 │   ├── test_report_facts.py          # 财报原文结构化事实卡抽取
 │   ├── test_forensic_markers.py      # 前端 K 线事件带与判定依据渲染（Node vm）
 │   ├── test_source_guard.py          # 原文前置守卫与壳文档过滤
+│   ├── test_pdf_cid.py               # PDF CID 乱码检测 / 偏移推断 / 还原守卫
 │   └── baselines/                    # capability_baseline.json（能力回归基线快照）
 ├── .env                              # 密钥，gitignore
 ├── .env.example                      # 密钥模板，提交
@@ -463,6 +464,7 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 - 口径防护：Q1/H1/Q3 累计值按同报告期同比对齐；MAD 离群基线也按报告期类型分组（Q1 只与历年 Q1 比），避免累计口径混比把 MAD 撑歪；率类异常以自身历史离群为主，避免银行/港股行业属性误判；全历史仅作波动基线，结论窗口默认近 12 期；东财预告金额字段口径混杂，按公告正文过滤并留容差；连续多期同类信号聚合为趋势型风险点（保留逐期 `occurrences`）；同一报告期多个费用科目同步异动合并为一条「费用与成本结构同步异动」，明细仍逐条留在 `anomalies`。
 - **阈值全部配置化**：主扫描 `analysis/forensics.py` 与财务戏法检查 `analysis/forensic_patterns.py` 都不含硬编码判定值，分别经 `ForensicsConfig` 与 `FraudPatternConfig`（同在 `analysis/forensics_config.py`，纯 dataclass）注入；`services/forensics_config.py` 负责把 `config/forensics.toml` 的 `[forensics]` / `[forensics.thresholds]` / `[forensics.thresholds.fraud_patterns]` 读成该对象（非法值逐项回退默认值）。戏法阈值单独成子表，避免把主扫描的 50+ 字段继续撑长；两个配置对象一并纳入 `fingerprint()`，任一阈值改动即让体检缓存自动重算。报告响应带 `thresholds` 与 `thresholds_fingerprint`，前端可折叠展示「本次生效的触发阈值」。
 - **原文前置守卫**：`services/narrative/_source_guard.py` 在扫描之前检查本地可读原文（PDF 必须已抽出非空正文文本，披露提示公告壳不算），要求至少 `min_source_documents` 份、覆盖 `min_source_years` 个年份；不足则复用归档服务按市场自动补档（A 股巨潮 / 港股披露易），失败写 `status=error` 与原因而不静默降级。报告回传 `source_guard{before,after,downloaded}`。
+- **PDF 文本层 CID 乱码还原**：部分港交所中文财报（如小米 2022~2026 中报）的 `HYQiHei-*-GBK-EUC-H` 子集字体是 `Identity-H` 且没有 `/ToUnicode`，内嵌字体也没有 `cmap` 表，提取器只能把字形 ID（CID）当 Unicode 输出，表现为「㛮暈⛚㕾」这类乱码。`utils/pdf.py` 检测「疑似 CID 字符占全部字符比例 + 绝对数量」，按字体用「四位年份后字符＝年」锚点配合高频汉字打分自动推断 `CID → Unicode` 线性偏移（不硬编码），再**按页**建立字符映射、在 `page.get_text()` 原文上原地替换：按页避免误伤有 ToUnicode 的封面字体，原地替换保持分行结构，正常 PDF 输出逐字不变。乱码文本同时被 `is_source_text_usable()` 与三处原文读取点拒绝，**绝不送进 LLM**（否则模型会对着乱码生成幻觉式中文结论）。
 - **原文取证与通读**：`_evidence.py` 做关键词/解释句检索（含繁体同义词），`_report_mining.py` 逐段通读最近 3 份季报 + 2 份年报，产出分段摘要、逐信号原文证据与 `new_findings`（规则扫描未覆盖的线索）；两者交错保留名额，避免当期摘录挤掉历史关键原文。
 - **财报原文结构化事实卡**：`_report_facts.py` 从最近 3 份年报正文按章节表头抽确定性数字（前五名客户/供应商占比、关联方销售、非经常性损益合计、研发资本化率、会计政策变更、合并范围新增主体、审计意见、股份回购），只抽取不判断，抽不到写 `missing_facts`。同一报告期若 `documents` 表只登记了业绩公告壳，则按文本体积从磁盘补读完整年报。
 - **财务戏法检查**：`analysis/forensic_patterns.py` 以 11 项组合条件扫描虚增利润/收入质量、财务洗澡、关联交易、会计估计与资本运作四类线索，输出 `FraudPatternScan`（含 `FraudPattern` 列表）dataclass。刻意**不并入 `scan.signals`**：作为报告并列字段 `fraud_patterns` 输出，不占 `max_signals` 名额、不进 `analyses` 逐条剖析数组，因此既有 25 条规则与 LLM 剖析链路零改动；services 层在报告出口用 `dataclasses.asdict` 转 dict，Web API 与前端结构不变。准确度靠组合条件、同报告期同比、结论窗口（全历史只作基数）与 `coverage` 三分（已执行未触发 / 制度不适用 / 数据不足）；只输出待核查线索，绝不下「财务造假」定性结论。

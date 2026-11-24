@@ -16,6 +16,7 @@ from typing import Any
 
 from fundamental.utils import paths
 from fundamental.utils.logging import get_logger
+from fundamental.utils.pdf import is_garbled_text
 
 from ._evidence import _load_documents, _text_path, parse_code
 
@@ -294,6 +295,9 @@ def extract_report_facts(
     for item in picked:
         try:
             text = item["path"].read_text(encoding="utf-8", errors="ignore")
+            if is_garbled_text(text):
+                _logger.warning("跳过 CID 乱码财报文本 %s", item["path"])
+                continue
         except OSError as exc:
             _logger.warning("读取财报文本失败 %s: %s", item["path"], exc)
             continue

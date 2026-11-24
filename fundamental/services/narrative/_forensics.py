@@ -63,7 +63,7 @@ from ._common import (
 
 # 提示词/输出结构升级时递增，使旧报告缓存失效。
 # 阈值改动不改变版本号，而是由 thresholds_fingerprint 让缓存自动失效。
-_FORENSICS_VERSION = 21
+_FORENSICS_VERSION = 22
 
 _logger = get_logger(__name__)
 
