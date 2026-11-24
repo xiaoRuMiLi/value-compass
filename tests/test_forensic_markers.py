@@ -225,6 +225,42 @@ const thText = flatten(thNode);
 assert.ok(thText.indexOf('fraud_patterns.cash_conversion_low') >= 0, thText);
 assert.ok(thText.indexOf('0.7') >= 0, thText);
 assert.strictEqual(thText.indexOf('[object Object]'), -1, thText);
+// ---- 季度还原 / 全年 vs 累计现金含量对照：金额换算、缺失降级、只并列不相减 ----
+const qdata = {
+  method: '同一自然年内累计值差分',
+  annual_cash_conversion: { period: '2025-12-31', report_type: 'FY',
+    ocf: 303052000000, net_profit: 224842000000, ratio: 1.348 },
+  latest_cumulative_cash_conversion: { period: '2026-09-30', report_type: 'Q3',
+    ocf: 156713000000, net_profit: 177727000000, ratio: 0.882 },
+  quarters: [
+    { label: '2026 Q1', net_profit: 58090000000, ocf: null, revenue: null },
+    { label: '2026 Q2', net_profit: 56030000000, ocf: 52710000000, revenue: 180000000000 },
+  ],
+};
+const qv = VC.buildQuarterlyView(qdata);
+assert.strictEqual(qv.annual.ratio, '1.348');
+assert.strictEqual(qv.annual.ocf, '3030.52 亿元');
+assert.strictEqual(qv.annual.netProfit, '2248.42 亿元');
+assert.strictEqual(qv.latest.period, '2026-09-30');
+assert.strictEqual(qv.latest.ratio, '0.882');
+assert.strictEqual(qv.quarters.length, 2);
+assert.strictEqual(qv.quarters[0].ocf, '—', '缺失科目必须留空，不能补 0');
+assert.strictEqual(qv.quarters[1].netProfit, '560.30 亿元');
+assert.strictEqual(VC.buildQuarterlyView(null).quarters.length, 0);
+assert.strictEqual(VC.buildQuarterlyView({}).annual, null);
+const manyQ = { quarters: [] };
+for (let i = 1; i <= 10; i++) manyQ.quarters.push({ label: 'Q' + i, net_profit: i, ocf: i, revenue: i });
+assert.strictEqual(VC.buildQuarterlyView(manyQ).quarters.length, 8, '只展示最近 8 期');
+assert.strictEqual(VC.buildQuarterlyView(manyQ).quarters[0].label, 'Q3');
+const qNode = VC.renderQuarterly({ scan: { quarterly: qdata } });
+const qText = flatten(qNode);
+assert.ok(qText.indexOf('最近完整年度') >= 0, qText);
+assert.ok(qText.indexOf('最新累计期') >= 0, qText);
+assert.ok(qText.indexOf('3030.52 亿元') >= 0, qText);
+assert.ok(qText.indexOf('只能并列、不能相减') >= 0, qText);
+assert.ok(qText.indexOf('展开单季还原明细') >= 0, qText);
+assert.strictEqual(qText.indexOf('[object Object]'), -1, qText);
+assert.strictEqual(VC.renderQuarterly({ scan: {} }), null, '旧缓存无 quarterly 时应安静降级');
 console.log('MARKER_LOGIC_OK');
 """
 

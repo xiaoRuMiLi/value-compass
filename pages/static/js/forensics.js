@@ -376,6 +376,84 @@
     return wrap;
   }
 
+  // ---------- 季度还原 / 全年 vs 累计现金含量对照 ----------
+  // 纯数据转换（不碰 DOM）单独导出，便于 Node 回归测试；金额单位换算沿用 fmtMoney。
+  function moneyOrDash(value) {
+    if (value === null || value === undefined || value === "") return "—";
+    const n = Number(value);
+    return isFinite(n) ? fmtMoney(n) : String(value);
+  }
+
+  VC.buildQuarterlyView = function buildQuarterlyView(quarterly) {
+    const q = quarterly || {};
+    const pick = (c) => {
+      if (!c || !isFinite(Number(c.ratio))) return null;
+      return {
+        period: String(c.period || ""),
+        reportType: String(c.report_type || c.reportType || ""),
+        ocf: moneyOrDash(c.ocf),
+        netProfit: moneyOrDash(c.net_profit),
+        ratio: Number(c.ratio).toFixed(3),
+      };
+    };
+    const rows = (q.quarters || []).filter((r) => r && r.label).slice(-8).map((r) => ({
+      label: String(r.label),
+      netProfit: moneyOrDash(r.net_profit),
+      ocf: moneyOrDash(r.ocf),
+      revenue: moneyOrDash(r.revenue),
+    }));
+    return {
+      method: String(q.method || ""),
+      annual: pick(q.annual_cash_conversion),
+      latest: pick(q.latest_cumulative_cash_conversion),
+      quarters: rows,
+    };
+  };
+
+  function renderQuarterly(data) {
+    const view = VC.buildQuarterlyView((data.scan || {}).quarterly);
+    if (!view.annual && !view.latest && !view.quarters.length) return null;
+    const wrap = el("div", "fx-quarterly");
+    wrap.appendChild(sectionTitle("季度还原 · 现金含量对照", "累计值同年内差分，代码计算"));
+    wrap.appendChild(el("p", "fx-quarterly-note",
+      "全年与「年初至今累计」是两种口径，只能并列、不能相减；也不能仅凭累计期低比值判定全年盈利质量恶化。银行等无经营现金流科目的公司此处留空，属于数据局限而非「未检出」。"));
+    const pair = el("div", "fx-stats");
+    let pairCount = 0;
+    const addPair = (title, item) => {
+      if (!item) return;
+      pairCount += 1;
+      pair.appendChild(stat(
+        `${title} · ${item.period}（${item.reportType || "报告期"}）`,
+        `${item.ratio} · ${item.ocf} / ${item.netProfit}`
+      ));
+    };
+    addPair("最近完整年度", view.annual);
+    addPair("最新累计期", view.latest);
+    if (pairCount) wrap.appendChild(pair);
+    if (view.quarters.length) {
+      const details = el("details", "fx-details");
+      details.appendChild(el("summary", null, `展开单季还原明细（最近 ${view.quarters.length} 期）`));
+      const table = el("table", "fx-table");
+      const head = el("tr");
+      for (const t of ["单季", "归母净利", "经营现金流", "营业收入"]) head.appendChild(el("th", null, t));
+      const thead = el("thead");
+      thead.appendChild(head);
+      table.appendChild(thead);
+      const tbody = el("tbody");
+      for (const r of view.quarters) {
+        const tr = el("tr");
+        for (const v of [r.label, r.netProfit, r.ocf, r.revenue]) tr.appendChild(el("td", null, v));
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      details.appendChild(table);
+      wrap.appendChild(details);
+    }
+    return wrap;
+  }
+
+  VC.renderQuarterly = renderQuarterly;
+
   function renderAnomalies(data) {
     const rows = (data.scan && data.scan.anomalies) || [];
     const wrap = el("div", "fx-anomalies");
@@ -1018,6 +1096,8 @@
     const audit = renderAuditEvidence(data);
     if (audit) wrap.appendChild(audit);
     wrap.appendChild(renderSignals(data));
+    const quarterly = renderQuarterly(data);
+    if (quarterly) wrap.appendChild(quarterly);
     const mining = renderMiningFindings(data);
     if (mining) wrap.appendChild(mining);
     const fraud = renderFraudPatterns(data);
