@@ -51,6 +51,7 @@ from fundamental.utils.symbols import parse_symbol
 
 from ._evidence import retrieve_evidence
 from ._audit_evidence import extract_audit_evidence
+from ._drift import RISK_FACTOR_PROBES, analyze_narrative_drift
 from ._quality import excerpt_quality as _excerpt_quality
 from ._report_facts import extract_report_facts
 from ._source_guard import ensure_source_documents
@@ -65,7 +66,7 @@ from ._common import (
 
 # 提示词/输出结构升级时递增，使旧报告缓存失效。
 # 阈值改动不改变版本号，而是由 thresholds_fingerprint 让缓存自动失效。
-_FORENSICS_VERSION = 27
+_FORENSICS_VERSION = 30
 
 _logger = get_logger(__name__)
 
@@ -334,6 +335,77 @@ def _brief_audit_evidence(audit: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_REPORT_FACT_KEYS = (
+    "top5_customer_pct", "related_party_sales_pct", "related_party_purchase_pct",
+    "top5_supplier_pct", "nonrecurring_total", "rd_capitalization_pct",
+    "accounting_policy_change", "consolidation_change", "audit", "share_buyback",
+)
+
+
+def _brief_report_facts(report_facts: dict[str, Any] | None) -> dict[str, Any]:
+    """年报原文事实卡：只保留可交叉引用的数值/标志与短引文，每类最多 3 条。
+
+    这一层由代码从年报正文逐字抽取，不经过模型判断；给 cross_checks 提供
+    SIG/FRD 之外的第三个数据源，让跨维度印证有具体科目与报告期可落。
+    """
+    rf = report_facts or {}
+    keep = ("period", "value", "source", "applicable", "non_standard",
+            "profit_share", "entity_count")
+    out: dict[str, Any] = {}
+    for key in _REPORT_FACT_KEYS:
+        rows: list[dict[str, Any]] = []
+        for item in (rf.get(key) or [])[:3]:
+            if not isinstance(item, dict):
+                continue
+            row = {k: item[k] for k in keep if k in item}
+            quote = str(item.get("quote") or "").strip()
+            if quote:
+                row["quote"] = quote[:160]
+            if row:
+                rows.append(row)
+        if rows:
+            out[key] = rows
+    missing = [str(x) for x in (rf.get("missing_facts") or [])[:12]]
+    if missing:
+        out["missing"] = missing
+    return out
+
+
+def _brief_drift(drift: dict[str, Any] | None) -> dict[str, Any]:
+    """跨期叙事线索精简视图：取 high/medium 前 6 条，引文已由该模块逐字核验。
+
+    不把基线全文搬进事实包（单票约 9 千字符），只保留能用于交叉印证的变化
+    类型、判断与当期引文；不可用时返回空结构，由 instruction 告知模型不得编造。
+    """
+    nd = drift or {}
+    current = nd.get("current") or {}
+    findings = [f for f in (current.get("findings") or []) if isinstance(f, dict)]
+    order = {"high": 0, "medium": 1, "low": 2}
+    ranked = sorted(findings, key=lambda f: order.get(str(f.get("severity")), 3))
+    rows: list[dict[str, Any]] = []
+    for f in ranked[:6]:
+        row = {
+            "factor_id": f.get("factor_id"),
+            "title": str(f.get("title") or "")[:80],
+            "severity": f.get("severity"),
+            "shift_type": f.get("shift_type"),
+            "period": f.get("period"),
+            "judgement": str(f.get("judgement") or "")[:220],
+            "quote": str(f.get("quote") or "")[:180],
+        }
+        rows.append({k: v for k, v in row.items() if v not in (None, "")})
+    baseline = nd.get("history") or {}
+    coverage = {
+        str(k): len(v) for k, v in (baseline.get("baseline") or {}).items()
+        if isinstance(v, list)
+    }
+    out: dict[str, Any] = {"findings": rows, "baseline_coverage": coverage}
+    summary = str(current.get("summary") or "")[:240]
+    if summary:
+        out["summary"] = summary
+    return out
+
+
 def _facts(
     symbol: str,
     inputs: dict[str, Any],
@@ -345,6 +417,8 @@ def _facts(
     mining: dict[str, Any] | None = None,
     fraud: dict[str, Any] | None = None,
     audit_evidence: dict[str, Any] | None = None,
+    report_facts: dict[str, Any] | None = None,
+    drift: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ev = scan["evidence"]
     fraud = fraud or {}
@@ -406,6 +480,18 @@ def _facts(
             "也不可只凭累计期低比值就判定全年盈利质量恶化；解释须落到具体金额与报告期。"
             "evidence.structured 是财报原文数字的趋势/组合判定（关联方占比、实物量、合并范围），"
             "同样只作线索，引用时注明来源年报。"
+            "report_facts_brief 是代码从年报正文逐字抽取的结构化事实卡（客户/供应商集中度、"
+            "关联方销售采购、非经常性损益、研发资本化率、会计政策变更、合并范围、审计意见、回购），"
+            "每条带报告期与短引文；narrative_drift_brief 是独立跨期叙事对照输出的当期线索"
+            "（往年基线→当期表述变化，引文已逐字核验），两者都只作线索、不下定性。"
+            "cross_checks 至少纳入其中一条具体事实，与量化信号、财务戏法线索、审计事实做交叉，"
+            "写明是同源、互相印证还是相互矛盾；若该维度无可用数据，"
+            "写「该维度无可用事实」，不得编造。"
+            "输出正文一律给投资者看：严禁写 SIG001 / FRD002 / DRF04 这类内部编号，"
+            "严禁写 narrative_drift_brief / report_facts_brief / audit_evidence 这类字段名；"
+            "引用时直接写中文名称，例如 signal.title「业绩拐点：高增长转负」写成「业绩拐点」，"
+            "跨期线索写「跨期叙事对照」，事实卡写「年报原文事实卡」，"
+            "口径差异写「分季度口径差异」，反证写「公司披露的正面反证」。"
         ),
         "company": {"symbol": symbol, "name": inputs["name"], "industry": inputs["industry"]},
         "fraud_patterns": {
@@ -483,6 +569,8 @@ def _facts(
             ],
         },
         "audit_evidence": _brief_audit_evidence(audit_evidence),
+        "report_facts_brief": _brief_report_facts(report_facts),
+        "narrative_drift_brief": _brief_drift(drift),
         "coverage": scan["coverage"],
     }
 
@@ -507,7 +595,74 @@ def _string_list(value: Any, limit: int, item_limit: int) -> list[str]:
     return out
 
 
-def _normalize(raw: Any, scan: dict[str, Any], max_signals: int) -> dict[str, Any] | None:
+_FIELD_LABELS = {
+    "narrative_drift_brief": "跨期叙事对照",
+    "report_facts_brief": "年报原文事实卡",
+    "audit_evidence.quarterly_discrepancy": "分季度口径差异",
+    "audit_evidence.operating_volume": "产销量与库存事实",
+    "audit_evidence.counter_evidence": "公司披露的正面反证",
+    "audit_evidence.finance_company_deposit": "关联财务公司存款",
+    "audit_evidence.key_audit_matters": "关键审计事项",
+    "audit_evidence.audit_opinion": "审计意见",
+    "audit_evidence.alerts": "审计待核查提示",
+    "audit_evidence": "审计事实",
+    "evidence.structured": "财报原文结构化事实",
+    "fraud_patterns": "财务戏法线索",
+    "scan.signals": "量化风险信号",
+}
+
+
+def _humanize_text(
+    text: str,
+    scan: dict[str, Any],
+    fraud: dict[str, Any] | None,
+) -> str:
+    """把 LLM 正文里的内部编号/字段名换成用户能读的中文名称（兜底层）。
+
+    主要约束在提示词里；这里防御模型偶发残留：SIG001 → 「业绩拐点：高增长转负」、
+    DRF04 → 「现金流与利润背离」、narrative_drift_brief → 跨期叙事对照。
+    """
+    if not text:
+        return text
+    sig_map = {
+        str(s.get("id")): str(s.get("title") or "")
+        for s in (scan.get("signals") or []) if isinstance(s, dict)
+    }
+    frd_map = {
+        str(p.get("id")): str(p.get("title") or "")
+        for p in ((fraud or {}).get("patterns") or []) if isinstance(p, dict)
+    }
+    drf_map = {str(p["id"]): str(p["title"]) for p in RISK_FACTOR_PROBES}
+    out = text
+    for key in sorted(_FIELD_LABELS, key=len, reverse=True):
+        out = out.replace(key, _FIELD_LABELS[key])
+    for pattern, mapping, fallback in (
+        (r"SIG\d{3}", sig_map, "量化风险信号"),
+        (r"FRD\d{3}", frd_map, "财务戏法线索"),
+        (r"DRF\d{2}", drf_map, "跨期叙事线索"),
+    ):
+        def repl(
+            match: re.Match[str],
+            table: dict[str, str] = mapping,
+            label: str = fallback,
+        ) -> str:
+            title = table.get(match.group(0), "")
+            return f"「{title or label}」"
+        out = re.sub(pattern, repl, out)
+    # 编号替换后若紧跟同一个短标签（如「业绩拐点」业绩拐点），去掉重复
+    for title in dict.fromkeys(list(sig_map.values()) + list(frd_map.values()) + list(drf_map.values())):
+        short = re.split(r"[：:]", title)[0]
+        if short and short != title:
+            out = out.replace(f"「{title}」{short}", f"「{title}」")
+    return out
+
+
+def _normalize(
+    raw: Any,
+    scan: dict[str, Any],
+    max_signals: int,
+    fraud: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """把 LLM 输出收敛到可信结构：未知枚举降级、缺失项补齐、绝不新增事实。"""
 
     if not isinstance(raw, dict):
@@ -535,12 +690,12 @@ def _normalize(raw: Any, scan: dict[str, Any], max_signals: int) -> dict[str, An
                 "severity": signal["severity"],
                 "category": signal["category"],
                 "period": signal["period"],
-                "substance": _text(a.get("substance"), 500, signal["description"]),
-                "benign": _text(a.get("benign"), 350, "未生成合理解释，请结合行业属性与会计口径自行核对。"),
-                "risk": _text(a.get("risk"), 350, "未生成风险假设，建议查阅对应报告期公告原文。"),
+                "substance": _humanize_text(_text(a.get("substance"), 500, signal["description"]), scan, fraud),
+                "benign": _humanize_text(_text(a.get("benign"), 350, "未生成合理解释，请结合行业属性与会计口径自行核对。"), scan, fraud),
+                "risk": _humanize_text(_text(a.get("risk"), 350, "未生成风险假设，建议查阅对应报告期公告原文。"), scan, fraud),
                 "judgement": judgement if judgement in _JUDGEMENTS else "unverifiable",
                 "confidence": confidence if confidence in _CONFIDENCES else "low",
-                "action": _text(a.get("action"), 250, "建议核对对应报告期财报原文与监管公告。"),
+                "action": _humanize_text(_text(a.get("action"), 250, "建议核对对应报告期财报原文与监管公告。"), scan, fraud),
                 "analyzed": bool(a) and signal["id"] in by_id,
             }
         )
@@ -556,12 +711,18 @@ def _normalize(raw: Any, scan: dict[str, Any], max_signals: int) -> dict[str, An
     return {
         "verdict": {
             "level": level,
-            "headline": _text(verdict_raw.get("headline"), 80, "已生成基于公开财报的取证扫描结果"),
-            "essence": _text(verdict_raw.get("essence"), 1200, fallback_essence),
+            "headline": _humanize_text(_text(verdict_raw.get("headline"), 80, "已生成基于公开财报的取证扫描结果"), scan, fraud),
+            "essence": _humanize_text(_text(verdict_raw.get("essence"), 1200, fallback_essence), scan, fraud),
         },
         "analyses": analyses,
-        "cross_checks": _string_list(raw.get("cross_checks"), 8, 400),
-        "caveats": _string_list(raw.get("caveats"), 6, 400),
+        "cross_checks": [
+            _humanize_text(x, scan, fraud)
+            for x in _string_list(raw.get("cross_checks"), 8, 400)
+        ],
+        "caveats": [
+            _humanize_text(x, scan, fraud)
+            for x in _string_list(raw.get("caveats"), 6, 400)
+        ],
     }
 
 
@@ -916,10 +1077,20 @@ def generate_financial_forensics(
             "error": str(exc),
         }
 
+    # 跨期叙事对照：往年建基线 → 基线 + 当期财报对照判断，独立板块、独立缓存。
+    # 它刻意不进入 _facts（总述 essence），以免与逐条剖析/戏法检查混淆——
+    # 用户要的是一个从「叙事演变」而非「已知信号」出发的独立视角。
+    try:
+        drift = analyze_narrative_drift(symbol, db_path=db_path, refresh=refresh)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("跨期叙事对照失败 %s: %s", symbol, exc)
+        drift = {"available": False, "symbol": symbol, "error": str(exc)}
+
     facts = _facts(
         symbol, inputs, scan, intel, max_signals, max_anomalies,
         evidence_map=evidence_map, mining=mining, fraud=fraud,
         audit_evidence=audit_evidence,
+        report_facts=report_facts, drift=drift,
     )
 
     report: dict[str, Any] | None = None
@@ -935,7 +1106,7 @@ def generate_financial_forensics(
                 [ChatMessage("system", system), ChatMessage("user", _build_prompt(facts))],
                 max_tokens=max(base, min(needed, 8000)),
             )
-            report = _normalize(raw, scan, max_signals)
+            report = _normalize(raw, scan, max_signals, fraud)
         except (LlmError, LlmConfigError, FileNotFoundError, TypeError, ValueError):
             report = None
         source = "llm" if report else "template_fallback"
@@ -977,6 +1148,7 @@ def generate_financial_forensics(
         "official_explanations": evidence_map,
         "report_mining": mining,
         "fraud_patterns": fraud,
+        "narrative_drift": drift,
         "report_facts": report_facts,
         "audit_evidence": audit_evidence,
         "citations": _citations(scan, intel, audit_evidence, report_facts),

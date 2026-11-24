@@ -142,6 +142,18 @@ class SourceShellFilterTests(unittest.TestCase):
         self.assertTrue(_match_doc_type("2025年年度报告（更正后）", DocType.ANNUAL_REPORT))
         self.assertTrue(_match_doc_type("2026年第一季度报告", DocType.Q1_REPORT))
 
+    def test_postponement_notice_is_rejected_for_both_report_types(self):
+        """延期披露公告标题同时含“年度报告/季度报告”，两种类型都必须拒绝。"""
+        from fundamental.models import DocType
+        from fundamental.providers.announcement.cninfo import _match_doc_type
+        from fundamental.utils.pdf import is_source_title_usable
+
+        title = "关于延期披露2025年度报告及2026年第一季度报告的公告"
+        self.assertFalse(_match_doc_type(title, DocType.ANNUAL_REPORT))
+        self.assertFalse(_match_doc_type(title, DocType.Q1_REPORT))
+        self.assertFalse(_match_doc_type(title, DocType.SEMI_REPORT))
+        self.assertFalse(is_source_title_usable(title))
+
     def test_pdf_quality_helpers_reject_shells_and_short_text(self):
         from fundamental.utils.pdf import is_source_text_usable, is_source_title_usable
 
@@ -151,6 +163,70 @@ class SourceShellFilterTests(unittest.TestCase):
         self.assertFalse(is_source_text_usable("仅说明报告已披露", "2025年年度报告"))
         self.assertFalse(is_source_title_usable("2026年第三季度报告披露的提示性公告"))
         self.assertTrue(is_source_title_usable("2026年第三季度报告"))
+
+
+class ArchiveAntiOverwriteTests(unittest.TestCase):
+    """归档层：同期多公告不互相覆盖，延期公告空壳不入库。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self._tmp.name) / "test.db"
+        self.conn = db.init_db(self.db_path)
+        stock = SimpleNamespace(
+            code="000858", market=Market.SZ, name="测试", industry=None,
+            sector=None, list_date=None, is_st=False,
+        )
+        self.stock_id = repository.get_or_create_stock(self.conn, stock)
+        self.conn.commit()
+        self.conn.close()
+        self.docs_root = Path(self._tmp.name) / "docs"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_same_period_different_announcements_do_not_overwrite(self):
+        """真年报与延期公告同期：各用独立文件名，延期公告因正文过短被拒。"""
+        from fundamental.models import Document, DocStatus, DocType
+        from fundamental.services import archive as arch
+
+        body = "管理层讨论与分析：报告期内营业收入与净利润变动说明。" * 200
+
+        def fake_doc(title, url):
+            return Document(
+                doc_type=DocType.ANNUAL_REPORT, title=title,
+                source_url=url, status=DocStatus.PENDING,
+            )
+
+        docs = [
+            fake_doc("2025年年度报告", "https://static.cninfo.com.cn/finalpage/2026-04-30/1225273091.PDF"),
+            fake_doc("关于延期披露2025年度报告的公告", "https://static.cninfo.com.cn/finalpage/2026-03-01/1225270000.PDF"),
+        ]
+        provider = mock.Mock()
+        provider.list_documents.side_effect = (
+            lambda symbol, doc_type: docs if doc_type == "annual_report" else []
+        )
+
+        def fake_get(url):
+            # 真报告返回长正文，延期公告返回短空壳
+            data = body.encode("utf-8") if "1225273091" in url else b"report postponed"
+            return SimpleNamespace(content=data)
+
+        provider.client.get.side_effect = fake_get
+        with mock.patch.object(arch, "CninfoAnnouncementProvider", return_value=provider), \
+             mock.patch.object(arch.paths, "documents_dir", return_value=self.docs_root), \
+             mock.patch.object(arch, "extract_pdf_text", side_effect=lambda p: body if "1225273091" in str(p) else "report postponed"):
+            stats = arch.archive_documents("000858.SZ", db_path=self.db_path, per_type=3)
+
+        # 只有真报告入库；延期公告被正文校验挡掉
+        self.assertEqual(stats["annual_report"], 1)
+        conn = db.init_db(self.db_path)
+        rows = conn.fetch_all("SELECT title, local_path FROM documents WHERE stock_id = ?", (self.stock_id,)) \
+            if hasattr(conn, "fetch_all") else conn.execute(
+                "SELECT title, local_path FROM documents WHERE stock_id = ?", (self.stock_id,)
+            ).fetchall()
+        conn.close()
+        self.assertEqual(len(rows), 1)
+        self.assertIn("1225273091", rows[0]["local_path"])  # 文件名带公告 ID
 
 
 if __name__ == "__main__":

@@ -633,6 +633,119 @@
     return wrap;
   }
 
+  /** 跨期叙事对照：往年风险叙述基线 vs 当期财报，发现被淡化/回避/改口的隐含风险。
+   * 与「逐条剖析」「戏法检查」的区别：结论从叙事的跨期变化里长出来，而非从已知信号/规则出发。
+   */
+  function renderDrift(data) {
+    const drift = data.narrative_drift || {};
+    if (!drift.available) return null;
+    const history = drift.history || {};
+    const current = drift.current || {};
+    const findings = current.findings || [];
+    const baseline = history.baseline || {};
+    const factors = drift.risk_factors || [];
+    const factorTitle = (id) => {
+      const f = factors.find((x) => x.id === id);
+      return f ? f.title : id;
+    };
+    const wrap = el("div", "fx-drift");
+    wrap.id = "fx-drift";
+    const hDocs = history.documents || [];
+    const cDocs = current.documents || [];
+    wrap.appendChild(
+      sectionTitle(
+        "跨期叙事对照",
+        `往年 ${hDocs.length} 份建基线 · 当期 ${cDocs.length} 份对照 · ${findings.length} 条叙事线索`
+      )
+    );
+    wrap.appendChild(
+      el("p", "fx-drift-note",
+        "先让模型逐段通读往年财报（不含当期），把与财务粉饰/造假风险因素相关的原文摘录成基线；再把基线与当期财报一起交给模型，从公司说法的变化里找线索。每条均附当期与往年原文，可逐字核验；这是规则阈值与单点解释发现不了的视角。")
+    );
+
+    if (findings.length) {
+      const list = el("div", "fx-drift-list");
+      findings.forEach((f, i) => {
+        const item = el("div", "fx-drift-item");
+        item.id = "fx-drift-finding-" + (i + 1);
+        const sev = SEVERITY[f.severity] || SEVERITY.low;
+        const head = el("div", "fx-drift-head");
+        head.appendChild(chip(`线索 ${i + 1}`, "suspicious"));
+        head.appendChild(chip(sev.label, sev.cls));
+        if (f.shift_type) head.appendChild(chip(f.shift_type, "drift-shift"));
+        if (f.factor_id) head.appendChild(chip(`${f.factor_id} ${factorTitle(f.factor_id)}`, "plain"));
+        head.appendChild(el("span", "fx-drift-title", f.title || ""));
+        item.appendChild(head);
+
+        const judge = el("p", "fx-drift-judgement", f.judgement || "");
+        item.appendChild(judge);
+
+        const quotes = el("div", "fx-drift-quotes");
+        if (f.baseline_ref) {
+          const b = el("div", "fx-drift-quote fx-drift-quote-base");
+          b.appendChild(el("span", "fx-drift-quote-label", "往年基线"));
+          b.appendChild(el("span", "fx-drift-quote-text", `“${f.baseline_ref}”`));
+          quotes.appendChild(b);
+        }
+        if (f.quote) {
+          const c = el("div", "fx-drift-quote fx-drift-quote-current");
+          c.appendChild(el("span", "fx-drift-quote-label", "当期原文"));
+          c.appendChild(el("span", "fx-drift-quote-text", `“${f.quote}”`));
+          quotes.appendChild(c);
+        }
+        item.appendChild(quotes);
+
+        if (f.action) item.appendChild(el("p", "fx-drift-action", `核查建议：${f.action}`));
+        const meta = [f.report_label, f.section, f.source].filter(Boolean).join(" · ");
+        if (meta) item.appendChild(el("div", "fx-drift-meta", meta));
+        list.appendChild(item);
+      });
+      wrap.appendChild(list);
+    } else {
+      wrap.appendChild(el("p", "fx-empty", "本期与往年基线对照后，未发现值得报告的叙事变化。"));
+    }
+
+    // 历史基线：按风险因素分组，默认折叠，供逐条核对模型"过去怎么说的"
+    const hitCount = Object.values(baseline).reduce((n, v) => n + (v ? v.length : 0), 0);
+    if (hitCount) {
+      const details = el("details", "fx-aux-details fx-drift-baseline");
+      const summary = el("summary", "往年风险叙述基线（逐字摘录）");
+      summary.appendChild(el("span", "fx-aux-hint", `${hitCount} 条 · ${hDocs.length} 份往年年报`));
+      details.appendChild(summary);
+      const body = el("div", "fx-aux-content");
+      factors.forEach((f) => {
+        const hits = baseline[f.id] || [];
+        if (!hits.length) return;
+        const group = el("div", "fx-drift-base-group");
+        group.appendChild(chip(`${f.id} ${f.title}`, "plain"));
+        hits.forEach((h) => {
+          const row = el("div", "fx-drift-base-row");
+          row.appendChild(el("span", "fx-drift-base-quote", `“${h.quote}”`));
+          if (h.note) row.appendChild(el("span", "fx-drift-base-note", h.note));
+          row.appendChild(el("span", "fx-drift-meta", `${h.report_label || ""}${h.section ? " · " + h.section : ""}`));
+          group.appendChild(row);
+        });
+        body.appendChild(group);
+      });
+      details.appendChild(body);
+      wrap.appendChild(details);
+    }
+
+    if (drift.rejected_quotes) {
+      wrap.appendChild(
+        el("p", "fx-mining-note",
+          `跨期对照有 ${drift.rejected_quotes} 段解析失败/引文未在原文定位，已剔除；未检出不等同于不存在。`)
+      );
+    }
+    wrap.appendChild(
+      el("p", "fx-drift-disclaimer",
+        "本板块输出的是「叙事变化线索与待核查方向」，不构成财务造假认定、审计意见或投资建议；引文均可回溯到归档财报原文。")
+    );
+    return wrap;
+  }
+
+  VC.renderDrift = renderDrift;
+
   function renderCitations(data) {
     const wrap = el("div", "fx-citations");
     const items = data.citations || [];
@@ -1137,6 +1250,8 @@
     if (quarterly) wrap.appendChild(quarterly);
     const mining = renderMiningFindings(data);
     if (mining) wrap.appendChild(mining);
+    const drift = renderDrift(data);
+    if (drift) wrap.appendChild(drift);
     const fraud = renderFraudPatterns(data);
     if (fraud) wrap.appendChild(fraud);
     wrap.appendChild(renderAnomalies(data));

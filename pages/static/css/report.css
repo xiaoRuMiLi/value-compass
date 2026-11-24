@@ -1488,3 +1488,52 @@ details[open] > .fx-sig-head::before { content: "▾"; }
   background: #e6f1fb; color: #185fa5;
 }
 .fx-factor-flag { font-family: ui-monospace, monospace; font-size: 11px; color: #94a3b8; }
+
+/* 跨期叙事对照：往年基线 vs 当期，紫色系区别于原文通读(琥珀)与戏法检查 */
+.fx-drift {
+  margin: 16px 0; padding: 14px 16px;
+  background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 8px;
+}
+.fx-drift-note {
+  margin: 0 0 12px; font-size: 12px; line-height: 1.7; color: #5b21b6;
+}
+.fx-drift-list { display: flex; flex-direction: column; gap: 12px; }
+.fx-drift-item {
+  padding: 12px 14px; background: #fff;
+  border: 1px solid #e9e5ff; border-left: 3px solid #7c3aed; border-radius: 6px;
+  scroll-margin-top: 16px;
+}
+.fx-drift-head {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px;
+}
+.fx-chip-drift-shift { background: #ede9fe; color: #6d28d9; }
+.fx-drift-title { flex: 1; min-width: 200px; font-size: 13px; font-weight: 600; line-height: 1.5; color: #4c1d95; }
+.fx-drift-judgement {
+  margin: 0 0 10px; font-size: 13px; line-height: 1.7; color: #1e293b;
+}
+.fx-drift-quotes { display: flex; flex-direction: column; gap: 6px; }
+.fx-drift-quote {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 7px 10px; border-radius: 5px;
+}
+.fx-drift-quote-base { background: #f8fafc; border-left: 2px solid #94a3b8; }
+.fx-drift-quote-current { background: #f5f3ff; border-left: 2px solid #7c3aed; }
+.fx-drift-quote-label { font-size: 10px; font-weight: 600; color: #7c3aed; }
+.fx-drift-quote-base .fx-drift-quote-label { color: #64748b; }
+.fx-drift-quote-text { font-size: 12px; line-height: 1.6; color: #475569; }
+.fx-drift-action {
+  margin: 10px 0 0; font-size: 12px; line-height: 1.6; color: #4338ca;
+}
+.fx-drift-meta { margin-top: 6px; font-size: 10px; color: #94a3b8; }
+.fx-drift-baseline { margin-top: 12px; border-top: 1px solid #e9e5ff; padding-top: 10px; }
+.fx-drift-base-group { margin: 10px 0; }
+.fx-drift-base-row {
+  margin: 5px 0; padding: 6px 9px; background: #fafafa;
+  border-radius: 4px; font-size: 12px; line-height: 1.6; color: #475569;
+}
+.fx-drift-base-quote { display: block; color: #334155; }
+.fx-drift-base-note { display: block; margin-top: 2px; font-size: 11px; color: #6d28d9; }
+.fx-drift-disclaimer {
+  margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #e9e5ff;
+  font-size: 11px; line-height: 1.6; color: #7c3aed;
+}

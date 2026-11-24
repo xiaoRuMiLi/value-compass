@@ -437,5 +437,99 @@ class TestHkOriginalEvidence(unittest.TestCase):
         self.assertIn("非國際財務報告準則", terms)
 
 
+class TestCrossCheckEvidenceInjection(unittest.TestCase):
+    """交叉印证要拿到事实卡与跨期叙事两条独立证据线，否则只能复述 SIG。"""
+
+    def setUp(self):
+        self.scan = fx.scan_forensics(
+            "TEST.SH",
+            [
+                fr("2024-12-31", revenue=100.0, net_profit=100.0),
+                fr("2025-12-31", revenue=120.0, net_profit=80.0),
+            ],
+        )
+
+    def test_facts_carry_report_facts_and_drift(self):
+        rf = {
+            "top5_customer_pct": [
+                {"period": "2025", "value": 14.55, "source": "2025 年报",
+                 "quote": "前五名客户销售额占比 14.55%"}
+            ],
+            "missing_facts": ["audit"],
+        }
+        drift = {
+            "current": {"findings": [
+                {"factor_id": "DRF04", "title": "现金流背离", "severity": "high",
+                 "shift_type": "数字与叙事背离", "period": "2026",
+                 "judgement": "当期解释变化", "quote": "经营现金流 0.47 亿元"},
+            ]},
+            "history": {"baseline": {"DRF04": [{"quote": "往年原文"}]}},
+        }
+        facts = narrative_fx._facts(
+            "TEST.SH", {"name": "测试", "industry": "白酒"}, self.scan, {}, 16, 24,
+            report_facts=rf, drift=drift,
+        )
+        self.assertIn("report_facts_brief", facts)
+        self.assertEqual(
+            facts["report_facts_brief"]["top5_customer_pct"][0]["value"], 14.55
+        )
+        self.assertIn("audit", facts["report_facts_brief"]["missing"])
+        brief = facts["narrative_drift_brief"]
+        self.assertEqual(brief["findings"][0]["factor_id"], "DRF04")
+        self.assertEqual(brief["baseline_coverage"]["DRF04"], 1)
+        self.assertIn("cross_checks", facts["instruction"])
+        self.assertIn("narrative_drift_brief", facts["instruction"])
+
+    def test_brief_helpers_are_bounded_and_tolerate_empty(self):
+        rf = {"top5_customer_pct": [
+            {"period": str(y), "value": y, "quote": "很长" * 200} for y in range(5)
+        ]}
+        brief = narrative_fx._brief_report_facts(rf)
+        self.assertEqual(len(brief["top5_customer_pct"]), 3)
+        self.assertEqual(len(brief["top5_customer_pct"][0]["quote"]), 160)
+        findings = [
+            {"factor_id": "DRF01", "severity": "low", "quote": "a"},
+            {"factor_id": "DRF02", "severity": "high", "quote": "b"},
+        ] + [
+            {"factor_id": f"DRF{i}", "severity": "medium", "quote": "x"}
+            for i in range(3, 10)
+        ]
+        drift = narrative_fx._brief_drift({"current": {"findings": findings}})
+        self.assertEqual(len(drift["findings"]), 6)
+        self.assertEqual(drift["findings"][0]["severity"], "high")
+        self.assertEqual(narrative_fx._brief_drift(None)["findings"], [])
+        self.assertEqual(narrative_fx._brief_report_facts(None), {})
+
+    def test_internal_ids_humanized_everywhere_except_analysis_id(self):
+        sid = self.scan["signals"][0]["id"]
+        raw = {
+            "verdict": {"headline": "h", "essence": f"{sid} 与 DRF04 相关"},
+            "analyses": [{
+                "id": sid, "substance": f"{sid} 说明业绩拐点",
+                "benign": "", "risk": "", "action": "",
+            }],
+            "cross_checks": [
+                "SIG003与narrative_drift_brief的DRF01同源，audit_evidence.quarterly_discrepancy显示口径调整"
+            ],
+            "caveats": ["report_facts_brief 数据不足"],
+        }
+        fraud = {"patterns": [{"id": "FRD002", "title": "利润含金量偏低"}]}
+        out = narrative_fx._normalize(raw, self.scan, 16, fraud)
+        self.assertEqual(out["analyses"][0]["id"], sid)
+        self.assertNotIn(sid, out["analyses"][0]["substance"])
+        self.assertNotIn("DRF04", out["verdict"]["essence"])
+        cross = out["cross_checks"][0]
+        self.assertNotRegex(cross, r"SIG\d{3}|DRF\d{2}|narrative_drift_brief|audit_evidence")
+        self.assertIn("跨期叙事对照", cross)
+        self.assertIn("分季度口径差异", cross)
+        self.assertIn("年报原文事实卡", out["caveats"][0])
+
+    def test_prompt_asks_for_cross_source_cross_checks(self):
+        text = narrative_fx.load_prompt("financial_forensics")
+        self.assertIn("cross_checks", text)
+        self.assertIn("report_facts_brief", text)
+        self.assertIn("narrative_drift_brief", text)
+
+
 if __name__ == "__main__":
     unittest.main()

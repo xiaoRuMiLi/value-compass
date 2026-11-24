@@ -15,6 +15,9 @@ data/
 generated/
 scratch/
 
+# 本地工作记录
+.workbuddy/
+
 # 临时文件
 *.log
 .DS_Store
