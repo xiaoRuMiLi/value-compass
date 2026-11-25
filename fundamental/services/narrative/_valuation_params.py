@@ -38,7 +38,8 @@ _GAP = 0.02  # discount - growth 的最小间距
 
 # 校准逻辑升级时递增，让缓存失效。
 # v4：估值主链路改为注入校准参数；旧缓存里的 rationale 基于缺失的 DPS/FCF，必须重算。
-_VALUATION_PARAMS_VERSION = 4
+# v5：新增乐观/悲观情景三档输出。
+_VALUATION_PARAMS_VERSION = 5
 
 _METHOD_LABELS = {"ddm": "股利折现", "dcf": "现金流折现"}
 _RATING_LABELS = {
@@ -62,23 +63,32 @@ def _clamp(value: Any, low: float, high: float, default: float) -> float:
     return max(low, min(high, _num(value, default)))
 
 
-def _normalize_params(raw: Any) -> dict[str, Any]:
-    """把 LLM 输出的参数钳制到边界，并保证 discount - growth 有足够间距。"""
+_DEFAULTS = {
+    "ddm": {"growth": 0.03, "discount": 0.09},
+    "dcf": {"growth": 0.05, "discount": 0.10, "terminal_growth": 0.02},
+}
+
+
+def _normalize_block(raw: Any, defaults: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
+    """把一组 DDM/DCF 参数钳制到边界，并保证 discount - growth 有足够间距。"""
 
     raw = raw if isinstance(raw, dict) else {}
     ddm = raw.get("ddm") if isinstance(raw.get("ddm"), dict) else {}
     dcf = raw.get("dcf") if isinstance(raw.get("dcf"), dict) else {}
+    base = defaults or _DEFAULTS
+    dd = base["ddm"]
+    dc = base["dcf"]
 
-    ddm_g = _clamp(ddm.get("growth"), _GROWTH_MIN, _GROWTH_MAX, 0.03)
-    ddm_r = _clamp(ddm.get("discount"), _DISCOUNT_MIN, _DISCOUNT_MAX, 0.09)
+    ddm_g = _clamp(ddm.get("growth"), _GROWTH_MIN, _GROWTH_MAX, dd["growth"])
+    ddm_r = _clamp(ddm.get("discount"), _DISCOUNT_MIN, _DISCOUNT_MAX, dd["discount"])
     if ddm_r - ddm_g < _GAP:
         ddm_r = min(_DISCOUNT_MAX, ddm_g + _GAP)
         if ddm_r - ddm_g < _GAP:  # g 贴到上限时反过来压 g
             ddm_g = ddm_r - _GAP
 
-    dcf_g = _clamp(dcf.get("growth"), _GROWTH_MIN, _GROWTH_MAX, 0.05)
-    dcf_t = _clamp(dcf.get("terminal_growth"), _TERMINAL_MIN, _TERMINAL_MAX, 0.02)
-    dcf_r = _clamp(dcf.get("discount"), _DISCOUNT_MIN, _DISCOUNT_MAX, 0.10)
+    dcf_g = _clamp(dcf.get("growth"), _GROWTH_MIN, _GROWTH_MAX, dc["growth"])
+    dcf_t = _clamp(dcf.get("terminal_growth"), _TERMINAL_MIN, _TERMINAL_MAX, dc["terminal_growth"])
+    dcf_r = _clamp(dcf.get("discount"), _DISCOUNT_MIN, _DISCOUNT_MAX, dc["discount"])
     if dcf_r - dcf_g < _GAP:
         dcf_r = min(_DISCOUNT_MAX, dcf_g + _GAP)
     if dcf_r - dcf_t < _GAP:
@@ -100,8 +110,54 @@ def _normalize_params(raw: Any) -> dict[str, Any]:
             "terminal_growth": round(dcf_t, 4),
             "rationale": rationale(dcf, "由模型按保守原则校准；详见参数依据。"),
         },
-        "summary": str(raw.get("summary") or "").strip() if isinstance(raw.get("summary"), str) else "",
     }
+
+
+def _derive_scenarios(base: dict[str, Any]) -> dict[str, Any]:
+    """LLM 未给情景时，从基准参数派生乐观/悲观档（仍经边界钳制）。"""
+
+    d, c = base["ddm"], base["dcf"]
+    return {
+        "optimistic": _normalize_block(
+            {
+                "ddm": {"growth": d["growth"] + 0.01, "discount": d["discount"] - 0.01,
+                        "rationale": "假设主业景气回升、股东回报政策延续，增长上调、折现率下调；属情景推演，非基准预测。"},
+                "dcf": {"growth": c["growth"] + 0.02, "discount": c["discount"] - 0.01,
+                        "terminal_growth": c["terminal_growth"] + 0.01,
+                        "rationale": "假设自由现金流改善、风险溢价回落，增长与永续上调；属情景推演，非基准预测。"},
+            }
+        ),
+        "pessimistic": _normalize_block(
+            {
+                "ddm": {"growth": d["growth"] - 0.01, "discount": d["discount"] + 0.01,
+                        "rationale": "假设增长放缓、股东回报不可持续，增长下调、折现率上调；属情景推演，非基准预测。"},
+                "dcf": {"growth": c["growth"] - 0.02, "discount": c["discount"] + 0.01,
+                        "terminal_growth": c["terminal_growth"] - 0.01,
+                        "rationale": "假设竞争加剧、现金流质量走弱，增长与永续下调；属情景推演，非基准预测。"},
+            }
+        ),
+    }
+
+
+def _normalize_params(raw: Any) -> dict[str, Any]:
+    """归一化 LLM 输出：基准 + 乐观/悲观情景，全部钳制到边界。"""
+
+    raw = raw if isinstance(raw, dict) else {}
+    base = _normalize_block(raw)
+    scenarios_raw = raw.get("scenarios") if isinstance(raw.get("scenarios"), dict) else {}
+    derived = _derive_scenarios(base)
+    scenarios: dict[str, Any] = {}
+    for name in ("optimistic", "pessimistic"):
+        block = scenarios_raw.get(name)
+        if isinstance(block, dict) and (
+            isinstance(block.get("ddm"), dict) or isinstance(block.get("dcf"), dict)
+        ):
+            scenarios[name] = _normalize_block(block)
+        else:
+            scenarios[name] = derived[name]
+    base["scenarios"] = scenarios
+    base["summary"] = str(raw.get("summary") or "").strip() if isinstance(raw.get("summary"), str) else ""
+    return base
 
 
 def _fallback_params(facts: dict[str, Any]) -> dict[str, Any]:
@@ -121,7 +177,7 @@ def _fallback_params(facts: dict[str, Any]) -> dict[str, Any]:
     else:
         hist_g = 0.03
     g = _clamp(min(hist_g, 0.06), _GROWTH_MIN, 0.08, 0.03)  # 永续 g 更保守，上限 8%
-    return {
+    base = {
         "ddm": {
             "growth": round(g, 4),
             "discount": round(max(g + 0.04, 0.09), 4),
@@ -135,6 +191,8 @@ def _fallback_params(facts: dict[str, Any]) -> dict[str, Any]:
         },
         "summary": "模板回退：参数由历史净利增速推导，未经 LLM 结合行业与研报校准，仅供参考。",
     }
+    base["scenarios"] = _derive_scenarios(base)
+    return base
 
 
 def _dividend_reinvestment(
@@ -377,11 +435,6 @@ def _recompute(facts: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
     fcf = inputs.get("fcf")
     shares = inputs.get("shares")
 
-    d = params["ddm"]
-    ddm = evaluate_ddm(dps, price, growth=d["growth"], discount=d["discount"])
-    c = params["dcf"]
-    dcf = evaluate_dcf(fcf, shares, price, growth=c["growth"], discount=c["discount"], terminal_growth=c["terminal_growth"])
-
     def to_dict(result: Any, method: str) -> dict[str, Any]:
         return {
             "method": method,
@@ -389,18 +442,36 @@ def _recompute(facts: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
             "fair_value_high": result.fair_value_high,
             "margin_of_safety": result.margin_of_safety,
             "current_price": result.current_price,
-            # 与 analyze 主链路同构的字段，供前端直接用校准结果替换固定估值卡片
             "assumptions": dict(result.assumptions),
             "inputs": dict(result.inputs),
             "basis": "calibrated",
         }
 
-    calibrated = {
-        "ddm": to_dict(ddm, "ddm"),
-        "dcf": to_dict(dcf, "dcf"),
-        "dividend_reinvestment": _dividend_reinvestment(dps, price, d["growth"]),
+    def evaluate_one(p: dict[str, Any]) -> dict[str, Any]:
+        d, c = p["ddm"], p["dcf"]
+        block = {
+            "ddm": to_dict(
+                evaluate_ddm(dps, price, growth=d["growth"], discount=d["discount"]), "ddm"
+            ),
+            "dcf": to_dict(
+                evaluate_dcf(
+                    fcf, shares, price,
+                    growth=c["growth"], discount=c["discount"],
+                    terminal_growth=c["terminal_growth"],
+                ),
+                "dcf",
+            ),
+        }
+        block["overall"] = _overall_range(block)
+        return block
+
+    calibrated = evaluate_one(params)
+    d = params["ddm"]
+    calibrated["dividend_reinvestment"] = _dividend_reinvestment(dps, price, d["growth"])
+    # 乐观/悲观情景各自独立重算，输入不变、只变假设，得到可对照的三档合理价。
+    calibrated["scenarios"] = {
+        name: evaluate_one(p) for name, p in (params.get("scenarios") or {}).items()
     }
-    calibrated["overall"] = _overall_range(calibrated)
     return calibrated
 
 
@@ -425,7 +496,7 @@ def _finalize(facts: dict[str, Any]) -> dict[str, Any]:
         system = load_prompt("valuation_params")
         data = chat_json(
             [ChatMessage("system", system), ChatMessage("user", _build_prompt(facts))],
-            max_tokens=_max_tokens("valuation_params", 2000),
+            max_tokens=_max_tokens("valuation_params", 3500),
         )
         params = _normalize_params(data)
         return _assemble(facts, params, "llm")

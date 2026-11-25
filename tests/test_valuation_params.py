@@ -44,10 +44,12 @@ class TestCalibrationInjection(unittest.TestCase):
         facts = {
             "model_inputs": {"dps": 10.0, "fcf": 1e10, "shares": 1e9, "price": 100.0}
         }
-        params = {
-            "ddm": {"growth": 0.03, "discount": 0.09},
-            "dcf": {"growth": 0.05, "discount": 0.10, "terminal_growth": 0.02},
-        }
+        params = vp._normalize_params(
+            {
+                "ddm": {"growth": 0.03, "discount": 0.09},
+                "dcf": {"growth": 0.05, "discount": 0.10, "terminal_growth": 0.02},
+            }
+        )
         out = vp._recompute(facts, params)
         for method in ("ddm", "dcf"):
             item = out[method]
@@ -56,6 +58,45 @@ class TestCalibrationInjection(unittest.TestCase):
             self.assertIn("growth", item["assumptions"])
             self.assertTrue(item["inputs"])
             self.assertIsNotNone(item["fair_value_low"])
+
+
+class TestValuationScenarios(unittest.TestCase):
+    def test_normalize_keeps_llm_scenarios_and_clamps(self):
+        raw = {
+            "ddm": {"growth": 0.03, "discount": 0.09},
+            "dcf": {"growth": 0.05, "discount": 0.10, "terminal_growth": 0.02},
+            "scenarios": {
+                "optimistic": {"ddm": {"growth": 0.99, "discount": 0.01},
+                               "dcf": {"growth": 0.08, "discount": 0.09, "terminal_growth": 0.03}},
+                "pessimistic": {"ddm": {"growth": 0.01, "discount": 0.11},
+                                "dcf": {"growth": 0.02, "discount": 0.12, "terminal_growth": 0.01}},
+            },
+        }
+        p = vp._normalize_params(raw)
+        opt = p["scenarios"]["optimistic"]["ddm"]
+        self.assertLessEqual(opt["growth"], vp._GROWTH_MAX)
+        self.assertGreaterEqual(opt["discount"] - opt["growth"], vp._GAP - 1e-6)
+        self.assertEqual(p["scenarios"]["pessimistic"]["dcf"]["growth"], 0.02)
+
+    def test_derive_scenarios_when_llm_omits_them(self):
+        p = vp._normalize_params(
+            {"ddm": {"growth": 0.03, "discount": 0.09},
+             "dcf": {"growth": 0.05, "discount": 0.10, "terminal_growth": 0.02}}
+        )
+        self.assertLess(p["scenarios"]["pessimistic"]["ddm"]["growth"], p["ddm"]["growth"])
+        self.assertGreater(p["scenarios"]["pessimistic"]["ddm"]["discount"], p["ddm"]["discount"])
+        self.assertGreater(p["scenarios"]["optimistic"]["dcf"]["growth"], p["dcf"]["growth"])
+
+    def test_recompute_returns_three_tiers(self):
+        facts = {"model_inputs": {"dps": 10.0, "fcf": 1e10, "shares": 1e9, "price": 100.0}}
+        out = vp._recompute(facts, vp._normalize_params({}))
+        self.assertEqual(set(out["scenarios"]), {"optimistic", "pessimistic"})
+        base_dcf = out["dcf"]["fair_value_low"]
+        opt_dcf = out["scenarios"]["optimistic"]["dcf"]["fair_value_low"]
+        pess_dcf = out["scenarios"]["pessimistic"]["dcf"]["fair_value_low"]
+        self.assertLess(pess_dcf, base_dcf)
+        self.assertLess(base_dcf, opt_dcf)
+        self.assertIn("overall", out["scenarios"]["optimistic"])
 
 
 class TestNormalizeParams(unittest.TestCase):

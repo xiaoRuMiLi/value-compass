@@ -149,7 +149,11 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
   改参数口径或输出结构后递增 `narrative/_common.py` 的 `_VALUATION_PARAMS_VERSION` 使缓存失效（当前 v4）。
   研报正文由 `utils/research_text.py` 抓取（东财详情页 `#ctx-content`，缓存于 `data/cache/research/`，
   失败降级为空列表，绝不打断主流程）；无 LLM 时回退到由历史净利增速推导的保守参数。
-  端点 `/api/stock/{symbol}/valuation-params?refresh=` 重新校准；报告页校准完成后就地替换 DDM/DCF 卡片。
+  端点 `/api/stock/{symbol}/valuation-params?refresh=` 重新校准。校准同时输出**悲观 / 基准 / 乐观**三档
+  参数与区间：LLM 按公司实际不确定来源定参（不是机械对称），缺失时由 `_derive_scenarios()` 从基准派生；
+  三档共用同一份 DPS/FCF 输入，只变 g/r/永续。报告页上方估值区只显示相对估值与格雷厄姆，
+  DDM/DCF 统一在下方「估值参数校准」展示一套，避免上下重复。
+  改情景口径后递增 `_VALUATION_PARAMS_VERSION`（当前 v5）使缓存失效。
 
 ## 5. 调整财报体检的触发阈值
 

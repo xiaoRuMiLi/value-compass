@@ -312,12 +312,6 @@ main {
   margin-bottom: 14px;
 }
 
-/* DDM/DCF 已被校准参数替换，与下方「估值参数校准」保持同一套结果 */
-.val-block.val-calibrated .val-row {
-  border-left: 2px solid #0d9488;
-  padding-left: 8px;
-}
-
 .val-block .val-row {
   border-bottom: none;
   padding-bottom: 2px;
@@ -446,6 +440,66 @@ main {
   font-size: 11px;
   line-height: 1.6;
   color: #64748b;
+}
+
+.vp-overall-scenarios {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #bfdbfe;
+  font-size: 12px;
+  font-weight: 500;
+  color: #334155;
+}
+
+/* 悲观/基准/乐观三档情景 */
+.vp-scenarios {
+  margin: 10px 0 8px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+}
+
+.vp-sc-head {
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.vp-sc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.vp-sc-row:first-of-type {
+  border-top: none;
+}
+
+.vp-sc-tag {
+  flex: 0 0 30px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.sc-pessimistic .vp-sc-tag { color: #64748b; }
+.sc-base .vp-sc-tag { color: #1d4ed8; }
+.sc-optimistic .vp-sc-tag { color: #b45309; }
+
+.vp-sc-params {
+  flex: 1;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.vp-sc-range {
+  font-weight: 600;
+  color: #1e293b;
+  white-space: nowrap;
 }
 
 .vp-sellside,

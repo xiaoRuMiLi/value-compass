@@ -35,6 +35,7 @@
 
   function fmtParamValue(key, value) {
     if (value == null) return "数据缺失";
+    if (typeof value === "object") return "见口径说明";
     if (["growth", "discount", "terminal_growth", "pe_percentile"].includes(key)) {
       return `${(value * 100).toFixed(1)}%`;
     }
@@ -187,42 +188,13 @@
     modal.setAttribute("aria-hidden", "true");
   }
 
-  let lastAnalysisValuation = null;
-
-  // 校准完成后，用校准结果替换上方 DDM/DCF 两张卡片，避免页面出现两套互相矛盾的合理价。
-  // 就地更新而非重渲染，避免冲掉异步附加的估值解读文案。
-  function applyCalibratedValuation(data) {
-    const cal = (data && data.calibrated) || {};
-    for (const method of ["ddm", "dcf"]) {
-      const cv = cal[method];
-      const block = document.getElementById("val-" + method);
-      if (!cv || cv.fair_value_low == null || !block) continue;
-      const range = block.querySelector(".val-range");
-      if (range) range.textContent = `${cv.fair_value_low} ~ ${cv.fair_value_high}`;
-      const margin = block.querySelector(".val-margin");
-      if (margin) margin.textContent = `安全边际 ${fmtPct(cv.margin_of_safety)}`;
-      const original = (lastAnalysisValuation || []).find((item) => item.method === method);
-      const src = { ...(cv.assumptions || {}) };
-      for (const key of ["fcf_source", "dps_basis"]) {
-        if (original && original.assumptions && original.assumptions[key]) {
-          src[key] = original.assumptions[key];
-        }
-      }
-      Object.assign(src, cv.inputs || {});
-      const params = Object.entries(src)
-        .filter(([key]) => key !== "formula" && key !== "param_source")
-        .map(([key, value]) => `${PARAM_LABELS[key] || key} ${fmtParamValue(key, value)}`);
-      const paramsEl = block.querySelector(".val-params");
-      if (params.length && paramsEl) paramsEl.textContent = params.join("；");
-      block.classList.add("val-calibrated");
-    }
-  }
-
   function renderValuation(valuation) {
-    lastAnalysisValuation = valuation;
     const box = document.getElementById("valuation");
-    const names = { relative: "相对估值", graham: "格雷厄姆", ddm: "股利折现", dcf: "现金流折现" };
-    for (const item of valuation) {
+    const names = { relative: "相对估值", graham: "格雷厄姆" };
+    // DDM/DCF 只在下方「估值参数校准」展示一套，避免上下重复同一组区间。
+    for (const item of (valuation || []).filter(
+      (v) => v.method === "relative" || v.method === "graham"
+    )) {
       const block = el("div", "val-block");
       block.id = "val-" + item.method;
       const row = el("div", "val-row");
@@ -485,6 +457,33 @@
       });
   }
 
+  // 悲观/基准/乐观三档对照：输入相同，只变 g/r 假设。
+  function renderScenarioRows(data, method) {
+    const cal = data.calibrated || {};
+    const params = data.params || {};
+    const scCal = cal.scenarios || {};
+    const scP = params.scenarios || {};
+    const rows = [
+      { key: "pessimistic", label: "悲观", v: (scCal.pessimistic || {})[method], p: (scP.pessimistic || {})[method] },
+      { key: "base", label: "基准", v: cal[method], p: params[method] },
+      { key: "optimistic", label: "乐观", v: (scCal.optimistic || {})[method], p: (scP.optimistic || {})[method] },
+    ];
+    const box = el("div", "vp-scenarios");
+    box.appendChild(el("div", "vp-sc-head", "情景估计（同一输入，不同假设）"));
+    for (const row of rows) {
+      if (!row.v || row.v.fair_value_low == null) continue;
+      const line = el("div", `vp-sc-row sc-${row.key}`);
+      line.appendChild(el("span", "vp-sc-tag", row.label));
+      const g = row.p && row.p.growth != null ? `${(row.p.growth * 100).toFixed(1)}%` : "-";
+      const r = row.p && row.p.discount != null ? `${(row.p.discount * 100).toFixed(1)}%` : "-";
+      const t = row.p && row.p.terminal_growth != null ? ` · 永续 ${(row.p.terminal_growth * 100).toFixed(1)}%` : "";
+      line.appendChild(el("span", "vp-sc-params", `g ${g} · r ${r}${t}`));
+      line.appendChild(el("span", "vp-sc-range", `${row.v.fair_value_low} ~ ${row.v.fair_value_high}`));
+      box.appendChild(line);
+    }
+    return box;
+  }
+
   function renderValuationParams(data) {
     const box = document.getElementById("valuationParams");
     box.innerHTML = "";
@@ -514,6 +513,15 @@
         summary.push(`相对现价 ${fmtPct(overall.margin_of_safety)}`);
       }
       hero.appendChild(el("div", "vp-overall-center", summary.join(" · ")));
+      const scCal = cal.scenarios || {};
+      const scParts = [];
+      for (const [key, label] of [["pessimistic", "悲观"], ["optimistic", "乐观"]]) {
+        const o = (scCal[key] || {}).overall;
+        if (o && o.low != null) scParts.push(`${label} ${o.low} ~ ${o.high}`);
+      }
+      if (scParts.length) {
+        hero.appendChild(el("div", "vp-overall-scenarios", scParts.join("　｜　")));
+      }
       if (overall.note) hero.appendChild(el("div", "vp-overall-note", overall.note));
       box.appendChild(hero);
     }
@@ -571,8 +579,9 @@
         v.fair_value_low == null
           ? "暂无数据（缺少自由现金流等输入）"
           : `${v.fair_value_low} ~ ${v.fair_value_high} 元`;
-      card.appendChild(el("div", "vp-range", `校准后合理区间：${range}`));
+      card.appendChild(el("div", "vp-range", `基准合理区间：${range}`));
       card.appendChild(el("div", "vp-margin", `安全边际 ${fmtPct(v.margin_of_safety)}`));
+      card.appendChild(renderScenarioRows(data, method));
       if (p.rationale) {
         card.appendChild(el("div", "vp-rationale", p.rationale));
       }
@@ -604,10 +613,7 @@
   function loadValuationParams() {
     const box = document.getElementById("valuationParams");
     getJSON(`/api/stock/${symbol}/valuation-params`)
-      .then((data) => {
-        renderValuationParams(data);
-        applyCalibratedValuation(data);
-      })
+      .then((data) => renderValuationParams(data))
       .catch(() => {
         box.innerHTML = "";
         box.appendChild(el("p", "muted", "估值参数校准暂不可用"));
