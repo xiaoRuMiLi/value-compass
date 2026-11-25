@@ -20,10 +20,10 @@
   }
 
   const PARAM_LABELS = {
-    growth: "增长率",
-    discount: "折现率",
+    growth: "预测增长率",
+    discount: "折现率（要求回报率）",
     years: "预测年数",
-    terminal_growth: "永续增长率",
+    terminal_growth: "10年后永续增长率",
     median_pe: "历史PE中位数",
     pe_percentile: "当前PE分位",
     eps: "EPS",
@@ -457,7 +457,32 @@
       });
   }
 
-  // 悲观/基准/乐观三档对照：输入相同，只变 g/r 假设。
+  const pct1 = (v) => (v == null ? "-" : `${(v * 100).toFixed(1)}%`);
+
+  // 把模型的 g/r 翻译成用户能直接读懂的中文，并明确增长率适用的年限。
+  function describeParams(method, p) {
+    if (!p) return "";
+    if (method === "ddm") {
+      return `股息长期增长率 ${pct1(p.growth)}（长期永续） · 折现率 ${pct1(p.discount)}`;
+    }
+    return `前 10 年现金流增长率 ${pct1(p.growth)} · 10 年后永续增长率 ${pct1(p.terminal_growth)} · 折现率 ${pct1(p.discount)}`;
+  }
+
+  // 情景行空间有限，用更紧凑的中文表述，年限含义与基准卡片一致。
+  function describeScenarioParams(method, p) {
+    if (!p) return "-";
+    if (method === "ddm") {
+      return `永续增长率 ${pct1(p.growth)} · 折现率 ${pct1(p.discount)}`;
+    }
+    return `前10年 ${pct1(p.growth)} · 永续 ${pct1(p.terminal_growth)} · 折现率 ${pct1(p.discount)}`;
+  }
+
+  const PARAM_NOTES = {
+    ddm: "股息增长率按长期永续假设（无固定预测年限）；折现率即要求回报率，越高则合理价越低。合理区间为中枢 ±20%。",
+    dcf: "前 10 年为可预测增长期，第 11 年起按永续增长率计算终值；折现率即要求回报率，越高则合理价越低。合理区间为中枢 ±20%。",
+  };
+
+  // 悲观/基准/乐观三档对照：输入相同，只变增长与折现假设。
   function renderScenarioRows(data, method) {
     const cal = data.calibrated || {};
     const params = data.params || {};
@@ -474,10 +499,7 @@
       if (!row.v || row.v.fair_value_low == null) continue;
       const line = el("div", `vp-sc-row sc-${row.key}`);
       line.appendChild(el("span", "vp-sc-tag", row.label));
-      const g = row.p && row.p.growth != null ? `${(row.p.growth * 100).toFixed(1)}%` : "-";
-      const r = row.p && row.p.discount != null ? `${(row.p.discount * 100).toFixed(1)}%` : "-";
-      const t = row.p && row.p.terminal_growth != null ? ` · 永续 ${(row.p.terminal_growth * 100).toFixed(1)}%` : "";
-      line.appendChild(el("span", "vp-sc-params", `g ${g} · r ${r}${t}`));
+      line.appendChild(el("span", "vp-sc-params", describeScenarioParams(method, row.p)));
       line.appendChild(el("span", "vp-sc-range", `${row.v.fair_value_low} ~ ${row.v.fair_value_high}`));
       box.appendChild(line);
     }
@@ -567,13 +589,8 @@
       const head = el("div", "vp-card-head", names[method]);
       card.appendChild(head);
 
-      const paramParts = [];
-      paramParts.push(`增长 g ${(p.growth * 100).toFixed(1)}%`);
-      paramParts.push(`折现 r ${(p.discount * 100).toFixed(1)}%`);
-      if (p.terminal_growth != null) {
-        paramParts.push(`永续 ${(p.terminal_growth * 100).toFixed(1)}%`);
-      }
-      card.appendChild(el("div", "vp-params", paramParts.join(" · ")));
+      card.appendChild(el("div", "vp-params", describeParams(method, p)));
+      card.appendChild(el("div", "vp-param-note", PARAM_NOTES[method] || ""));
 
       const range =
         v.fair_value_low == null
@@ -591,7 +608,7 @@
     const reinvest = cal.dividend_reinvestment;
     if (reinvest) {
       const ri = el("div", "vp-reinvest");
-      ri.appendChild(el("div", "vp-card-head", `10 年股息复投预期（按 g ${(reinvest.growth * 100).toFixed(1)}%）`));
+      ri.appendChild(el("div", "vp-card-head", `10 年股息复投预期（假设股息每年增长 ${pct1(reinvest.growth)}）`));
       const lines = [
         `期初买入 1 股 → 10 年后约 ${reinvest.ending_shares} 股`,
         `期末股价约 ${reinvest.ending_price} 元，持仓市值约 ${reinvest.ending_value} 元`,
