@@ -124,6 +124,36 @@ def get_kline(
         conn.close()
 
 
+@router.get("/stock/{symbol}/valuation-history")
+def get_valuation_history(symbol: str) -> dict[str, Any]:
+    """报告页 K 线叠加用：按交易日的历史 PE/PB + 按报告期的年度 ROE。
+
+    取值直接来自 valuations / financials 表，web 层只做透传，不做估值计算。
+    """
+    conn = db.init_db()
+    try:
+        stock_id = _resolve_stock(conn, symbol)
+        valuations = repository.fetch_all(
+            conn,
+            "SELECT trade_date, pe_ttm, pb_mrq FROM valuations WHERE stock_id = ? "
+            "ORDER BY trade_date ASC",
+            (stock_id,),
+        )
+        roe_rows = repository.fetch_all(
+            conn,
+            "SELECT report_date, roe FROM financials WHERE stock_id = ? "
+            "AND report_type = 'FY' AND roe IS NOT NULL ORDER BY report_date ASC",
+            (stock_id,),
+        )
+        roe = [
+            {"report_date": row["report_date"], "roe": round(float(row["roe"]), 4)}
+            for row in roe_rows
+        ]
+        return {"valuations": _rows(valuations), "roe": roe}
+    finally:
+        conn.close()
+
+
 @router.get("/stock/{symbol}/analysis")
 def get_analysis(symbol: str) -> dict[str, Any]:
     result = analyze_stock(symbol)

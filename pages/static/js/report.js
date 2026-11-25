@@ -3,10 +3,10 @@
 
   const { getJSON } = window.VC;
 
-  // K 线图与财报体检是两条独立的异步链路，谁先到都不丢：都就绪后由 applyForensicMarkers 合流
+  // K 线与估值叠加折线共用一条时间轴：两路数据都就绪后合成
   let klineChart = null;
   let klineBars = [];
-  let forensicData = null;
+  let valuationHistory = null;
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -248,11 +248,6 @@
   }
 
   function renderReview(review, moat, cycle, fraud, delisting) {
-    document.getElementById("reviewSummary").textContent = review.summary;
-    const findings = document.getElementById("findings");
-    for (const finding of review.findings) {
-      findings.appendChild(el("li", "finding", `[${finding.type}] ${finding.detail}`));
-    }
     const tags = document.getElementById("tags");
     tags.appendChild(el("span", "tag", `护城河：${moat.rating}`));
     tags.appendChild(el("span", "tag", `周期：${cycle.position}`));
@@ -260,9 +255,17 @@
     if (delisting.score != null) tags.appendChild(el("span", "tag", `退市风险：${delisting.score}`));
   }
 
-  function markerTooltip(params) {
+  // K 线叠加三条估值折线：PE(TTM)、PB(MRQ) 按交易日对齐；ROE 按年报报告期锚定到最近交易日。
+  // 三条线用各自独立的 Y 轴，避免量纲差异把它们压扁；蜡烛用左轴。
+  const OVERLAY_COLORS = { pe: "#7c3aed", pb: "#0891b2", roe: "#d97706" };
+
+  function esc(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function overlayTooltip(params) {
     const arr = Array.isArray(params) ? params : [params];
-    const esc = window.VC.escapeHtml;
     const lines = [];
     const candle = arr.find((p) => p.seriesType === "candlestick");
     if (candle) {
@@ -276,101 +279,82 @@
         }
       }
     }
-    const events = arr.filter((p) => p.seriesType === "scatter" && p.data && p.data.meta);
-    for (const ev of events) {
-      const m = ev.data.meta;
+    for (const p of arr) {
+      if (!["pe", "pb", "roe"].includes(p.seriesName) || p.value == null) continue;
+      const label = { pe: "市盈率 PE", pb: "市净率 PB", roe: "ROE" }[p.seriesName];
       lines.push(
-        '<div class="kl-tt-ev" style="border-left:3px solid ' + m.color + '">'
-        + '<div class="kl-tt-ev-head">' + esc(m.title)
-        + ' <span class="kl-tt-tone">' + esc(m.toneLabel) + "</span></div>"
-        + '<div class="kl-tt-meta">' + esc(m.period) + " · " + esc(m.severity)
-        + " · " + esc(m.judgement) + "</div>"
-        + (m.detail ? '<div class="kl-tt-detail">' + esc(m.detail) + "</div>" : "")
-        + '<div class="kl-tt-hint">' + esc(m.hint || "点击圆点定位到上方对应卡片") + "</div>"
-        + "</div>"
+        '<div class="kl-tt-meta" style="border-left:3px solid ' + OVERLAY_COLORS[p.seriesName] + ';padding-left:6px">'
+        + label + " " + Number(p.value).toFixed(2) + (p.seriesName === "roe" ? "%" : "") + "</div>"
       );
     }
     return lines.join("") || "";
   }
 
-  function renderMarkerLegend(result, total) {
-    const box = document.getElementById("klineMarkerLegend");
-    if (!box) return;
-    box.innerHTML = "";
-    if (!total) {
-      box.appendChild(el("span", "kl-legend-empty", "财报体检加载后，将按报告期在此标注关键点"));
-      return;
+  // 把估值序列对齐到 K 线交易日 index：PE/PB 用 exact trade_date，ROE 用「报告期末或之后最近交易日」
+  function alignOverlay(hist) {
+    const dates = klineBars.map((b) => b.trade_date);
+    const idxByDate = new Map(dates.map((d, i) => [d, i]));
+    const pe = [], pb = [], roe = [];
+    for (const d of dates) { pe.push(null); pb.push(null); roe.push(null); }
+    for (const v of (hist && hist.valuations) || []) {
+      const i = idxByDate.get(v.trade_date);
+      if (i == null) continue;
+      if (v.pe_ttm != null) pe[i] = Number(v.pe_ttm);
+      if (v.pb_mrq != null) pb[i] = Number(v.pb_mrq);
     }
-    const tones = window.VC.MARKER_TONES || {};
-    for (const key of Object.keys(tones)) {
-      const info = tones[key];
-      const count = (result.counts && result.counts[key]) || 0;
-      const item = el("span", "kl-legend-item");
-      const dot = el("span", "kl-legend-dot");
-      if (info) dot.style.background = info.color;
-      // 原文通读线索用菱形，与圆形的规则风险点在视觉上区分
-      if (info && info.symbol === "diamond") dot.classList.add("is-diamond");
-      item.appendChild(dot);
-      item.appendChild(el("span", null, (info ? info.label : key) + " " + count));
-      box.appendChild(item);
+    for (const r of (hist && hist.roe) || []) {
+      if (r.roe == null) continue;
+      let i = dates.findIndex((d) => d >= r.report_date);
+      if (i < 0) i = dates.length - 1;
+      roe[i] = Number(r.roe);
     }
-    box.appendChild(
-      el("span", "kl-legend-hint", `共 ${total} 个财报关键点（含原文通读线索）· 按报告期定位 · 点击圆点跳转到上方对应卡片`)
-    );
+    return { pe, pb, roe };
   }
 
-  function applyForensicMarkers() {
-    if (!klineChart) return;
-    const result = window.VC.buildForensicMarkers
-      ? window.VC.buildForensicMarkers(forensicData, klineBars)
-      : { points: [], counts: {}, earliest: null };
-    const points = result.points || [];
-    // 按 series 下标合并更新：index 0 保留蜡烛，index 1 只换事件点
-    klineChart.setOption({ series: [{}, { data: points }] });
-    renderMarkerLegend(result, points.length);
-    if (points.length && result.earliest && klineBars.length) {
-      // 全历史 K 线很密，把默认视窗拉近到事件区间，否则近年的点会挤成一条线
-      const idx = klineBars.findIndex((b) => b.trade_date >= result.earliest);
-      if (idx > 0) {
-        const start = Math.max(0, Math.min(95, (idx / klineBars.length) * 100 - 4));
-        klineChart.setOption({
-          dataZoom: [{ start: start, end: 100 }, { start: start, end: 100 }],
-        });
-      }
-    }
+  function applyOverlay() {
+    if (!klineChart || !valuationHistory) return;
+    const series = alignOverlay(valuationHistory);
+    klineChart.setOption({
+      series: [
+        {},
+        { data: series.pe },
+        { data: series.pb },
+        { data: series.roe },
+      ],
+    });
   }
 
   function renderKline(kline) {
     klineBars = kline || [];
     if (!klineChart) {
       klineChart = echarts.init(document.getElementById("kline"));
-      klineChart.on("click", function (params) {
-        if (params.seriesType !== "scatter" || !params.data) return;
-        // 风险点与原文通读线索都带 anchorId；旧数据没有时退回信号 id 定位
-        if (params.data.anchorId && window.VC.focusForensicAnchor) {
-          window.VC.focusForensicAnchor(params.data.anchorId);
-        } else if (params.data.signalId) {
-          window.VC.focusForensicSignal(params.data.signalId);
-        }
-      });
       window.addEventListener("resize", function () {
         if (klineChart) klineChart.resize();
       });
     }
     klineChart.setOption({
       animation: false,
-      grid: { left: 56, right: 20, top: 20, bottom: 60 },
+      grid: { left: 56, right: 52, top: 36, bottom: 60 },
+      legend: {
+        data: ["市盈率 PE", "市净率 PB", "ROE"],
+        top: 4,
+        textStyle: { color: "#64748b", fontSize: 11 },
+      },
       xAxis: { type: "category", data: klineBars.map((b) => b.trade_date) },
-      // 第二条隐藏轴专供底部事件带定位，不参与价格刻度，避免干扰蜡烛
       yAxis: [
-        { scale: true },
-        { min: 0, max: 1, show: false, splitLine: { show: false } },
+        { scale: true, name: "价格", nameTextStyle: { color: "#94a3b8", fontSize: 10 } },
+        { scale: true, position: "right", name: "PE", nameTextStyle: { color: OVERLAY_COLORS.pe, fontSize: 10 },
+          axisLabel: { color: OVERLAY_COLORS.pe }, splitLine: { show: false } },
+        { scale: true, position: "right", offset: 38, name: "PB", nameTextStyle: { color: OVERLAY_COLORS.pb, fontSize: 10 },
+          axisLabel: { color: OVERLAY_COLORS.pb }, splitLine: { show: false } },
+        { scale: true, position: "right", offset: 76, name: "ROE%", nameTextStyle: { color: OVERLAY_COLORS.roe, fontSize: 10 },
+          axisLabel: { color: OVERLAY_COLORS.roe }, splitLine: { show: false } },
       ],
       dataZoom: [{ type: "inside" }, { type: "slider", height: 20, bottom: 8 }],
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "cross" },
-        formatter: markerTooltip,
+        formatter: overlayTooltip,
       },
       series: [
         {
@@ -379,16 +363,15 @@
           yAxisIndex: 0,
           data: klineBars.map((b) => [b.open, b.close, b.low, b.high]),
         },
-        {
-          name: "财报关键点",
-          type: "scatter",
-          xAxisIndex: 0,
-          yAxisIndex: 1,
-          data: [],
-        },
+        { name: "市盈率 PE", type: "line", yAxisIndex: 1, showSymbol: false, connectNulls: true,
+          lineStyle: { width: 1.5, color: OVERLAY_COLORS.pe }, itemStyle: { color: OVERLAY_COLORS.pe }, data: [] },
+        { name: "市净率 PB", type: "line", yAxisIndex: 2, showSymbol: false, connectNulls: true,
+          lineStyle: { width: 1.5, color: OVERLAY_COLORS.pb }, itemStyle: { color: OVERLAY_COLORS.pb }, data: [] },
+        { name: "ROE", type: "line", yAxisIndex: 3, showSymbol: false, connectNulls: true,
+          lineStyle: { width: 1.5, color: OVERLAY_COLORS.roe }, itemStyle: { color: OVERLAY_COLORS.roe }, data: [] },
       ],
     }, true);
-    applyForensicMarkers();
+    applyOverlay();
   }
 
   function renderFinancials(financials) {
@@ -671,15 +654,17 @@
   }
 
   async function render() {
-    const [analysis, kline, financials] = await Promise.all([
+    const [analysis, kline, financials, valHistory] = await Promise.all([
       getJSON(`/api/stock/${symbol}/analysis`),
       getJSON(`/api/stock/${symbol}/kline`),
       getJSON(`/api/stock/${symbol}/financials`),
+      getJSON(`/api/stock/${symbol}/valuation-history`),
     ]);
     renderScore(analysis.score);
     renderValuation(analysis.valuation);
     renderMasters(analysis.masters);
     renderReview(analysis.review, analysis.moat, analysis.cycle, analysis.fraud, analysis.delisting);
+    valuationHistory = valHistory;
     renderKline(kline);
     renderFinancials(financials);
   }
@@ -688,26 +673,6 @@
   loadScoreNarrative();
   loadValuationParams();
   loadValuationNarrative();
-  if (window.VC.loadForensics) {
-    const forensicsBox = document.getElementById("forensics");
-    const onForensics = (data) => {
-      if (!data) return;
-      forensicData = data;
-      applyForensicMarkers();
-    };
-    window.VC.loadForensics(forensicsBox, symbol).then(onForensics);
-    const refreshBtn = document.getElementById("forensicsRefresh");
-    if (refreshBtn) {
-      refreshBtn.addEventListener("click", () => {
-        refreshBtn.disabled = true;
-        window.VC.loadForensics(forensicsBox, symbol, { refresh: true })
-          .then(onForensics)
-          .finally(() => {
-            refreshBtn.disabled = false;
-          });
-      });
-    }
-  }
   document
     .getElementById("valuationModalClose")
     .addEventListener("click", closeValuationModal);

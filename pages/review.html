@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>value-compass · 财报深度体检</title>
   <link rel="stylesheet" href="/static/css/base.css">
-  <link rel="stylesheet" href="/static/css/report.css?v=20261125c">
+  <link rel="stylesheet" href="/static/css/report.css?v=20261125d">
   <script src="/static/js/api.js"></script>
   <script src="/static/js/common.js"></script>
   <script src="/static/js/nav.js" defer></script>
@@ -29,8 +29,14 @@
         <ul id="delisting"></ul>
       </details>
     </section>
+    <section class="panel">
+      <h2>日 K 线 <span class="fx-section-extra">财报关键点事件带 · 含原文通读线索 · 点击圆点定位对应卡片</span></h2>
+      <div id="kline" class="chart"></div>
+      <div id="klineMarkerLegend" class="kline-legend"></div>
+    </section>
   </main>
-  <script src="/static/js/forensics.js?v=20261125c"></script>
-  <script src="/static/js/review.js?v=20261125c"></script>
+  <script src="/static/js/vendor/echarts.min.js"></script>
+  <script src="/static/js/forensics.js?v=20261125d"></script>
+  <script src="/static/js/review.js?v=20261125d"></script>
 </body>
 </html>
