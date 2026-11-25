@@ -148,6 +148,24 @@ def _latest_dividend(dividends: list[DividendRecord]) -> float | None:
     return next((item.cash_per_share for item in dividends if item.cash_per_share), None)
 
 
+def _as_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _calibration_params(symbol: str) -> dict[str, Any] | None:
+    """惰性读取校准参数，避免 analyze 与校准模块在导入期形成环。"""
+
+    try:
+        from fundamental.services.narrative._valuation_params import load_calibration_params
+
+        return load_calibration_params(symbol)
+    except Exception:  # 校准是增强项，任何失败都回退到 analysis 默认参数
+        return None
+
+
 def _resolve_dps(
     symbol: str, dividends: list[DividendRecord], shares: float | None
 ) -> tuple[float | None, dict[str, Any] | None]:
@@ -231,7 +249,13 @@ def _selling_expense_ratio(statement_items: list[StatementItem]) -> float | None
     return selling / revenue * 100
 
 
-def analyze_stock(symbol: str, db_path: Path | None = None) -> dict[str, Any]:
+def analyze_stock(
+    symbol: str,
+    db_path: Path | None = None,
+    valuation_params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """valuation_params 由 services/narrative 的校准模块注入（g/r/永续），不传则用 analysis 默认值。"""
+
     conn = db.init_db(db_path)
     try:
         code, market = parse_symbol(symbol)
@@ -271,19 +295,39 @@ def analyze_stock(symbol: str, db_path: Path | None = None) -> dict[str, Any]:
             kline, dividends, (date.today() - timedelta(days=365 * 5)).isoformat(), date.today().isoformat()
         )
         fcf_value, fcf_note = _resolve_fcf(symbol, statement_items)
+        # g/r 以校准模块为准；未生成校准时回退到 analysis 默认参数。
+        params = valuation_params if isinstance(valuation_params, dict) else _calibration_params(symbol)
+        ddm_p = (params or {}).get("ddm") or {}
+        dcf_p = (params or {}).get("dcf") or {}
         valuations_result = [
             evaluate_relative(valuations, eps, price),
             evaluate_graham(eps, bps, price),
-            evaluate_ddm(latest_dps, price),
-            evaluate_dcf(fcf_value, shares, price),
+            evaluate_ddm(
+                latest_dps,
+                price,
+                growth=_as_float(ddm_p.get("growth"), 0.05),
+                discount=_as_float(ddm_p.get("discount"), 0.08),
+            ),
+            evaluate_dcf(
+                fcf_value,
+                shares,
+                price,
+                growth=_as_float(dcf_p.get("growth"), 0.10),
+                discount=_as_float(dcf_p.get("discount"), 0.09),
+                terminal_growth=_as_float(dcf_p.get("terminal_growth"), 0.03),
+            ),
         ]
         # 港股 DCF 用的是原文 FCF TTM，DDM 用的是分红+回购口径；
         # 把口径说明附到结果里供前端/叙述层标注来源。
         for vr in valuations_result:
-            if vr.method == "dcf" and fcf_note:
-                vr.assumptions["fcf_source"] = fcf_note
-            elif vr.method == "ddm" and dps_detail:
-                vr.assumptions["dps_basis"] = dps_detail
+            if vr.method == "dcf":
+                vr.assumptions["param_source"] = "calibrated" if dcf_p else "default"
+                if fcf_note:
+                    vr.assumptions["fcf_source"] = fcf_note
+            elif vr.method == "ddm":
+                vr.assumptions["param_source"] = "calibrated" if ddm_p else "default"
+                if dps_detail:
+                    vr.assumptions["dps_basis"] = dps_detail
         refined_integrity = integrity_mod.refine_integrity(integrity)
         flags = redflags_mod.check_red_flags(financials, refined_integrity)
         fraud = fraud_mod.score_fraud(symbol, financials)

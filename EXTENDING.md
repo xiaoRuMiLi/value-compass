@@ -140,14 +140,16 @@ primary = "sina"        # 或 primary = "eastmoney" + fallback = "sina"
 - 叙述类结果均带本地缓存：概览 `data/cache/narrative/{symbol}.json`、大师
   `data/cache/narrative/masters_{symbol}.json`、估值参数 `data/cache/narrative/valuation_params_{symbol}.json`，
   TTL 在 `config/default.toml` 的 `[narrative] cache_ttl_days`（默认 10 天）。接口加 `?refresh=1` 可强制刷新。
-- 估值参数校准：默认 DDM/DCF 的 g/r 在 `analysis/valuation/ddm.py`、`dcf.py` 里写死，仅作基准；
+- 估值参数校准：`analysis/valuation/ddm.py`、`dcf.py` 的默认 g/r 只是**回退基准**；正常路径由
   `narrative/_valuation_params.py` 用 LLM 读财报/分红/行业/研报后给保守参数，经边界钳制（g −0.05~0.12、
-  r 0.07~0.14、r−g≥0.02）后复用同一公式重算，另给 10 年股息复投预期。提示词在 `prompts/valuation_params.md`，
-  改参数口径或输出结构后递增 `narrative/_common.py` 的 `_VALUATION_PARAMS_VERSION` 使缓存失效。
+  r 0.07~0.14、r−g≥0.02）写入 `valuation_params_{symbol}.json`。`services/analyze.py` 通过
+  `load_calibration_params()` 惰性读取同一份参数注入 `evaluate_ddm/evaluate_dcf`，因此 `/analysis`、
+  估值解读和报告页上方估值卡片与下方「参数校准」始终是同一套结果，不再出现两套矛盾的合理价。
+  校准未生成或缓存过期时才回退到 analysis 默认值。提示词在 `prompts/valuation_params.md`，
+  改参数口径或输出结构后递增 `narrative/_common.py` 的 `_VALUATION_PARAMS_VERSION` 使缓存失效（当前 v4）。
   研报正文由 `utils/research_text.py` 抓取（东财详情页 `#ctx-content`，缓存于 `data/cache/research/`，
   失败降级为空列表，绝不打断主流程）；无 LLM 时回退到由历史净利增速推导的保守参数。
-  新端点 `/api/stock/{symbol}/valuation-params?refresh=`；报告页在原默认估值下方新增「参数校准」对照区块，
-  两者并存、默认估值不动。
+  端点 `/api/stock/{symbol}/valuation-params?refresh=` 重新校准；报告页校准完成后就地替换 DDM/DCF 卡片。
 
 ## 5. 调整财报体检的触发阈值
 

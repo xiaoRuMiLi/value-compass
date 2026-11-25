@@ -47,7 +47,7 @@
   function renderParams(item) {
     const parts = [];
     for (const [key, value] of Object.entries(item.assumptions || {})) {
-      if (key === "formula") continue;
+      if (key === "formula" || key === "param_source") continue;
       parts.push(`${PARAM_LABELS[key] || key} ${fmtParamValue(key, value)}`);
     }
     for (const [key, value] of Object.entries(item.inputs || {})) {
@@ -187,7 +187,39 @@
     modal.setAttribute("aria-hidden", "true");
   }
 
+  let lastAnalysisValuation = null;
+
+  // 校准完成后，用校准结果替换上方 DDM/DCF 两张卡片，避免页面出现两套互相矛盾的合理价。
+  // 就地更新而非重渲染，避免冲掉异步附加的估值解读文案。
+  function applyCalibratedValuation(data) {
+    const cal = (data && data.calibrated) || {};
+    for (const method of ["ddm", "dcf"]) {
+      const cv = cal[method];
+      const block = document.getElementById("val-" + method);
+      if (!cv || cv.fair_value_low == null || !block) continue;
+      const range = block.querySelector(".val-range");
+      if (range) range.textContent = `${cv.fair_value_low} ~ ${cv.fair_value_high}`;
+      const margin = block.querySelector(".val-margin");
+      if (margin) margin.textContent = `安全边际 ${fmtPct(cv.margin_of_safety)}`;
+      const original = (lastAnalysisValuation || []).find((item) => item.method === method);
+      const src = { ...(cv.assumptions || {}) };
+      for (const key of ["fcf_source", "dps_basis"]) {
+        if (original && original.assumptions && original.assumptions[key]) {
+          src[key] = original.assumptions[key];
+        }
+      }
+      Object.assign(src, cv.inputs || {});
+      const params = Object.entries(src)
+        .filter(([key]) => key !== "formula" && key !== "param_source")
+        .map(([key, value]) => `${PARAM_LABELS[key] || key} ${fmtParamValue(key, value)}`);
+      const paramsEl = block.querySelector(".val-params");
+      if (params.length && paramsEl) paramsEl.textContent = params.join("；");
+      block.classList.add("val-calibrated");
+    }
+  }
+
   function renderValuation(valuation) {
+    lastAnalysisValuation = valuation;
     const box = document.getElementById("valuation");
     const names = { relative: "相对估值", graham: "格雷厄姆", ddm: "股利折现", dcf: "现金流折现" };
     for (const item of valuation) {
@@ -572,7 +604,10 @@
   function loadValuationParams() {
     const box = document.getElementById("valuationParams");
     getJSON(`/api/stock/${symbol}/valuation-params`)
-      .then((data) => renderValuationParams(data))
+      .then((data) => {
+        renderValuationParams(data);
+        applyCalibratedValuation(data);
+      })
       .catch(() => {
         box.innerHTML = "";
         box.appendChild(el("p", "muted", "估值参数校准暂不可用"));

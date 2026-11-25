@@ -312,6 +312,12 @@ main {
   margin-bottom: 14px;
 }
 
+/* DDM/DCF 已被校准参数替换，与下方「估值参数校准」保持同一套结果 */
+.val-block.val-calibrated .val-row {
+  border-left: 2px solid #0d9488;
+  padding-left: 8px;
+}
+
 .val-block .val-row {
   border-bottom: none;
   padding-bottom: 2px;

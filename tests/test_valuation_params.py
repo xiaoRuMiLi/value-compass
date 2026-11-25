@@ -23,6 +23,41 @@ from fundamental.services.narrative._valuation_params import (
 )
 
 
+class TestCalibrationInjection(unittest.TestCase):
+    def test_load_calibration_params_rejects_stale_version(self):
+        stale = {
+            "params_version": vp._VALUATION_PARAMS_VERSION - 1,
+            "params": {"ddm": {"growth": 0.03}, "dcf": {"growth": 0.05}},
+        }
+        with mock.patch.object(vp, "_read_cache", return_value=stale):
+            self.assertIsNone(vp.load_calibration_params("00700.HK"))
+
+    def test_load_calibration_params_accepts_current_version(self):
+        cached = {
+            "params_version": vp._VALUATION_PARAMS_VERSION,
+            "params": {"ddm": {"growth": 0.03}, "dcf": {"growth": 0.05}},
+        }
+        with mock.patch.object(vp, "_read_cache", return_value=cached):
+            self.assertEqual(vp.load_calibration_params("00700.HK"), cached["params"])
+
+    def test_recompute_emits_full_valuation_for_ui_override(self):
+        facts = {
+            "model_inputs": {"dps": 10.0, "fcf": 1e10, "shares": 1e9, "price": 100.0}
+        }
+        params = {
+            "ddm": {"growth": 0.03, "discount": 0.09},
+            "dcf": {"growth": 0.05, "discount": 0.10, "terminal_growth": 0.02},
+        }
+        out = vp._recompute(facts, params)
+        for method in ("ddm", "dcf"):
+            item = out[method]
+            self.assertEqual(item["method"], method)
+            self.assertEqual(item["basis"], "calibrated")
+            self.assertIn("growth", item["assumptions"])
+            self.assertTrue(item["inputs"])
+            self.assertIsNotNone(item["fair_value_low"])
+
+
 class TestNormalizeParams(unittest.TestCase):
     def test_clamps_out_of_range_values(self):
         raw = {

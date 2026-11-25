@@ -1,7 +1,8 @@
 """估值参数校准：本地基本面 + 联网研报 → LLM 给保守参数 → 复用公式重算 + 股息复投预期。
 
-与默认估值（analyze 里写死的 g/r）并存，作为「参数校准」对照展示，不改动 analyze 主链路。
-失败或未配置模型时回退到由历史增速推导的保守参数，始终给出可解释的结果。
+校准参数是 DDM/DCF 的唯一长参来源：生成后写入缓存，主估值链路（analyze_stock）读取
+同一份参数重算，避免页面上方「固定默认」与下方「校准」出现两套互相矛盾的合理价。
+analysis 层仍是纯函数，参数由 services 层注入，失败时回退到由历史增速推导的保守参数。
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ _TERMINAL_MIN, _TERMINAL_MAX = 0.0, 0.04
 _GAP = 0.02  # discount - growth 的最小间距
 
 # 校准逻辑升级时递增，让缓存失效。
-_VALUATION_PARAMS_VERSION = 3
+# v4：估值主链路改为注入校准参数；旧缓存里的 rationale 基于缺失的 DPS/FCF，必须重算。
+_VALUATION_PARAMS_VERSION = 4
 
 _METHOD_LABELS = {"ddm": "股利折现", "dcf": "现金流折现"}
 _RATING_LABELS = {
@@ -380,17 +382,22 @@ def _recompute(facts: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
     c = params["dcf"]
     dcf = evaluate_dcf(fcf, shares, price, growth=c["growth"], discount=c["discount"], terminal_growth=c["terminal_growth"])
 
-    def to_dict(result: Any) -> dict[str, Any]:
+    def to_dict(result: Any, method: str) -> dict[str, Any]:
         return {
+            "method": method,
             "fair_value_low": result.fair_value_low,
             "fair_value_high": result.fair_value_high,
             "margin_of_safety": result.margin_of_safety,
             "current_price": result.current_price,
+            # 与 analyze 主链路同构的字段，供前端直接用校准结果替换固定估值卡片
+            "assumptions": dict(result.assumptions),
+            "inputs": dict(result.inputs),
+            "basis": "calibrated",
         }
 
     calibrated = {
-        "ddm": to_dict(ddm),
-        "dcf": to_dict(dcf),
+        "ddm": to_dict(ddm, "ddm"),
+        "dcf": to_dict(dcf, "dcf"),
         "dividend_reinvestment": _dividend_reinvestment(dps, price, d["growth"]),
     }
     calibrated["overall"] = _overall_range(calibrated)
@@ -424,6 +431,23 @@ def _finalize(facts: dict[str, Any]) -> dict[str, Any]:
         return _assemble(facts, params, "llm")
     except (LlmError, LlmConfigError, FileNotFoundError):
         return _assemble(facts, fallback, "template")
+
+
+def load_calibration_params(symbol: str) -> dict[str, Any] | None:
+    """读取已缓存的校准参数，供 analyze 主链路注入。
+
+    只读不生成，避免 analyze → 校准 → analyze 的循环；缓存不存在或版本过旧时返回 None，
+    由 analyze 使用 analysis 层的默认参数，待校准端点生成后下次调用自动生效。
+    """
+
+    ttl_days = float(load_settings().get("narrative.cache_ttl_days", 10))
+    cached = _read_cache(_valuation_params_cache_path(symbol), ttl_days)
+    if not cached or cached.get("params_version") != _VALUATION_PARAMS_VERSION:
+        return None
+    params = cached.get("params")
+    if not isinstance(params, dict) or not params.get("ddm") or not params.get("dcf"):
+        return None
+    return params
 
 
 def generate_valuation_params(
