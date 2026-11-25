@@ -256,6 +256,10 @@ td:first-child {
 .sidebar {
   width: 240px;
   flex-shrink: 0;
+  align-self: flex-start;
+  position: sticky;
+  top: 44px;
+  height: calc(100vh - 44px);
   background: #f9fafb;
   border-right: 1px solid #e5e7eb;
   padding: 12px;
@@ -276,11 +280,43 @@ td:first-child {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 6px;
   padding: 7px 8px;
   border-radius: 6px;
   color: #1f2937;
   text-decoration: none;
   font-size: 13px;
+}
+
+.stock-list .stock-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-list .stock-rating {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.stock-list .rating-rec {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.stock-list .rating-watch {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.stock-list .rating-avoid {
+  color: #15803d;
+  background: #dcfce7;
 }
 
 .stock-list a:hover {
@@ -293,6 +329,7 @@ td:first-child {
 }
 
 .stock-list .stock-meta {
+  flex-shrink: 0;
   font-size: 12px;
   color: #6b7280;
 }

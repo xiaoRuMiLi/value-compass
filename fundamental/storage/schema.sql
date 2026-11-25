@@ -100,6 +100,7 @@ CREATE TABLE financials (
   ocf REAL,
   fcf REAL,
   eps REAL,
+  eps_ttm REAL,
   bps REAL,
   revenue_yoy REAL,
   net_profit_yoy REAL,

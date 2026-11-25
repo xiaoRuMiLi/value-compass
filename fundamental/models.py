@@ -213,6 +213,7 @@ class FinancialReport:
     ocf: Optional[float] = None
     fcf: Optional[float] = None
     eps: Optional[float] = None
+    eps_ttm: Optional[float] = None
     bps: Optional[float] = None
     revenue_yoy: Optional[float] = None
     net_profit_yoy: Optional[float] = None

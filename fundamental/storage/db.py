@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fundamental.utils import paths
 
-SCHEMA_VERSION = 5  # 4→5: dividends.currency（港股分红币种）
+SCHEMA_VERSION = 6  # 5→6: financials.eps_ttm（港股拆股前后口径一致）
 
 _MIGRATIONS = {
     1: ["ALTER TABLE snapshots ADD COLUMN pct_change REAL;"],
@@ -24,6 +24,10 @@ _MIGRATIONS = {
     4: [
         # 港股分红以港币计价，需记录币种以免 DDM 把港币 DPS 当成人民币。
         "ALTER TABLE dividends ADD COLUMN currency TEXT DEFAULT 'CNY';",
+    ],
+    5: [
+        # 港股 F10 直接披露 EPS_TTM；用它替代累计 EPS 推导，避免拆股前后口径混用。
+        "ALTER TABLE financials ADD COLUMN eps_ttm REAL;",
     ],
 }
 

@@ -93,6 +93,14 @@
         item.href = `/report?symbol=${encodeURIComponent(row.symbol)}`;
         if (isSymbolPage && row.symbol === symbol) item.className = "active";
         item.appendChild(el("span", "stock-name", row.name));
+        if (row.rating) {
+          const tone = ["强烈推荐", "推荐"].includes(row.rating)
+            ? "rating-rec"
+            : row.rating === "观望" ? "rating-watch" : "rating-avoid";
+          const badge = el("span", "stock-rating " + tone, row.rating);
+          if (row.score != null) badge.title = `综合得分 ${row.score}`;
+          item.appendChild(badge);
+        }
         item.appendChild(el("span", "stock-meta", row.price == null ? "-" : row.price.toFixed(2)));
         stockList.appendChild(item);
       }

@@ -139,6 +139,7 @@ _HK_FIELDS = {
     "current_ratio": "CURRENT_RATIO",
     "ocf": "NETCASH_OPERATE",
     "eps": "BASIC_EPS",
+    "eps_ttm": "EPS_TTM",
     "bps": "BPS",
     "revenue_yoy": "OPERATE_INCOME_YOY",
     "net_profit_yoy": "HOLDER_PROFIT_YOY",

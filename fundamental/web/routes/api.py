@@ -21,6 +21,8 @@ from fundamental.services.narrative import (
     generate_valuation_narrative,
     generate_valuation_params,
 )
+from fundamental.services.stock_directory import build_stock_directory
+from fundamental.services.valuation_history import build_valuation_history
 from fundamental.storage import db, repository
 from fundamental.utils.symbols import parse_symbol
 
@@ -126,30 +128,15 @@ def get_kline(
 
 @router.get("/stock/{symbol}/valuation-history")
 def get_valuation_history(symbol: str) -> dict[str, Any]:
-    """报告页 K 线叠加用：按交易日的历史 PE/PB + 按报告期的年度 ROE。
+    """报告页 K 线叠加用：与交易日等长的 PE/PB/ROE 序列及口径标注。
 
-    取值直接来自 valuations / financials 表，web 层只做透传，不做估值计算。
+    web 层只负责取连接与异常映射，对齐/推导由 services → analysis 完成。
     """
     conn = db.init_db()
     try:
-        stock_id = _resolve_stock(conn, symbol)
-        valuations = repository.fetch_all(
-            conn,
-            "SELECT trade_date, pe_ttm, pb_mrq FROM valuations WHERE stock_id = ? "
-            "ORDER BY trade_date ASC",
-            (stock_id,),
-        )
-        roe_rows = repository.fetch_all(
-            conn,
-            "SELECT report_date, roe FROM financials WHERE stock_id = ? "
-            "AND report_type = 'FY' AND roe IS NOT NULL ORDER BY report_date ASC",
-            (stock_id,),
-        )
-        roe = [
-            {"report_date": row["report_date"], "roe": round(float(row["roe"]), 4)}
-            for row in roe_rows
-        ]
-        return {"valuations": _rows(valuations), "roe": roe}
+        return build_valuation_history(conn, symbol)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         conn.close()
 
@@ -238,24 +225,7 @@ def get_financial_forensics(symbol: str, refresh: bool = False) -> dict[str, Any
 def get_stocks() -> list[dict[str, Any]]:
     conn = db.init_db()
     try:
-        results: list[dict[str, Any]] = []
-        for stock in repository.fetch_all(conn, "SELECT * FROM stocks ORDER BY code"):
-            snapshot = repository.fetch_one(
-                conn,
-                "SELECT price, pct_change FROM snapshots WHERE stock_id = ? ORDER BY fetched_at DESC LIMIT 1",
-                (stock["id"],),
-            )
-            results.append(
-                {
-                    "symbol": f"{stock['code']}.{stock['market']}",
-                    "name": stock["name"],
-                    "code": stock["code"],
-                    "market": stock["market"],
-                    "price": snapshot["price"] if snapshot else None,
-                    "pct_change": snapshot["pct_change"] if snapshot else None,
-                }
-            )
-        return results
+        return build_stock_directory(conn)
     finally:
         conn.close()
 

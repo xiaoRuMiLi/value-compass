@@ -1,6 +1,8 @@
 [web]
 host = "127.0.0.1"
 port = 8000
+# 个股库列表的评分标签缓存秒数；评分来自本地纯计算，数据同步后最多等待一个 TTL 刷新
+stock_rating_cache_seconds = 300
 
 [data]
 cache_ttl_seconds = 3600

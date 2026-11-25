@@ -255,9 +255,10 @@
     if (delisting.score != null) tags.appendChild(el("span", "tag", `退市风险：${delisting.score}`));
   }
 
-  // K 线叠加三条估值折线：PE(TTM)、PB(MRQ) 按交易日对齐；ROE 按年报报告期锚定到最近交易日。
-  // 三条线用各自独立的 Y 轴，避免量纲差异把它们压扁；蜡烛用左轴。
+  // K 线叠加三条估值折线：与日 K 共用同一交易日序列。PE/PB 优先官方日频，
+  // 缺口及港股按财报 EPS/BPS 推导；ROE 取年报 as-of。三条线各自独立 Y 轴。
   const OVERLAY_COLORS = { pe: "#7c3aed", pb: "#0891b2", roe: "#d97706" };
+  const OVERLAY_LABELS = { pe: "市盈率 PE", pb: "市净率 PB", roe: "ROE" };
 
   function esc(value) {
     return String(value == null ? "" : value)
@@ -266,60 +267,49 @@
 
   function overlayTooltip(params) {
     const arr = Array.isArray(params) ? params : [params];
+    const index = arr.length ? arr[0].dataIndex : null;
+    if (index == null || index < 0) return "";
+    const bar = klineBars[index];
     const lines = [];
-    const candle = arr.find((p) => p.seriesType === "candlestick");
-    if (candle) {
-      lines.push('<div class="kl-tt-date">' + esc(candle.axisValue || candle.name || "") + "</div>");
-      const raw = (candle.data && candle.data.value) ? candle.data.value : (candle.data || candle.value);
-      if (Array.isArray(raw)) {
-        const nums = raw.filter((x) => typeof x === "number");
-        if (nums.length >= 4) {
-          const [o, c, l, h] = nums.slice(-4);
-          lines.push('<div class="kl-tt-ohlc">开 ' + o + "　收 " + c + "　低 " + l + "　高 " + h + "</div>");
-        }
-      }
+    lines.push('<div class="kl-tt-date">' + esc(bar ? bar.trade_date : "") + "</div>");
+    if (bar) {
+      lines.push('<div class="kl-tt-ohlc">开 ' + esc(bar.open) + "　收 " + esc(bar.close)
+        + "　低 " + esc(bar.low) + "　高 " + esc(bar.high) + "</div>");
     }
-    for (const p of arr) {
-      if (!["pe", "pb", "roe"].includes(p.seriesName) || p.value == null) continue;
-      const label = { pe: "市盈率 PE", pb: "市净率 PB", roe: "ROE" }[p.seriesName];
+    const hist = valuationHistory || {};
+    for (const key of ["pe", "pb", "roe"]) {
+      const series = hist[key] || [];
+      const raw = series[index];
+      const value = raw == null ? "—" : Number(raw).toFixed(2) + (key === "roe" ? "%" : "");
+      const source = key === "roe" ? "年报" : (hist[key + "_source"] || [])[index];
+      const period = (hist[key + "_period"] || [])[index];
+      const meta = [source, period ? "报告期 " + period : null].filter(Boolean).join(" · ");
       lines.push(
-        '<div class="kl-tt-meta" style="border-left:3px solid ' + OVERLAY_COLORS[p.seriesName] + ';padding-left:6px">'
-        + label + " " + Number(p.value).toFixed(2) + (p.seriesName === "roe" ? "%" : "") + "</div>"
+        '<div class="kl-tt-meta" style="border-left:3px solid ' + OVERLAY_COLORS[key] + ';padding-left:6px">'
+        + OVERLAY_LABELS[key] + " " + esc(value)
+        + (meta ? ' <span style="color:#94a3b8">（' + esc(meta) + "）</span>" : "")
+        + "</div>"
       );
     }
-    return lines.join("") || "";
+    if (hist.fx && hist.fx.is_fallback) {
+      lines.push('<div class="kl-tt-hint">港股汇率使用配置回退值，仅用于图形叠加</div>');
+    }
+    return lines.join("");
   }
 
-  // 把估值序列对齐到 K 线交易日 index：PE/PB 用 exact trade_date，ROE 用「报告期末或之后最近交易日」
-  function alignOverlay(hist) {
-    const dates = klineBars.map((b) => b.trade_date);
-    const idxByDate = new Map(dates.map((d, i) => [d, i]));
-    const pe = [], pb = [], roe = [];
-    for (const d of dates) { pe.push(null); pb.push(null); roe.push(null); }
-    for (const v of (hist && hist.valuations) || []) {
-      const i = idxByDate.get(v.trade_date);
-      if (i == null) continue;
-      if (v.pe_ttm != null) pe[i] = Number(v.pe_ttm);
-      if (v.pb_mrq != null) pb[i] = Number(v.pb_mrq);
-    }
-    for (const r of (hist && hist.roe) || []) {
-      if (r.roe == null) continue;
-      let i = dates.findIndex((d) => d >= r.report_date);
-      if (i < 0) i = dates.length - 1;
-      roe[i] = Number(r.roe);
-    }
-    return { pe, pb, roe };
+  function overlayData(key) {
+    const data = valuationHistory && valuationHistory[key];
+    return Array.isArray(data) ? data : [];
   }
 
   function applyOverlay() {
     if (!klineChart || !valuationHistory) return;
-    const series = alignOverlay(valuationHistory);
     klineChart.setOption({
       series: [
         {},
-        { data: series.pe },
-        { data: series.pb },
-        { data: series.roe },
+        { data: overlayData("pe") },
+        { data: overlayData("pb") },
+        { data: overlayData("roe") },
       ],
     });
   }
@@ -363,11 +353,11 @@
           yAxisIndex: 0,
           data: klineBars.map((b) => [b.open, b.close, b.low, b.high]),
         },
-        { name: "市盈率 PE", type: "line", yAxisIndex: 1, showSymbol: false, connectNulls: true,
+        { name: "市盈率 PE", type: "line", yAxisIndex: 1, showSymbol: false,
           lineStyle: { width: 1.5, color: OVERLAY_COLORS.pe }, itemStyle: { color: OVERLAY_COLORS.pe }, data: [] },
-        { name: "市净率 PB", type: "line", yAxisIndex: 2, showSymbol: false, connectNulls: true,
+        { name: "市净率 PB", type: "line", yAxisIndex: 2, showSymbol: false,
           lineStyle: { width: 1.5, color: OVERLAY_COLORS.pb }, itemStyle: { color: OVERLAY_COLORS.pb }, data: [] },
-        { name: "ROE", type: "line", yAxisIndex: 3, showSymbol: false, connectNulls: true,
+        { name: "ROE", type: "line", yAxisIndex: 3, showSymbol: false,
           lineStyle: { width: 1.5, color: OVERLAY_COLORS.roe }, itemStyle: { color: OVERLAY_COLORS.roe }, data: [] },
       ],
     }, true);
