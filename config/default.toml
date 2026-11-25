@@ -5,6 +5,12 @@ port = 8000
 [data]
 cache_ttl_seconds = 3600
 
+# 港币→人民币汇率：港股 DDM 分红换算用。在线取欧洲央行口径（frankfurter.app），
+# 失败时回退到下面的默认值。默认值可按最新汇率手工更新，避免运行时强依赖外部接口。
+[fx]
+hkd_to_cny_default = 0.85
+fx_cache_ttl_seconds = 86400
+
 [narrative]
 cache_ttl_days = 10
 # 各叙述模块的输出 token 上限：质量优先，给足论证篇幅；成本/延迟敏感时再调小。

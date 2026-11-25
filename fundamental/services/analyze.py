@@ -148,6 +148,33 @@ def _latest_dividend(dividends: list[DividendRecord]) -> float | None:
     return next((item.cash_per_share for item in dividends if item.cash_per_share), None)
 
 
+def _resolve_dps(
+    symbol: str, dividends: list[DividendRecord], shares: float | None
+) -> tuple[float | None, dict[str, Any] | None]:
+    """为 DDM 选定每股股息输入，返回 (dps元, 口径详情)。
+
+    - 港股：股东回报口径 = 每股现金分红 + 每股回购注销，均换算成 CNY。
+      东财港股分红接口只覆盖 A 股，需走专门的港股 provider；回购注销从年报原文抽。
+    - A 股：沿用最近一次 cash_per_share（人民币）。
+    """
+    code, market = parse_symbol(symbol)
+    if market == Market.HK:
+        try:
+            from fundamental.services.fx import hkd_to_cny
+            from fundamental.services.hk_financial_supplement import total_shareholder_return_per_share
+
+            fx = hkd_to_cny()
+            detail = total_shareholder_return_per_share(
+                symbol, dividends, shares, fx["rate"]
+            )
+            detail["fx_source"] = fx["source"]
+            detail["fx_date"] = fx["date"]
+            return detail.get("total_per_share_cny"), detail
+        except Exception:  # noqa: BLE001
+            return None, None
+    return _latest_dividend(dividends), None
+
+
 def _compute_fcf(statement_items: list[StatementItem]) -> float | None:
     yearly = [item for item in statement_items if item.report_type == ReportType.FY]
     if not yearly:
@@ -159,6 +186,28 @@ def _compute_fcf(statement_items: list[StatementItem]) -> float | None:
     if ocf is None:
         return None
     return ocf - capex if capex is not None else ocf
+
+
+def _resolve_fcf(symbol: str, statement_items: list[StatementItem]) -> tuple[float | None, str | None]:
+    """为 DCF 选定自由现金流输入，返回 (fcf元, 口径说明)。
+
+    - 港股：现金流量表长表在东财不存在，改用财报原文披露的 FCF（按季汇总 TTM）。
+      抽取由 services 层完成（本模块），analysis 只拿到纯数字。亿元 → 元。
+    - A 股：沿用 statement_items 的 OCF − capex 口径（capex 缺失时退化为 OCF）。
+    """
+    code, market = parse_symbol(symbol)
+    if market == Market.HK:
+        try:
+            from fundamental.services.hk_financial_supplement import extract_fcf_ttm
+
+            supplement = extract_fcf_ttm(symbol)
+            if supplement.get("available") and supplement.get("fcf_ttm_yi") is not None:
+                fcf_yuan = float(supplement["fcf_ttm_yi"]) * 1e8
+                return fcf_yuan, supplement.get("note") or "财报原文自由现金流 TTM"
+        except Exception:  # noqa: BLE001 - 补充数据失败不应拖垮主分析
+            pass
+        return None, None
+    return _compute_fcf(statement_items), None
 
 
 def _latest_income_value(items: list[StatementItem], name: str) -> float | None:
@@ -207,7 +256,7 @@ def analyze_stock(symbol: str, db_path: Path | None = None) -> dict[str, Any]:
         pe_ttm = valuations[-1].pe_ttm if valuations else None
 
         dividend_yield = None
-        latest_dps = _latest_dividend(dividends)
+        latest_dps, dps_detail = _resolve_dps(symbol, dividends, shares)
         if latest_dps and price:
             dividend_yield = latest_dps / price * 100
 
@@ -221,12 +270,20 @@ def analyze_stock(symbol: str, db_path: Path | None = None) -> dict[str, Any]:
         ret = returns_mod.compute_return(
             kline, dividends, (date.today() - timedelta(days=365 * 5)).isoformat(), date.today().isoformat()
         )
+        fcf_value, fcf_note = _resolve_fcf(symbol, statement_items)
         valuations_result = [
             evaluate_relative(valuations, eps, price),
             evaluate_graham(eps, bps, price),
             evaluate_ddm(latest_dps, price),
-            evaluate_dcf(_compute_fcf(statement_items), shares, price),
+            evaluate_dcf(fcf_value, shares, price),
         ]
+        # 港股 DCF 用的是原文 FCF TTM，DDM 用的是分红+回购口径；
+        # 把口径说明附到结果里供前端/叙述层标注来源。
+        for vr in valuations_result:
+            if vr.method == "dcf" and fcf_note:
+                vr.assumptions["fcf_source"] = fcf_note
+            elif vr.method == "ddm" and dps_detail:
+                vr.assumptions["dps_basis"] = dps_detail
         refined_integrity = integrity_mod.refine_integrity(integrity)
         flags = redflags_mod.check_red_flags(financials, refined_integrity)
         fraud = fraud_mod.score_fraud(symbol, financials)

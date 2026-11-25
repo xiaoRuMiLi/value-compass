@@ -99,8 +99,8 @@ def sync_stock(
     dividends = EastmoneyDividendProvider().fetch_dividends(symbol)
     stats["dividends"] = _insert(
         conn, "dividends",
-        ["stock_id", "plan_notice_date", "ex_date", "record_date", "pay_date", "cash_per_share", "bonus_ratio", "transfer_ratio"],
-        dividends, lambda d: (stock_id, d.plan_notice_date, d.ex_date, d.record_date, d.pay_date, d.cash_per_share, d.bonus_ratio, d.transfer_ratio),
+        ["stock_id", "plan_notice_date", "ex_date", "record_date", "pay_date", "cash_per_share", "bonus_ratio", "transfer_ratio", "currency"],
+        dividends, lambda d: (stock_id, d.plan_notice_date, d.ex_date, d.record_date, d.pay_date, d.cash_per_share, d.bonus_ratio, d.transfer_ratio, d.currency or "CNY"),
     )
     holders = EastmoneyHoldingProvider().fetch_circulating_holders(symbol)
     stats["circulating_holders"] = _insert(

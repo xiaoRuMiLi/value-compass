@@ -356,6 +356,7 @@ class DividendRecord:
     cash_per_share: Optional[float] = None
     bonus_ratio: Optional[float] = None
     transfer_ratio: Optional[float] = None
+    currency: Optional[str] = None  # 每股派息币种：CNY / HKD；A 股默认 CNY
 
 
 @dataclass(frozen=True)

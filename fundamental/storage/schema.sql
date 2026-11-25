@@ -258,6 +258,7 @@ CREATE TABLE dividends (
   cash_per_share REAL,
   bonus_ratio REAL,
   transfer_ratio REAL,
+  currency TEXT DEFAULT 'CNY',
   UNIQUE(stock_id, ex_date, pay_date)
 );
 

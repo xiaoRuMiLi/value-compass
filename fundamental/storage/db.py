@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fundamental.utils import paths
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5  # 4→5: dividends.currency（港股分红币种）
 
 _MIGRATIONS = {
     1: ["ALTER TABLE snapshots ADD COLUMN pct_change REAL;"],
@@ -20,6 +20,10 @@ _MIGRATIONS = {
     3: [
         "ALTER TABLE financials ADD COLUMN operating_profit REAL;",
         "ALTER TABLE financials ADD COLUMN pretax_profit REAL;",
+    ],
+    4: [
+        # 港股分红以港币计价，需记录币种以免 DDM 把港币 DPS 当成人民币。
+        "ALTER TABLE dividends ADD COLUMN currency TEXT DEFAULT 'CNY';",
     ],
 }
 
