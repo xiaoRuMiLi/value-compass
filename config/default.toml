@@ -22,6 +22,7 @@ valuation_max_tokens = 1600
 masters_max_tokens = 1800
 valuation_params_max_tokens = 2000
 forensics_max_tokens = 3000
+financial_trend_max_tokens = 1600
 
 # 跨期叙事对照：往年建基线用几份年报（不含最新年报/当期季报）。越多越全但越慢越贵。
 drift_history_count = 3

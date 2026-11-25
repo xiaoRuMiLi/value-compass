@@ -416,7 +416,7 @@ providers 取数 → models 归一化 → storage 入库/存档 → analysis 计
 | 多股对比 | `compare.html` | 并排指标、雷达叠加、归一化走势、持仓对比 |
 | 筛选 | `screener.html` | 组合条件、排序、导出 |
 | 计算器 | `calculator.html` | 分红复利、估值参数调节 |
-| 历年财务 | `financials.html` | 三大报表历年对比、净利润、经营/投资/筹资现金流、股权结构、主营构成 |
+| 历年财务 | `financials.html` | 主要指标/三大表的报告期 K 线 + 柱状图（单季/年报切换、指标切换）、偿债/营运/收益质量/资本结构分组指标、LLM 趋势解读、主营构成、股权结构 |
 | 行业地位 | `industry.html` | 行业内公司地位气泡图、护城河分布 |
 | 产品价格 | `products.html` | 商品/产品价格与股价归一化对比、相关性 |
 | 股东名册 | `holders.html` | 个股十大流通股东及报告期变化 |

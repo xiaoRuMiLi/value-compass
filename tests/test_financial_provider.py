@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from fundamental.models import ReportType
+from fundamental.models import ReportType, StatementType
 from fundamental.providers.financial.eastmoney import (
     EastmoneyFinancialProvider,
     _hk_report_type,
@@ -123,6 +123,79 @@ class TestHkValuations(unittest.TestCase):
         ) as fake:
             provider.fetch_valuations("600519.SH")
         self.assertEqual(fake.call_args.kwargs["params"]["reportName"], "RPT_VALUEANALYSIS_DET")
+
+
+class TestHkStatementItems(unittest.TestCase):
+    """港股逐科目报表：数字编码归一化为项目语义码，现金流量表由主指标构造。"""
+
+    def test_hk_income_balance_codes_are_normalized(self):
+        provider = EastmoneyFinancialProvider()
+        rows = [
+            {
+                "STD_REPORT_DATE": "2026-09-30 00:00:00",
+                "DATE_TYPE_CODE": "004",
+                "STD_ITEM_CODE": "004001999",
+                "ITEM_NAME": "营运收入",
+                "AMOUNT": 608579000000,
+            },
+            {
+                "STD_REPORT_DATE": "2026-09-30 00:00:00",
+                "DATE_TYPE_CODE": "004",
+                "STD_ITEM_CODE": "004099999",  # 未映射科目保留原码
+                "ITEM_NAME": "非运算项目",
+                "AMOUNT": 1,
+            },
+        ]
+        with mock.patch.object(
+            provider.client, "get_json", return_value={"result": {"data": rows}}
+        ):
+            items = provider.fetch_statement_items("00700.HK", StatementType.INCOME)
+        codes = {item.item_code for item in items}
+        self.assertIn("OPERATE_INCOME", codes)
+        self.assertIn("004099999", codes)
+        self.assertEqual(len(items), 2)
+
+    def test_hk_balance_uses_balance_specific_mapping(self):
+        provider = EastmoneyFinancialProvider()
+        # 同一个数字码在利润表是「营运收入」，在资产负债表是「非流动资产合计」。
+        rows = [
+            {
+                "STD_REPORT_DATE": "2026-09-30 00:00:00",
+                "DATE_TYPE_CODE": "004",
+                "STD_ITEM_CODE": "004001999",
+                "ITEM_NAME": "非流动资产合计",
+                "AMOUNT": 900000000000,
+            }
+        ]
+        with mock.patch.object(
+            provider.client, "get_json", return_value={"result": {"data": rows}}
+        ):
+            items = provider.fetch_statement_items("00700.HK", StatementType.BALANCE)
+        self.assertEqual(items[0].item_code, "TOTAL_NONCURRENT_ASSETS")
+
+    def test_hk_cashflow_built_from_main_indicator(self):
+        provider = EastmoneyFinancialProvider()
+        rows = [
+            {
+                "STD_REPORT_DATE": "2026-09-30 00:00:00",
+                "DATE_TYPE_CODE": "004",
+                "NETCASH_OPERATE": 156713000000,
+                "NETCASH_INVEST": -122357000000,
+                "NETCASH_FINANCE": 60910000000,
+                "END_CASH": 231717000000,  # 时点余额，不应被当成期间流量
+            }
+        ]
+        with mock.patch.object(
+            provider.client, "get_json", return_value={"result": {"data": rows}}
+        ) as fake:
+            items = provider.fetch_statement_items("00700.HK", StatementType.CASHFLOW)
+        self.assertEqual(
+            fake.call_args.kwargs["params"]["reportName"], "RPT_HKF10_FN_MAININDICATOR"
+        )
+        self.assertEqual({item.item_code for item in items}, {
+            "NETCASH_OPERATE", "NETCASH_INVEST", "NETCASH_FINANCE"
+        })
+        self.assertTrue(all(item.statement_type == StatementType.CASHFLOW for item in items))
 
 
 if __name__ == "__main__":

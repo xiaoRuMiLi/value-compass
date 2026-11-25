@@ -5,20 +5,55 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>value-compass · 财务全景</title>
   <link rel="stylesheet" href="/static/css/base.css?v=20261125f">
-  <script src="/static/js/api.js"></script>
-  <script src="/static/js/common.js"></script>
+  <link rel="stylesheet" href="/static/css/financials.css?v=20261125j">
+  <script src="/static/js/api.js?v=20261125j"></script>
+  <script src="/static/js/common.js?v=20261125j"></script>
   <script src="/static/js/nav.js?v=20261125f" defer></script>
 </head>
 <body>
   <main>
     <section class="panel">
-      <h2>三大报表</h2>
-      <div class="tabs" id="tabs">
-        <button class="tab active" data-type="income">利润表</button>
-        <button class="tab" data-type="balance">资产负债表</button>
-        <button class="tab" data-type="cashflow">现金流量表</button>
+      <h2>主要指标 <span class="fx-section-extra">上方 K 线取报告期末交易日 · 下方柱形为对应报告期数值</span></h2>
+      <div class="fx-toolbar">
+        <div class="fx-switch" id="freqSwitch">
+          <button class="active" data-freq="quarter">单季财报</button>
+          <button data-freq="annual">只看年报</button>
+        </div>
+        <span class="fx-hint" id="dashHint"></span>
       </div>
-      <div class="scroll" id="statement"></div>
+      <div class="fx-chips" id="primaryChips"></div>
+      <div id="dashboardChart" class="chart chart-tall"></div>
+      <div class="fx-note" id="dashboardNote"></div>
+    </section>
+
+    <section class="panel">
+      <h2>三大报表 <span class="fx-section-extra">与上方同频率 · 可切换科目</span></h2>
+      <div class="fx-toolbar">
+        <div class="tabs" id="stmtTabs">
+          <button class="tab active" data-type="income">利润表</button>
+          <button class="tab" data-type="balance">资产负债表</button>
+          <button class="tab" data-type="cashflow">现金流量表</button>
+        </div>
+        <label class="fx-select-label">科目
+          <select id="stmtMetric"></select>
+        </label>
+      </div>
+      <div id="statementChart" class="chart chart-mid"></div>
+      <div class="scroll" id="statementTable"></div>
+    </section>
+
+    <section class="panel">
+      <h2>其他主要指标 <span class="fx-section-extra">悬浮数值可看公式 · 迷你走势为最近 12 期</span></h2>
+      <div class="fx-ratio-grid" id="ratioGroups"></div>
+    </section>
+
+    <section class="panel">
+      <h2>趋势解读 <span class="fx-section-extra">LLM 生成 · 现金流量与利润的长期趋势、近期波动</span></h2>
+      <div class="fx-toolbar">
+        <button class="fx-btn" id="refreshNarrative">重新生成</button>
+        <span class="fx-hint" id="narrativeMeta"></span>
+      </div>
+      <div class="fx-narrative" id="narrativeBox"></div>
     </section>
 
     <section class="panel">
@@ -34,6 +69,7 @@
       <div class="scroll"><table id="holderCount"></table></div>
     </section>
   </main>
-  <script src="/static/js/financials.js"></script>
+  <script src="/static/js/vendor/echarts.min.js"></script>
+  <script src="/static/js/financials.js?v=20261125j"></script>
 </body>
 </html>

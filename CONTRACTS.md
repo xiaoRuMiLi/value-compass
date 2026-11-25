@@ -190,6 +190,8 @@ CycleAssessment(position, evidence, score)
 | GET | `/api/stock/{symbol}/valuations?start=&end=` | `list[ValuationPoint]`（含分析层计算的历史分位） | ⬜ 未实现 |
 | GET | `/api/stock/{symbol}/financials?start=&end=&report_types=` | `list[FinancialReport]` | ✅ 已实现 |
 | GET | `/api/stock/{symbol}/statement?type=income|balance|cashflow&start=&end=` | `list[StatementItem]` | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/financial-dashboard?frequency=quarter|annual` | `{labels, primary, statements, ratios, notes, kline}`（单季累计还原、比率推导、报告期对齐 K 线，web 层透传） | ✅ 已实现 |
+| GET | `/api/stock/{symbol}/financial-trend-narrative?refresh=` | `{symbol, text, source, generated_at}`（LLM 现金流/利润趋势解读，模板回退，叙述缓存） | ✅ 已实现 |
 | GET | `/api/stock/{symbol}/revenue-composition?dimension=&start=&end=` | `list[RevenueComposition]` | ✅ 已实现 |
 | GET | `/api/stock/{symbol}/announcements?keyword=&start=&end=&page=&size=` | `Page[Announcement]` | ⬜ 未实现 |
 | GET | `/api/stock/{symbol}/documents?doc_type=&start=&end=` | `list[Document]` | ✅ 已实现 |

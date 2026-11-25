@@ -126,6 +126,51 @@ _HK_STATEMENT_REPORT = {
     StatementType.BALANCE: "RPT_HKF10_FN_BALANCE",
 }
 _HK_DATE_TYPE = {"001": ReportType.FY, "003": ReportType.Q1, "002": ReportType.H1, "004": ReportType.Q3}
+# 港股逐科目报表用 STD_ITEM_CODE 数字编码，且同一编码在利润表/资产负债表含义不同。
+# 在 adapter 层归一化成项目内部语义码（与 A 股 _STATEMENT_FIELDS 对齐），
+# 让 analysis 层的比率推导无需区分市场即可复用；未映射科目保留原码，仍可在三大表查看。
+_HK_ITEM_CODE_MAP: dict[StatementType, dict[str, str]] = {
+    StatementType.INCOME: {
+        "004001001": "TOTAL_OPERATE_INCOME",   # 营业额
+        "004001999": "OPERATE_INCOME",          # 营运收入（与 financials.revenue 同口径）
+        "004005001": "OPERATE_COST",            # 营运支出
+        "004007999": "GROSS_PROFIT",            # 毛利
+        "004010999": "OPERATE_PROFIT",          # 经营溢利
+        "004011999": "TOTAL_PROFIT",            # 除税前溢利
+        "004012999": "NETPROFIT",               # 除税后溢利
+        "004025002": "PARENT_NETPROFIT",        # 股东应占溢利
+        "004027002": "BASIC_EPS",               # 每股基本盈利
+        "004027003": "DILUTED_EPS",             # 每股摊薄盈利
+    },
+    StatementType.BALANCE: {
+        "004001002": "FIXED_ASSET",             # 物业厂房及设备
+        "004001999": "TOTAL_NONCURRENT_ASSETS", # 非流动资产合计
+        "004002001": "INVENTORY",               # 存货
+        "004002003": "ACCOUNTS_RECE",           # 应收账款
+        "004002010": "MONETARYFUNDS",           # 现金及等价物
+        "004002999": "TOTAL_CURRENT_ASSETS",    # 流动资产合计
+        "004009999": "TOTAL_ASSETS",            # 总资产
+        "004011001": "ACCOUNTS_PAYABLE",        # 应付账款
+        "004011010": "SHORT_LOAN",              # 短期贷款
+        "004011999": "TOTAL_CURRENT_LIAB",      # 流动负债合计
+        "004020001": "LONG_LOAN",               # 长期贷款
+        "004020999": "TOTAL_NONCURRENT_LIAB",   # 非流动负债合计
+        "004025999": "TOTAL_LIABILITIES",       # 总负债
+        "004027999": "MINORITY_EQUITY",         # 少数股东权益
+        "004030001": "SHARE_CAPITAL",           # 股本
+        "004030999": "TOTAL_PARENT_EQUITY",     # 股东权益（归母）
+        "004036999": "TOTAL_EQUITY",            # 总权益
+    },
+}
+
+# 港股现金流量表长表在东财不存在，用主指标表披露的三大现金流净额构造。
+# 只取期间流量（累计口径，由 analysis 还原单季），期末现金是时点余额故不纳入。
+_HK_CASHFLOW_FIELDS = {
+    "NETCASH_OPERATE": "经营活动现金流量净额",
+    "NETCASH_INVEST": "投资活动现金流量净额",
+    "NETCASH_FINANCE": "筹资活动现金流量净额",
+}
+
 _HK_FIELDS = {
     "revenue": "OPERATE_INCOME",
     "net_profit": "HOLDER_PROFIT",  # 归母净利润
@@ -338,11 +383,14 @@ class EastmoneyFinancialProvider:
 
         港股没有 A 股三大报表接口；主要指标表只能给出汇总数，营业利润以下的
         投资/联营/利息等分项必须走这里，否则解释层只能看到一个黑箱合计。
-        港股现金流量表长表在东财不存在，返回空列表由 coverage 声明缺口。
+        港股现金流量表长表在东财不存在，改由主指标表披露的三大现金流净额构造。
         """
+        if statement == StatementType.CASHFLOW:
+            return self._fetch_hk_cashflow_items(code, start, end)
         report_name = _HK_STATEMENT_REPORT.get(statement)
         if not report_name:
             return []
+        code_map = _HK_ITEM_CODE_MAP.get(statement, {})
         items: list[StatementItem] = []
         page = 1
         while True:
@@ -370,17 +418,75 @@ class EastmoneyFinancialProvider:
                     continue
                 if end and report_date > end:
                     continue
+                raw_code = str(row.get("STD_ITEM_CODE") or "")
                 items.append(
                     StatementItem(
                         report_date=report_date,
                         report_type=_hk_report_type(row),
                         statement_type=statement,
-                        item_code=str(row.get("STD_ITEM_CODE") or ""),
+                        item_code=code_map.get(raw_code, raw_code),
                         item_name=str(row.get("ITEM_NAME") or ""),
                         item_value=to_float(row.get("AMOUNT")),
                         item_yoy=to_float(row.get("YOY_RATIO")),
                     )
                 )
+            if len(rows) < 500:
+                break
+            page += 1
+        return items
+
+    def _fetch_hk_cashflow_items(
+        self,
+        code: str,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> list[StatementItem]:
+        """港股现金流量表：用主指标表的经营/投资/筹资现金流净额构造三项。
+
+        东财港股没有现金流量表长表，分项（销售商品收现、购建固定资产等）
+        不可得，这里只给出确实披露的三项净额，不编造明细。
+        """
+        items: list[StatementItem] = []
+        page = 1
+        while True:
+            payload = self.client.get_json(
+                _MAINFINA_URL,
+                params={
+                    "reportName": _HK_MAINFIN_REPORT,
+                    "columns": "ALL",
+                    "filter": f'(SECUCODE="{code}.HK")',
+                    "pageNumber": str(page),
+                    "pageSize": "500",
+                    "sortTypes": "-1",
+                    "sortColumns": "STD_REPORT_DATE",
+                    "source": "F10",
+                    "client": "PC",
+                },
+                ttl=3600,
+            )
+            rows = (payload.get("result") or {}).get("data") or []
+            if not rows:
+                break
+            for row in rows:
+                report_date = str(row.get("STD_REPORT_DATE") or "")[:10]
+                if start and report_date < start:
+                    continue
+                if end and report_date > end:
+                    continue
+                for field, name in _HK_CASHFLOW_FIELDS.items():
+                    value = to_float(row.get(field))
+                    if value is None:
+                        continue
+                    items.append(
+                        StatementItem(
+                            report_date=report_date,
+                            report_type=_hk_report_type(row),
+                            statement_type=StatementType.CASHFLOW,
+                            item_code=field,
+                            item_name=name,
+                            item_value=value,
+                        )
+                    )
             if len(rows) < 500:
                 break
             page += 1

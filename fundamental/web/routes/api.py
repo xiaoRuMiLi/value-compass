@@ -13,8 +13,10 @@ from fundamental.services.analyze import (
     price_compare,
     screen_stocks,
 )
+from fundamental.services.financial_dashboard import build_financial_dashboard
 from fundamental.services.narrative import (
     generate_financial_forensics,
+    generate_financial_trend_narrative,
     generate_masters_narrative,
     generate_overview_narrative,
     generate_score_narrative,
@@ -139,6 +141,26 @@ def get_valuation_history(symbol: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         conn.close()
+
+
+@router.get("/stock/{symbol}/financial-dashboard")
+def get_financial_dashboard(symbol: str, frequency: str = "quarter") -> dict[str, Any]:
+    """财务页全景数据：主要指标、三大表、分组比率与报告期对齐的 K 线。"""
+
+    try:
+        return build_financial_dashboard(symbol, frequency)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/stock/{symbol}/financial-trend-narrative")
+def get_financial_trend_narrative(symbol: str, refresh: bool = False) -> dict[str, Any]:
+    """财务页趋势叙述：LLM 解释现金流与利润的长期趋势及近期波动。"""
+
+    result = generate_financial_trend_narrative(symbol, refresh=refresh)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=str(result["error"]))
+    return result
 
 
 @router.get("/stock/{symbol}/analysis")
