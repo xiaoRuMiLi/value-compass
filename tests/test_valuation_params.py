@@ -42,7 +42,7 @@ class TestCalibrationInjection(unittest.TestCase):
 
     def test_recompute_emits_full_valuation_for_ui_override(self):
         facts = {
-            "model_inputs": {"dps": 10.0, "fcf": 1e10, "shares": 1e9, "price": 100.0}
+            "model_inputs": {"dps": 10.0, "dcf_cash": 1e10, "shares": 1e9, "price": 100.0}
         }
         params = vp._normalize_params(
             {
@@ -88,7 +88,7 @@ class TestValuationScenarios(unittest.TestCase):
         self.assertGreater(p["scenarios"]["optimistic"]["dcf"]["growth"], p["dcf"]["growth"])
 
     def test_recompute_returns_three_tiers(self):
-        facts = {"model_inputs": {"dps": 10.0, "fcf": 1e10, "shares": 1e9, "price": 100.0}}
+        facts = {"model_inputs": {"dps": 10.0, "dcf_cash": 1e10, "shares": 1e9, "price": 100.0}}
         out = vp._recompute(facts, vp._normalize_params({}))
         self.assertEqual(set(out["scenarios"]), {"optimistic", "pessimistic"})
         base_dcf = out["dcf"]["fair_value_low"]
@@ -97,6 +97,54 @@ class TestValuationScenarios(unittest.TestCase):
         self.assertLess(pess_dcf, base_dcf)
         self.assertLess(base_dcf, opt_dcf)
         self.assertIn("overall", out["scenarios"]["optimistic"])
+
+    def test_adjusted_fcf_has_three_tiers_and_joins_overall(self):
+        facts = {"model_inputs": {
+            "dps": 2.58, "dcf_cash": 2.97e10, "shares": 3.88e9, "price": 72.55,
+            "fcf_components": {"ocf": 2.97e10, "capex": 1.97e9,
+                               "interest_income": 0.0, "interest_expense": 0.0},
+        }}
+        out = vp._recompute(facts, vp._normalize_params({}))
+        base = out["adjusted_fcf"]["fair_value_low"]
+        opt = out["scenarios"]["optimistic"]["adjusted_fcf"]["fair_value_low"]
+        pess = out["scenarios"]["pessimistic"]["adjusted_fcf"]["fair_value_low"]
+        self.assertLess(pess, base)
+        self.assertLess(base, opt)
+        self.assertIn("adjusted_fcf", out["overall"]["methods"])
+
+    def test_fcff_has_three_tiers_and_joins_overall(self):
+        facts = {"model_inputs": {
+            "dps": 2.58, "dcf_cash": 2.97e10, "shares": 3.88e9, "price": 72.55,
+            "fcff_inputs": {
+                "ocf": 2.97e10, "capex": 1.97e9, "interest_expense": 2.9e7,
+                "cash": 1.27e11, "marketable_securities": None,
+                "nonoperating_invest": 2.2e9, "debt": 4.1e8,
+                "minority_equity": 2.2e9, "revenue": 4.05e10,
+            },
+        }}
+        out = vp._recompute(facts, vp._normalize_params({}))
+        base = out["fcff"]["fair_value_low"]
+        opt = out["scenarios"]["optimistic"]["fcff"]["fair_value_low"]
+        pess = out["scenarios"]["pessimistic"]["fcff"]["fair_value_low"]
+        self.assertLess(pess, base)
+        self.assertLess(base, opt)
+        self.assertIn("fcff", out["overall"]["methods"])
+        self.assertGreater(out["fcff"]["inputs"]["equity_value"],
+                           out["fcff"]["inputs"]["enterprise_value"])
+
+    def test_derive_scenarios_includes_adjusted_fcf(self):
+        p = vp._normalize_params({})
+        self.assertIn("adjusted_fcf", p["scenarios"]["optimistic"])
+        self.assertLess(
+            p["scenarios"]["pessimistic"]["adjusted_fcf"]["growth"],
+            p["adjusted_fcf"]["growth"],
+        )
+        self.assertGreater(
+            p["scenarios"]["optimistic"]["adjusted_fcf"]["growth"],
+            p["adjusted_fcf"]["growth"],
+        )
+        self.assertIn("fcff", p["scenarios"]["optimistic"])
+        self.assertLess(p["scenarios"]["pessimistic"]["fcff"]["growth"], p["fcff"]["growth"])
 
 
 class TestNormalizeParams(unittest.TestCase):
@@ -145,7 +193,7 @@ class TestFallbackParams(unittest.TestCase):
 
 class TestRecompute(unittest.TestCase):
     def test_recomputes_with_custom_params(self):
-        facts = {"model_inputs": {"dps": 2.0, "price": 40.0, "fcf": 1e9, "shares": 1e8}}
+        facts = {"model_inputs": {"dps": 2.0, "price": 40.0, "dcf_cash": 1e9, "shares": 1e8}}
         params = {
             "ddm": {"growth": 0.03, "discount": 0.09, "rationale": ""},
             "dcf": {"growth": 0.04, "discount": 0.10, "terminal_growth": 0.02, "rationale": ""},
@@ -167,7 +215,7 @@ class TestRecompute(unittest.TestCase):
         self.assertAlmostEqual(overall["margin_of_safety"], overall["center"] / 40.0 - 1, places=3)
 
     def test_overall_with_only_ddm(self):
-        facts = {"model_inputs": {"dps": 2.0, "price": 40.0, "fcf": None, "shares": None}}
+        facts = {"model_inputs": {"dps": 2.0, "price": 40.0, "dcf_cash": None, "shares": None}}
         params = {
             "ddm": {"growth": 0.03, "discount": 0.09, "rationale": ""},
             "dcf": {"growth": 0.04, "discount": 0.10, "terminal_growth": 0.02, "rationale": ""},
@@ -179,7 +227,7 @@ class TestRecompute(unittest.TestCase):
         self.assertIn("仅基于", overall["note"])
 
     def test_empty_inputs_yield_none(self):
-        facts = {"model_inputs": {"dps": None, "price": None, "fcf": None, "shares": None}}
+        facts = {"model_inputs": {"dps": None, "price": None, "dcf_cash": None, "shares": None}}
         params = {
             "ddm": {"growth": 0.03, "discount": 0.09, "rationale": ""},
             "dcf": {"growth": 0.04, "discount": 0.10, "terminal_growth": 0.02, "rationale": ""},

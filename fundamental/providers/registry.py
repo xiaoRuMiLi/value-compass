@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Any, Callable, Optional
 
 from fundamental.providers import ProviderConfigError
 
 _REGISTRY: dict[str, dict[str, type]] = {}
+
+
+def _import_if_exists(module_name: str) -> None:
+    if importlib.util.find_spec(module_name) is not None:
+        importlib.import_module(module_name)
+
+
+def _ensure_loaded(capability: str, source: Optional[str] = None) -> None:
+    """按需导入适配器模块，避免调用方忘记 import 导致“能力未注册”。"""
+    if capability in _REGISTRY and (source is None or source in _REGISTRY[capability]):
+        return
+    if source is not None:
+        _import_if_exists(f"fundamental.providers.{capability}.{source}")
+    if capability not in _REGISTRY:
+        _import_if_exists(f"fundamental.providers.{capability}")
 
 
 def register(capability: str, source: str) -> Callable[[type], type]:
@@ -18,6 +34,7 @@ def register(capability: str, source: str) -> Callable[[type], type]:
 
 
 def get_provider_class(capability: str, source: Optional[str] = None) -> type:
+    _ensure_loaded(capability, source)
     sources = _REGISTRY.get(capability)
     if not sources:
         raise ProviderConfigError(f"能力未注册: {capability}")
@@ -46,3 +63,23 @@ def primary_source(settings: Any, capability: str) -> str:
 def make_provider(settings: Any, capability: str) -> Any:
     source = primary_source(settings, capability)
     return get_provider_class(capability, source)()
+
+
+def make_provider_chain(settings: Any, capability: str) -> list[Any]:
+    """按 primary → fallback 顺序实例化 provider；未配置的 fallback 自动忽略。
+
+    数据源实现类通过模块导入时的 @register 装饰器注册，因此调用方需确保相应
+    provider 模块已被导入（例如 sync.py 中显式 import）。
+    """
+    sources = [primary_source(settings, capability)]
+    fallback = settings.get(f"providers.{capability}.fallback")
+    if fallback:
+        sources.append(str(fallback))
+    providers: list[Any] = []
+    seen: set[str] = set()
+    for source in sources:
+        if source in seen:
+            continue
+        seen.add(source)
+        providers.append(get_provider_class(capability, source)())
+    return providers

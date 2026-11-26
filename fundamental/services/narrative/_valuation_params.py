@@ -11,12 +11,13 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from fundamental.analysis.valuation import evaluate_ddm, evaluate_dcf
+from fundamental.analysis.valuation import evaluate_ddm, evaluate_dcf, evaluate_fcf, evaluate_fcff
 from fundamental.config import load_settings
 from fundamental.models import ChatMessage
 from fundamental.providers.llm.port import LlmConfigError, LlmError
 from fundamental.services.analyze import analyze_stock
 from fundamental.services.llm import chat_json, has_live_llm
+from fundamental.services.risk_free import resolve_risk_free
 from fundamental.utils.intel import load_intel_digest
 from fundamental.utils.prompts import load_prompt
 
@@ -39,9 +40,20 @@ _GAP = 0.02  # discount - growth 的最小间距
 # 校准逻辑升级时递增，让缓存失效。
 # v4：估值主链路改为注入校准参数；旧缓存里的 rationale 基于缺失的 DPS/FCF，必须重算。
 # v5：新增乐观/悲观情景三档输出。
-_VALUATION_PARAMS_VERSION = 5
+# v6：自由现金流折现（标准 FCF 口径）纳入校准与三档情景，与 DDM/DCF 同源参数。
+# v7：DCF 期初改为未调整的 OCF（与 FCF 口径区分）；港股 OCF/资本开支/利息从原文拆分，
+#     校准重算改用同一份现金流输入，旧缓存需重算。
+# v8：新增 FCFF/WACC 企业价值折现 + EV→股权桥接，独立卡片与三档参数。
+# v9：WACC 引入无风险利率市场锚点（A股中国10Y国债/其它美国10Y国债），
+#     LLM 折现率受「Rf + 最低风险溢价」下限约束，旧缓存需重算。
+_VALUATION_PARAMS_VERSION = 9
 
-_METHOD_LABELS = {"ddm": "股利折现", "dcf": "现金流折现"}
+_METHOD_LABELS = {
+    "ddm": "股利折现",
+    "dcf": "现金流折现",
+    "adjusted_fcf": "自由现金流折现",
+    "fcff": "企业自由现金流折现",
+}
 _RATING_LABELS = {
     "buy": "买入",
     "overweight": "增持",
@@ -66,7 +78,28 @@ def _clamp(value: Any, low: float, high: float, default: float) -> float:
 _DEFAULTS = {
     "ddm": {"growth": 0.03, "discount": 0.09},
     "dcf": {"growth": 0.05, "discount": 0.10, "terminal_growth": 0.02},
+    "adjusted_fcf": {"growth": 0.04, "discount": 0.10, "terminal_growth": 0.02},
+    "fcff": {"growth": 0.05, "discount": 0.10, "terminal_growth": 0.02},
 }
+
+
+def _two_stage_block(raw: Any, defaults: dict[str, float], rationale_fallback: str) -> dict[str, Any]:
+    """归一化两阶段现金流模型（dcf / adjusted_fcf / fcff）的 g / 永续 g / r。"""
+    raw = raw if isinstance(raw, dict) else {}
+    g = _clamp(raw.get("growth"), _GROWTH_MIN, _GROWTH_MAX, defaults["growth"])
+    t = _clamp(raw.get("terminal_growth"), _TERMINAL_MIN, _TERMINAL_MAX, defaults["terminal_growth"])
+    r = _clamp(raw.get("discount"), _DISCOUNT_MIN, _DISCOUNT_MAX, defaults["discount"])
+    if r - g < _GAP:
+        r = min(_DISCOUNT_MAX, g + _GAP)
+    if r - t < _GAP:
+        t = max(_TERMINAL_MIN, r - _GAP)
+    text = raw.get("rationale")
+    return {
+        "growth": round(g, 4),
+        "discount": round(r, 4),
+        "terminal_growth": round(t, 4),
+        "rationale": str(text).strip() if isinstance(text, str) and text.strip() else rationale_fallback,
+    }
 
 
 def _normalize_block(raw: Any, defaults: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
@@ -74,10 +107,8 @@ def _normalize_block(raw: Any, defaults: dict[str, dict[str, float]] | None = No
 
     raw = raw if isinstance(raw, dict) else {}
     ddm = raw.get("ddm") if isinstance(raw.get("ddm"), dict) else {}
-    dcf = raw.get("dcf") if isinstance(raw.get("dcf"), dict) else {}
     base = defaults or _DEFAULTS
     dd = base["ddm"]
-    dc = base["dcf"]
 
     ddm_g = _clamp(ddm.get("growth"), _GROWTH_MIN, _GROWTH_MAX, dd["growth"])
     ddm_r = _clamp(ddm.get("discount"), _DISCOUNT_MIN, _DISCOUNT_MAX, dd["discount"])
@@ -85,14 +116,6 @@ def _normalize_block(raw: Any, defaults: dict[str, dict[str, float]] | None = No
         ddm_r = min(_DISCOUNT_MAX, ddm_g + _GAP)
         if ddm_r - ddm_g < _GAP:  # g 贴到上限时反过来压 g
             ddm_g = ddm_r - _GAP
-
-    dcf_g = _clamp(dcf.get("growth"), _GROWTH_MIN, _GROWTH_MAX, dc["growth"])
-    dcf_t = _clamp(dcf.get("terminal_growth"), _TERMINAL_MIN, _TERMINAL_MAX, dc["terminal_growth"])
-    dcf_r = _clamp(dcf.get("discount"), _DISCOUNT_MIN, _DISCOUNT_MAX, dc["discount"])
-    if dcf_r - dcf_g < _GAP:
-        dcf_r = min(_DISCOUNT_MAX, dcf_g + _GAP)
-    if dcf_r - dcf_t < _GAP:
-        dcf_t = max(_TERMINAL_MIN, dcf_r - _GAP)
 
     def rationale(block: dict[str, Any], fallback: str) -> str:
         text = block.get("rationale")
@@ -104,12 +127,15 @@ def _normalize_block(raw: Any, defaults: dict[str, dict[str, float]] | None = No
             "discount": round(ddm_r, 4),
             "rationale": rationale(ddm, "由模型按保守原则校准；详见参数依据。"),
         },
-        "dcf": {
-            "growth": round(dcf_g, 4),
-            "discount": round(dcf_r, 4),
-            "terminal_growth": round(dcf_t, 4),
-            "rationale": rationale(dcf, "由模型按保守原则校准；详见参数依据。"),
-        },
+        "dcf": _two_stage_block(
+            raw.get("dcf"), base["dcf"], "由模型按保守原则校准；详见参数依据。"
+        ),
+        "adjusted_fcf": _two_stage_block(
+            raw.get("adjusted_fcf"), base["adjusted_fcf"], "由模型按保守原则校准；详见参数依据。"
+        ),
+        "fcff": _two_stage_block(
+            raw.get("fcff"), base["fcff"], "由模型按保守原则校准；详见参数依据。"
+        ),
     }
 
 
@@ -117,6 +143,8 @@ def _derive_scenarios(base: dict[str, Any]) -> dict[str, Any]:
     """LLM 未给情景时，从基准参数派生乐观/悲观档（仍经边界钳制）。"""
 
     d, c = base["ddm"], base["dcf"]
+    f = base.get("adjusted_fcf") or _DEFAULTS["adjusted_fcf"]
+    e = base.get("fcff") or _DEFAULTS["fcff"]
     return {
         "optimistic": _normalize_block(
             {
@@ -125,6 +153,12 @@ def _derive_scenarios(base: dict[str, Any]) -> dict[str, Any]:
                 "dcf": {"growth": c["growth"] + 0.02, "discount": c["discount"] - 0.01,
                         "terminal_growth": c["terminal_growth"] + 0.01,
                         "rationale": "假设自由现金流改善、风险溢价回落，增长与永续上调；属情景推演，非基准预测。"},
+                "adjusted_fcf": {"growth": f["growth"] + 0.02, "discount": f["discount"] - 0.01,
+                                 "terminal_growth": f["terminal_growth"] + 0.01,
+                                 "rationale": "假设经营现金流改善、资本开支回落且加权成本下降，标准FCF与永续上调；属情景推演，非基准预测。"},
+                "fcff": {"growth": e["growth"] + 0.02, "discount": e["discount"] - 0.01,
+                         "terminal_growth": e["terminal_growth"] + 0.01,
+                         "rationale": "假设经营景气回升、资本开支效率改善，企业自由现金流与永续增长上调、WACC 回落；股权桥接项不变；属情景推演。"},
             }
         ),
         "pessimistic": _normalize_block(
@@ -134,6 +168,12 @@ def _derive_scenarios(base: dict[str, Any]) -> dict[str, Any]:
                 "dcf": {"growth": c["growth"] - 0.02, "discount": c["discount"] + 0.01,
                         "terminal_growth": c["terminal_growth"] - 0.01,
                         "rationale": "假设竞争加剧、现金流质量走弱，增长与永续下调；属情景推演，非基准预测。"},
+                "adjusted_fcf": {"growth": f["growth"] - 0.02, "discount": f["discount"] + 0.01,
+                                 "terminal_growth": max(0.0, f["terminal_growth"] - 0.01),
+                                 "rationale": "假设增长放缓、资本开支高企或应收回款走弱拖累标准FCF，增长与永续下调；属情景推演，非基准预测。"},
+                "fcff": {"growth": e["growth"] - 0.02, "discount": e["discount"] + 0.01,
+                         "terminal_growth": max(0.0, e["terminal_growth"] - 0.01),
+                         "rationale": "假设主业增长放缓、资本开支刚性与融资成本上升推高 WACC，企业自由现金流与永续下调；属情景推演。"},
             }
         ),
     }
@@ -149,8 +189,8 @@ def _normalize_params(raw: Any) -> dict[str, Any]:
     scenarios: dict[str, Any] = {}
     for name in ("optimistic", "pessimistic"):
         block = scenarios_raw.get(name)
-        if isinstance(block, dict) and (
-            isinstance(block.get("ddm"), dict) or isinstance(block.get("dcf"), dict)
+        if isinstance(block, dict) and any(
+            isinstance(block.get(key), dict) for key in ("ddm", "dcf", "adjusted_fcf", "fcff")
         ):
             scenarios[name] = _normalize_block(block)
         else:
@@ -188,6 +228,18 @@ def _fallback_params(facts: dict[str, Any]) -> dict[str, Any]:
             "discount": 0.10,
             "terminal_growth": round(min(g, 0.025), 4),
             "rationale": "增长阶段增速参考近年净利增速并封顶，永续增长率压低，折现率取 10% 反映风险。",
+        },
+        "adjusted_fcf": {
+            "growth": round(min(max(g, 0.03), 0.08), 4),
+            "discount": 0.10,
+            "terminal_growth": round(min(g, 0.025), 4),
+            "rationale": "标准FCF口径，增长假设与现金流折现同源：参考近年净利增速并封顶，永续压低，折现率取 10%。",
+        },
+        "fcff": {
+            "growth": round(min(max(g, 0.03), 0.08), 4),
+            "discount": 0.10,
+            "terminal_growth": round(min(g, 0.025), 4),
+            "rationale": "企业自由现金流口径，增长参考近年净利增速并封顶、永续压低；WACC 取 10% 作为保守假设（库内无 Beta 与债务成本，非计算值）。",
         },
         "summary": "模板回退：参数由历史净利增速推导，未经 LLM 结合行业与研报校准，仅供参考。",
     }
@@ -242,19 +294,51 @@ def _valuation_facts(
 ) -> dict[str, Any]:
     snapshot = result.get("snapshot")
     price = snapshot.price if snapshot else None
+    # 无风险利率市场锚点：给 LLM 的 facts 带上 Rf 与折现率下限，
+    # 让它知道 fcff.discount 不应低于该下限；重算时也会用同一份锚点。
+    symbol = str(result.get("symbol") or "")
+    try:
+        risk_free = resolve_risk_free(symbol).as_dict() if symbol else None
+    except Exception:  # noqa: BLE001 - 宏观数据缺失不应阻断校准
+        risk_free = None
     settings = load_settings()
     intel_limit = int(settings.get("valuation.intel_limit", 3))
     industry_chars = int(settings.get("valuation.industry_chars", 1200))
     survey_chars = int(settings.get("valuation.survey_chars", 1500))
     dps = None
-    fcf = None
+    dcf_cash = None
     shares = None
+    fcf_components = None
+    component_note = None
+    fcff_inputs = None
     for item in result.get("valuation") or []:
         if item.method == "ddm":
             dps = (item.inputs or {}).get("dividend_per_share")
         elif item.method == "dcf":
-            fcf = (item.inputs or {}).get("fcf")
+            # 现金流折现用未扣资本开支/利息的 OCF，与标准 FCF 卡片区分口径。
+            dcf_cash = (item.inputs or {}).get("fcf")
             shares = (item.inputs or {}).get("shares")
+        elif item.method == "adjusted_fcf":
+            # 标准 FCF 口径的分项输入：OCF − 资本开支 + 利息收入 − 利息支出。
+            inp = item.inputs or {}
+            src = inp.get("sources") or {}
+            fcf_components = {
+                "ocf": inp.get("ocf", src.get("ocf")),
+                "capex": inp.get("capex", src.get("capex")),
+                "interest_income": inp.get("interest_income", src.get("interest_income")),
+                "interest_expense": inp.get("interest_expense", src.get("interest_expense")),
+            }
+            component_note = (item.assumptions or {}).get("component_note")
+        elif item.method == "fcff":
+            # EV→股权桥接原始分项，重算时与 analyze 主链路完全同源。
+            inp = item.inputs or {}
+            fcff_inputs = {
+                key: inp.get(key)
+                for key in (
+                    "ocf", "capex", "interest_expense", "cash", "marketable_securities",
+                    "nonoperating_invest", "debt", "minority_equity", "revenue",
+                )
+            }
 
     return {
         "company": {
@@ -270,7 +354,12 @@ def _valuation_facts(
         "annual_growth": financials.get("annual_growth", []),
         "annual_quality": financials.get("annual_quality", []),
         "dividend_history": financials.get("dividend_history", []),
-        "model_inputs": {"dps": dps, "fcf": fcf, "shares": shares, "price": price},
+        "model_inputs": {
+            "dps": dps, "dcf_cash": dcf_cash, "shares": shares, "price": price,
+            "fcf_components": fcf_components, "component_note": component_note,
+            "fcff_inputs": fcff_inputs,
+        },
+        "risk_free": risk_free,
         "research_reports": research,
         "sellside": _sellside_sentiment(research),
         "intel": {
@@ -304,7 +393,7 @@ def _overall_range(calibrated: dict[str, Any]) -> dict[str, Any] | None:
     """
 
     available: list[tuple[str, dict[str, Any]]] = []
-    for method in ("ddm", "dcf"):
+    for method in ("ddm", "dcf", "adjusted_fcf", "fcff"):
         item = calibrated.get(method) or {}
         low, high = item.get("fair_value_low"), item.get("fair_value_high")
         if (
@@ -326,10 +415,11 @@ def _overall_range(calibrated: dict[str, Any]) -> dict[str, Any] | None:
     )
     margin = round(center / price - 1, 4) if isinstance(price, (int, float)) and price > 0 else None
     methods = [method for method, _ in available]
+    labels = "、".join(_METHOD_LABELS[m] for m in methods)
     note = (
-        "综合股利折现与现金流折现两种模型：区间取两者并集，中枢为两者中点均值。"
-        if len(methods) == 2
-        else f"仅基于{_METHOD_LABELS[methods[0]]}模型，另一模型因缺少必要输入未参与，合理价参考性有限。"
+        f"综合{labels}共 {len(methods)} 种模型：区间取各模型并集，中枢为各模型中点均值。"
+        if len(methods) > 1
+        else f"仅基于{labels}模型，其他模型因缺少必要输入未参与，合理价参考性有限。"
     )
     return {
         "low": round(min(lows), 2),
@@ -432,8 +522,12 @@ def _recompute(facts: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
     inputs = facts.get("model_inputs") or {}
     price = inputs.get("price")
     dps = inputs.get("dps")
-    fcf = inputs.get("fcf")
+    dcf_cash = inputs.get("dcf_cash")
     shares = inputs.get("shares")
+    fcfc = inputs.get("fcf_components") or {}
+    component_note = inputs.get("component_note")
+    fic = inputs.get("fcff_inputs") or {}
+    risk_free = facts.get("risk_free")
 
     def to_dict(result: Any, method: str) -> dict[str, Any]:
         return {
@@ -449,17 +543,48 @@ def _recompute(facts: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
 
     def evaluate_one(p: dict[str, Any]) -> dict[str, Any]:
         d, c = p["ddm"], p["dcf"]
+        f = p.get("adjusted_fcf") or p["dcf"]
+        e = p.get("fcff") or p["dcf"]
         block = {
             "ddm": to_dict(
                 evaluate_ddm(dps, price, growth=d["growth"], discount=d["discount"]), "ddm"
             ),
             "dcf": to_dict(
                 evaluate_dcf(
-                    fcf, shares, price,
+                    dcf_cash, shares, price,
                     growth=c["growth"], discount=c["discount"],
                     terminal_growth=c["terminal_growth"],
                 ),
                 "dcf",
+            ),
+            "adjusted_fcf": to_dict(
+                evaluate_fcf(
+                    fcfc.get("ocf"), shares, price,
+                    capex=fcfc.get("capex"),
+                    interest_income=fcfc.get("interest_income"),
+                    interest_expense=fcfc.get("interest_expense"),
+                    growth=f["growth"], discount=f["discount"],
+                    terminal_growth=f["terminal_growth"],
+                    component_note=component_note,
+                ),
+                "adjusted_fcf",
+            ),
+            "fcff": to_dict(
+                evaluate_fcff(
+                    fic.get("ocf"), shares, price,
+                    interest_expense=fic.get("interest_expense"),
+                    capex=fic.get("capex"),
+                    cash=fic.get("cash"),
+                    marketable_securities=fic.get("marketable_securities"),
+                    nonoperating_invest=fic.get("nonoperating_invest"),
+                    debt=fic.get("debt"),
+                    minority_equity=fic.get("minority_equity"),
+                    revenue=fic.get("revenue"),
+                    growth=e["growth"], discount=e["discount"],
+                    terminal_growth=e["terminal_growth"],
+                    risk_free=risk_free,
+                ),
+                "fcff",
             ),
         }
         block["overall"] = _overall_range(block)

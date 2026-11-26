@@ -158,27 +158,41 @@ class EastmoneyQuoteProvider:
             return self._tx_kline(code, market, start, end)
 
     def _tx_kline(self, code: str, market: Market, start: str, end: str) -> list[KlineBar]:
+        """腾讯降级日 K：按自然年分段拉取后合并去重。
+
+        腾讯单次请求最多返回 1000 条且偏向近端窗口，直接传全区间会丢掉早期
+        历史（例如五粮液只拿到 2022-10 之后的 1000 根）。改为每年一段请求，
+        每段约 250 个交易日远低于上限，从而覆盖完整历史。单段失败不影响其它
+        年份，也不会阻断财务数据入库。
+        """
         symbol = _tx_symbol(market, code)
         try:
-            resp = self._tx_session.get(
-                _TX_KLINE_URL,
-                params={"param": f"{symbol},day,{start},{end},1000"},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-        except Exception:
-            # 行情降级失败不应阻断财务数据入库。
+            year_start = int(start[:4])
+            year_end = int(end[:4])
+        except (ValueError, TypeError):
             return []
-        node = ((payload.get("data") or {}).get(symbol) or {}) if isinstance(payload, dict) else {}
-        rows = node.get("day") or node.get("qfqday") or []
-        bars: list[KlineBar] = []
-        for row in rows:
-            if len(row) < 6:
-                continue
+
+        by_date: dict[str, KlineBar] = {}
+        for year in range(year_start, year_end + 1):
+            seg_start = start if year == year_start else f"{year:04d}-01-01"
+            seg_end = end if year == year_end else f"{year:04d}-12-31"
             try:
-                bars.append(
-                    KlineBar(
+                resp = self._tx_session.get(
+                    _TX_KLINE_URL,
+                    params={"param": f"{symbol},day,{seg_start},{seg_end},1000"},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+            except Exception:
+                continue
+            node = ((payload.get("data") or {}).get(symbol) or {}) if isinstance(payload, dict) else {}
+            rows = node.get("day") or node.get("qfqday") or []
+            for row in rows:
+                if len(row) < 6:
+                    continue
+                try:
+                    bar = KlineBar(
                         trade_date=str(row[0]),
                         open=float(row[1]),
                         close=float(row[2]),
@@ -188,10 +202,10 @@ class EastmoneyQuoteProvider:
                         amount=0.0,
                         adj_factor=1.0,
                     )
-                )
-            except (TypeError, ValueError):
-                continue
-        return bars
+                except (TypeError, ValueError):
+                    continue
+                by_date[bar.trade_date] = bar
+        return [by_date[d] for d in sorted(by_date)]
 
     def fetch_valuations(
         self, symbol: str, start: str | None = None, end: str | None = None

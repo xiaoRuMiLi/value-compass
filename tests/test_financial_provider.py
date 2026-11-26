@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from fundamental.models import ReportType, StatementType
+from fundamental.models import Market, ReportType, StatementType
 from fundamental.providers.financial.eastmoney import (
     EastmoneyFinancialProvider,
     _hk_report_type,
@@ -196,6 +196,75 @@ class TestHkStatementItems(unittest.TestCase):
             "NETCASH_OPERATE", "NETCASH_INVEST", "NETCASH_FINANCE"
         })
         self.assertTrue(all(item.statement_type == StatementType.CASHFLOW for item in items))
+
+
+class TestTxKlineSegments(unittest.TestCase):
+    """腾讯降级日 K 按年分段拉取，避免单次 1000 条丢掉早期历史。"""
+
+    def _provider_with_rows(self, rows_by_year: dict[str, list]) -> tuple[EastmoneyQuoteProvider, mock.Mock]:
+        provider = EastmoneyQuoteProvider()
+        session = mock.Mock()
+
+        def fake_get(url, params=None, timeout=None):
+            param = params["param"]
+            year = param.split(",")[2][:4]
+            resp = mock.Mock()
+            resp.json.return_value = {
+                "data": {"sz000858": {"day": rows_by_year.get(year, [])}}
+            }
+            return resp
+
+        session.get.side_effect = fake_get
+        provider._tx_session = session
+        return provider, session
+
+    @staticmethod
+    def _row(date: str) -> list:
+        return [date, "10", "11", "12", "9", "1000"]
+
+    def test_fetch_across_years_and_dedup(self):
+        rows = {
+            "1998": [self._row("1998-01-05"), self._row("1998-01-06")],
+            "1999": [self._row("1999-01-04")],
+        }
+        provider, session = self._provider_with_rows(rows)
+        bars = provider._tx_kline("000858", Market.SZ, "1998-01-01", "1999-12-31")
+        self.assertEqual([b.trade_date for b in bars], [
+            "1998-01-05", "1998-01-06", "1999-01-04"
+        ])
+        # 每年一段请求，而非单次全区间
+        params = [c.kwargs["params"]["param"] for c in session.get.call_args_list]
+        self.assertEqual(len(params), 2)
+        self.assertIn("1998-01-01", params[0])
+        self.assertIn("1999-01-01", params[1])
+
+    def test_duplicate_dates_kept_once(self):
+        rows = {
+            "1998": [self._row("1998-01-05")],
+            "1999": [self._row("1998-01-05"), self._row("1999-01-04")],
+        }
+        provider, _ = self._provider_with_rows(rows)
+        bars = provider._tx_kline("000858", Market.SZ, "1998-01-01", "1999-12-31")
+        self.assertEqual([b.trade_date for b in bars], ["1998-01-05", "1999-01-04"])
+
+    def test_failed_segment_does_not_block_others(self):
+        provider = EastmoneyQuoteProvider()
+        session = mock.Mock()
+
+        def fake_get(url, params=None, timeout=None):
+            year = params["param"].split(",")[2][:4]
+            if year == "1998":
+                raise RuntimeError("network down")
+            resp = mock.Mock()
+            resp.json.return_value = {
+                "data": {"sz000858": {"day": [self._row("1999-01-04")]}}
+            }
+            return resp
+
+        session.get.side_effect = fake_get
+        provider._tx_session = session
+        bars = provider._tx_kline("000858", Market.SZ, "1998-01-01", "1999-12-31")
+        self.assertEqual([b.trade_date for b in bars], ["1999-01-04"])
 
 
 if __name__ == "__main__":

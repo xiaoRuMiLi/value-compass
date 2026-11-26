@@ -301,72 +301,164 @@ main {
   white-space: pre-line;
 }
 
-.val-row {
+#valuation {
   display: grid;
-  grid-template-columns: 120px 1fr 140px;
-  padding: 8px 0;
-  border-bottom: 1px solid #f0f1f3;
+  gap: 10px;
 }
 
 .val-block {
-  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #e8edf3;
+  border-radius: 8px;
+  background: #fbfdff;
 }
 
-.val-block .val-row {
-  border-bottom: none;
-  padding-bottom: 2px;
+.val-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.val-name {
-  font-weight: 500;
+.val-title {
+  min-width: 0;
+}
+
+.val-title-main {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #111827;
+}
+
+.val-title-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.val-actions {
   display: flex;
   align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .val-help {
-  margin-left: 6px;
-  width: 18px;
-  height: 18px;
-  border: 1px solid #cbd5e1;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #dbe3ec;
   border-radius: 50%;
-  background: #f1f5f9;
-  color: #475569;
-  font-size: 12px;
+  background: #fff;
+  color: #94a3b8;
+  font-size: 11px;
   line-height: 1;
   cursor: pointer;
   padding: 0;
 }
 
 .val-help:hover {
-  background: #e2e8f0;
+  background: #eff6ff;
+  border-color: #93c5fd;
   color: #1d4ed8;
 }
 
+.val-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 9px;
+}
+
+.val-range-wrap {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.val-range-label {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
 .val-range {
-  color: #374151;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #1e3a8a;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .val-margin {
-  text-align: right;
-  color: #64748b;
+  margin-left: auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  font-size: 11px;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.val-margin-negative {
+  background: #fff7ed;
+  color: #c2410c;
 }
 
 .val-formula {
-  margin-top: 4px;
-  font-size: 12px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed #e8edf3;
+  font-size: 11px;
   line-height: 1.6;
-  color: #6b7280;
+  color: #64748b;
+}
+
+.val-formula::before {
+  content: "公式 · ";
+  color: #94a3b8;
+}
+
+.val-alert {
+  margin-top: 7px;
+  padding: 7px 9px;
+  border-left: 3px solid #f59e0b;
+  border-radius: 0 4px 4px 0;
+  background: #fffbeb;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #92400e;
 }
 
 .val-params {
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #6b7280;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 6px;
+  margin-top: 7px;
+}
+
+.val-param-label {
+  margin-right: 2px;
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.val-param {
+  padding: 2px 7px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
 }
 
 .val-note {
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 13px;
   line-height: 1.7;
   color: #374151;
@@ -555,10 +647,20 @@ main {
 }
 
 .vp-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   font-size: 13px;
   font-weight: 600;
   color: #374151;
   margin-bottom: 6px;
+}
+
+.vp-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .vp-params {
@@ -584,6 +686,49 @@ main {
   font-size: 12px;
   line-height: 1.7;
   color: #4b5563;
+}
+
+.vp-fcf-detail {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  background: #fffdf7;
+}
+
+.vp-fcf-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #92400e;
+  margin-bottom: 6px;
+}
+
+.vp-fcf-params {
+  margin-top: 0;
+}
+
+.vp-fcf-source {
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #64748b;
+}
+
+.vp-fcf-detail .val-alert {
+  margin-top: 6px;
+  border-left-color: #f59e0b;
+}
+
+/* 无风险利率市场锚点：淡蓝底，与黄色「取数与桥接」提示区分。 */
+.vp-rf-detail {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+.vp-rf-detail .vp-fcf-title {
+  color: #1d4ed8;
+}
+.vp-rf-detail .val-alert {
+  border-left-color: #3b82f6;
 }
 
 .vp-ri-line {
@@ -1604,3 +1749,55 @@ details[open] > .fx-sig-head::before { content: "▾"; }
   margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #e9e5ff;
   font-size: 11px; line-height: 1.6; color: #7c3aed;
 }
+
+/* 估值计算器：每个口径默认收起，点击「计算器」弹出 */
+.val-calc-btn {
+  padding: 2px 8px; font-size: 11px; line-height: 1.5;
+  border: 1px solid #dbe3ec; border-radius: 4px; background: #fff;
+  color: #64748b; cursor: pointer; white-space: nowrap;
+}
+.val-calc-btn:hover { background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; }
+.calc-modal { position: fixed; inset: 0; z-index: 1100; display: none; }
+.calc-modal.open { display: block; }
+.calc-modal .calc-backdrop {
+  position: absolute; inset: 0; background: rgba(17, 24, 39, 0.55);
+}
+.calc-dialog {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(680px, calc(100vw - 24px)); max-height: 88vh; overflow: auto;
+  background: #fff; border-radius: 10px; box-shadow: 0 24px 60px rgba(0,0,0,0.3);
+  padding: 18px 22px;
+}
+.calc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.calc-header h3 { margin: 0; font-size: 16px; color: #111827; }
+.calc-close { border: none; background: transparent; font-size: 24px; line-height: 1; cursor: pointer; color: #6b7280; }
+.calc-close:hover { color: #111827; }
+.calc-hint { margin: 0 0 12px; font-size: 12px; color: #6b7280; line-height: 1.6; }
+.calc-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+.calc-field { display: flex; flex-direction: column; gap: 3px; }
+.calc-field.full { grid-column: 1 / -1; }
+.calc-field label { font-size: 12px; color: #374151; font-weight: 500; }
+.calc-field label .unit { color: #9ca3af; font-weight: 400; margin-left: 3px; }
+.calc-field input, .calc-field select {
+  padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 5px;
+  font-size: 13px; color: #111827; width: 100%; box-sizing: border-box;
+}
+.calc-field input:focus, .calc-field select:focus { outline: none; border-color: #2563eb; }
+.calc-group { grid-column: 1 / -1; margin: 4px 0 0; padding-top: 8px; border-top: 1px dashed #e5e7eb; }
+.calc-group-title { font-size: 12px; font-weight: 600; color: #1d4ed8; margin-bottom: 8px; }
+.calc-actions { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+.calc-run { padding: 7px 18px; border: none; border-radius: 5px; background: #2563eb; color: #fff; font-size: 13px; cursor: pointer; }
+.calc-run:hover { background: #1d4ed8; }
+.calc-reset { padding: 7px 12px; border: 1px solid #d1d5db; border-radius: 5px; background: #fff; color: #374151; font-size: 13px; cursor: pointer; }
+.calc-reset:hover { background: #f3f4f6; }
+.calc-source-hint { font-size: 11px; color: #9ca3af; line-height: 1.5; }
+.calc-result {
+  grid-column: 1 / -1; margin-top: 12px; padding: 14px 16px;
+  background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;
+}
+.calc-result.invalid { background: #fef2f2; border-color: #fecaca; }
+.calc-result-title { font-size: 13px; font-weight: 600; color: #166534; margin-bottom: 8px; }
+.calc-result.invalid .calc-result-title { color: #991b1b; }
+.calc-result-row { display: grid; grid-template-columns: 130px 1fr; font-size: 13px; padding: 3px 0; color: #374151; }
+.calc-result-row .calc-rv { color: #111827; font-weight: 500; }
+.calc-formula-note { grid-column: 1 / -1; margin-top: 8px; font-size: 11px; line-height: 1.6; color: #6b7280; }

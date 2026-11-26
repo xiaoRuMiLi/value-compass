@@ -14,14 +14,17 @@ import fundamental.providers.governance.eastmoney  # noqa: F401
 import fundamental.providers.holding.eastmoney  # noqa: F401
 import fundamental.providers.hotspot.eastmoney  # noqa: F401
 import fundamental.providers.industry.eastmoney  # noqa: F401
+import fundamental.providers.industry_research.eastmoney  # noqa: F401
 import fundamental.providers.integrity.cninfo  # noqa: F401
 import fundamental.providers.litigation.cninfo  # noqa: F401
 import fundamental.providers.llm  # noqa: F401
 import fundamental.providers.macro.eastmoney  # noqa: F401
 import fundamental.providers.official.official  # noqa: F401
 import fundamental.providers.quote.eastmoney  # noqa: F401
+import fundamental.providers.quote.tushare  # noqa: F401
 import fundamental.providers.research.eastmoney  # noqa: F401
 import fundamental.providers.sentiment.guba  # noqa: F401
+import fundamental.providers.survey.eastmoney  # noqa: F401
 
 from fundamental.config import Settings, load_settings
 from fundamental.providers import ProviderConfigError, registry
@@ -45,6 +48,9 @@ class TestRegistry(unittest.TestCase):
         settings = load_settings()
         provider = registry.make_provider(settings, "quote")
         self.assertTrue(callable(provider.fetch_snapshot))
+
+    def test_tushare_registered_as_quote_source(self):
+        self.assertIn("tushare", registry.registered_sources("quote"))
 
     def test_get_provider_class_unknown_source(self):
         with self.assertRaises(ProviderConfigError):

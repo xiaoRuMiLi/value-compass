@@ -7,6 +7,97 @@
   let klineChart = null;
   let klineBars = [];
   let valuationHistory = null;
+  let analysisValuation = {};
+  // 校准面板的 FCF 提示要回填 analysis 数据，两个接口谁先返回都要能正确渲染。
+  let valuationParamsData = null;
+
+  // 生成「计算器」按钮：回填值由各口径的 inputs/assumptions 拼装。
+  function calcButton(method, data) {
+    if (!window.ValuationCalculator) return null;
+    const btn = el("button", "val-calc-btn", "计算器");
+    btn.type = "button";
+    btn.title = "自定义输入重算该口径";
+    btn.addEventListener("click", () => window.ValuationCalculator.open(method, data));
+    return btn;
+  }
+
+  // 校准面板的 DDM/DCF：参数用校准后的 p，输入值优先取 analysis 里同口径的 inputs。
+  function calcDataFromCalibration(method, p, v, data) {
+    // 校准 API 的 calibrated[method].inputs 已含 DPS/FCF/股本，最可靠；analysis 作为补充。
+    const item = analysisValuation[method] || {};
+    const calInp = (v && v.inputs) || {};
+    const anaInp = (item.inputs) || {};
+    const base = calcDataFromResult(item);
+    base.growth = p && p.growth != null ? p.growth : base.growth;
+    base.discount = p && p.discount != null ? p.discount : base.discount;
+    base.terminalGrowth = p && p.terminal_growth != null ? p.terminal_growth : base.terminalGrowth;
+    base.price = (v && v.current_price) || base.price;
+    if (method === "ddm") {
+      base.dps = calInp.dividend_per_share != null ? calInp.dividend_per_share
+        : (anaInp.dividend_per_share != null ? anaInp.dividend_per_share : base.dps);
+    }
+    if (method === "dcf") {
+      base.fcf = calInp.fcf != null ? calInp.fcf : (anaInp.fcf != null ? anaInp.fcf : base.fcf);
+      base.shares = calInp.shares != null ? calInp.shares : (anaInp.shares != null ? anaInp.shares : base.shares);
+    }
+    if (method === "adjusted_fcf") {
+      base.shares = calInp.shares != null ? calInp.shares : (anaInp.shares != null ? anaInp.shares : base.shares);
+      // FCF 分项：校准重算后的 inputs 含 ocf/capex/利息；analysis 结果作为兜底。
+      for (const [k, js] of [["ocf", "ocf"], ["capex", "capex"],
+                             ["interestIncome", "interest_income"], ["interestExpense", "interest_expense"]]) {
+        const val = calInp[js] != null ? calInp[js] : anaInp[js];
+        if (val != null) base[k] = val;
+      }
+      base.fcfSource = calInp.ocf != null ? "derived" : (anaInp.base_source || base.fcfSource);
+    }
+    if (method === "fcff") {
+      // 桥接项全部来自校准重算后的 inputs（与 analysis 同源），保证计算器与卡片一致。
+      for (const [js, key] of [
+        ["ocf", "ocf"], ["capex", "capex"], ["interestExpense", "interest_expense"],
+        ["cash", "cash"], ["marketableSecurities", "marketable_securities"],
+        ["nonoperatingInvest", "nonoperating_invest"], ["debt", "debt"],
+        ["minorityEquity", "minority_equity"], ["revenue", "revenue"], ["shares", "shares"],
+      ]) {
+        const val = calInp[key] != null ? calInp[key] : anaInp[key];
+        if (val != null) base[js] = val;
+      }
+    }
+    return base;
+  }
+
+  function calcDataFromResult(item) {
+    const inp = (item && item.inputs) || {};
+    const asm = (item && item.assumptions) || {};
+    return {
+      eps: inp.eps, bps: inp.bps,
+      peMedian: asm.median_pe, peLow: inp.pe_low, peHigh: inp.pe_high,
+      dps: inp.dividend_per_share,
+      fcf: inp.fcf, shares: inp.shares,
+      fcfSource: inp.base_source || "derived",
+      ocf: inp.ocf != null ? inp.ocf : (inp.sources || {}).ocf,
+      capex: inp.capex != null ? inp.capex : (inp.sources || {}).capex,
+      interestIncome: inp.interest_income != null ? inp.interest_income : (inp.sources || {}).interest_income,
+      interestExpense: inp.interest_expense != null ? inp.interest_expense : (inp.sources || {}).interest_expense,
+      netProfit: (inp.sources || {}).net_profit,
+      inventory: (inp.working_capital_changes || {}).inventory,
+      receivable: (inp.working_capital_changes || {}).receivable,
+      payable: (inp.working_capital_changes || {}).payable,
+      prepaid: (inp.working_capital_changes || {}).prepaid,
+      contractLiability: (inp.working_capital_changes || {}).contract_liability,
+      workingCapitalAlert: (item && item.assumptions || {}).working_capital_alert,
+      growth: asm.growth, discount: asm.discount,
+      terminalGrowth: asm.terminal_growth, years: asm.years,
+      price: item && item.current_price,
+      cash: inp.cash,
+      marketableSecurities: inp.marketable_securities,
+      nonoperatingInvest: inp.nonoperating_invest,
+      debt: inp.debt,
+      minorityEquity: inp.minority_equity,
+      revenue: inp.revenue,
+      excessCashRatio: asm.excess_cash_ratio,
+      nonoperatingDiscount: asm.nonoperating_discount,
+    };
+  }
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -21,40 +112,96 @@
 
   const PARAM_LABELS = {
     growth: "预测增长率",
-    discount: "折现率（要求回报率）",
+    discount: "折现率",
     years: "预测年数",
-    terminal_growth: "10年后永续增长率",
+    terminal_growth: "永续增长率",
     median_pe: "历史PE中位数",
     pe_percentile: "当前PE分位",
+    current_pe: "当前PE",
+    pe_low: "PE 20%分位",
+    pe_high: "PE 80%分位",
     eps: "EPS",
     bps: "BPS",
     dividend_per_share: "每股股利",
+    net_profit: "净利润",
+    ocf: "经营现金流",
+    capex: "资本开支",
+    interest_income: "利息收入",
+    interest_expense: "利息支出",
     fcf: "自由现金流",
+    fcff: "企业自由现金流",
+    cash: "货币资金",
+    marketable_securities: "交易性金融资产/存款",
+    nonoperating_invest: "非经营投资（原值）",
+    debt: "有息负债",
+    minority_equity: "少数股东权益",
+    revenue: "营业收入",
+    enterprise_value: "企业价值 EV",
+    equity_value: "股权价值",
+    excess_cash: "超额现金",
+    nonoperating_assets_discounted: "非经营投资（折价后）",
     shares: "总股本",
+    prepaid: "预付款项增加",
+    contract_liability: "合同负债（经销商预付款）增加",
   };
+
+  const SOURCE_LABELS = {
+    derived: "标准公式推导",
+    direct: "直接输入FCF",
+  };
+
+  const SKIP_PARAM_KEYS = new Set([
+    "formula", "param_source", "sources", "base_source",
+    "fcf_source", "working_capital_basis", "working_capital_alert",
+  ]);
+  const RATE_KEYS = new Set(["growth", "discount", "terminal_growth", "pe_percentile"]);
+  const PE_KEYS = new Set(["median_pe", "current_pe", "pe_low", "pe_high"]);
+  const PER_SHARE_KEYS = new Set(["eps", "bps", "dividend_per_share"]);
+  const MONEY_KEYS = new Set([
+    "fcf", "fcff", "ocf", "net_profit", "capex", "interest_income", "interest_expense",
+    "cash", "marketable_securities", "nonoperating_invest", "debt", "minority_equity",
+    "revenue", "enterprise_value", "equity_value", "excess_cash", "nonoperating_assets_discounted",
+  ]);
+  const RATE_KEYS_EXTRA = new Set(["excess_cash_ratio", "nonoperating_discount"]);
 
   function fmtParamValue(key, value) {
     if (value == null) return "数据缺失";
     if (typeof value === "object") return "见口径说明";
-    if (["growth", "discount", "terminal_growth", "pe_percentile"].includes(key)) {
-      return `${(value * 100).toFixed(1)}%`;
+    if (key === "base_source") return SOURCE_LABELS[value] || value;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return String(value);
+    if (RATE_KEYS.has(key) || RATE_KEYS_EXTRA.has(key)) return `${(n * 100).toFixed(1)}%`;
+    if (key === "shares") return `${(n / 1e8).toFixed(2)}亿股`;
+    if (MONEY_KEYS.has(key)) {
+      if (Math.abs(n) >= 1e7) return `${(n / 1e8).toFixed(2)}亿`;
+      return n.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
     }
-    if (key === "fcf") return `${(value / 1e8).toFixed(2)}亿`;
-    if (key === "shares") return `${(value / 1e8).toFixed(2)}亿股`;
-    if (key === "median_pe" || key === "current_pe") return value.toFixed(2);
-    return value;
+    if (PE_KEYS.has(key)) return n.toFixed(2);
+    if (PER_SHARE_KEYS.has(key)) return n.toFixed(2);
+    return Number.isInteger(n) ? String(n) : n.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+  }
+
+  function humanizeFormula(text) {
+    return String(text || "").replace(/sqrt\s*\(/gi, "√(");
   }
 
   function renderParams(item) {
-    const parts = [];
-    for (const [key, value] of Object.entries(item.assumptions || {})) {
-      if (key === "formula" || key === "param_source") continue;
-      parts.push(`${PARAM_LABELS[key] || key} ${fmtParamValue(key, value)}`);
-    }
-    for (const [key, value] of Object.entries(item.inputs || {})) {
-      parts.push(`${PARAM_LABELS[key] || key} ${fmtParamValue(key, value)}`);
-    }
-    return parts.join("；");
+    const chips = [];
+    const seen = new Set();
+    const collect = (obj) => {
+      for (const [key, value] of Object.entries(obj || {})) {
+        if (SKIP_PARAM_KEYS.has(key) || seen.has(key) || value == null || typeof value === "object") continue;
+        seen.add(key);
+        chips.push(el("span", "val-param", `${PARAM_LABELS[key] || key} ${fmtParamValue(key, value)}`));
+      }
+    };
+    collect(item.assumptions);
+    collect(item.inputs);
+    if (!chips.length) return null;
+    const wrap = el("div", "val-params");
+    wrap.appendChild(el("span", "val-param-label", "参数"));
+    chips.forEach((chip) => wrap.appendChild(chip));
+    return wrap;
   }
 
   function renderScore(score) {
@@ -190,39 +337,63 @@
 
   function renderValuation(valuation) {
     const box = document.getElementById("valuation");
-    const names = { relative: "相对估值", graham: "格雷厄姆" };
-    // DDM/DCF 只在下方「估值参数校准」展示一套，避免上下重复同一组区间。
+    const display = {
+      relative: { title: "相对估值", sub: "自身历史 PE 分位" },
+      graham: { title: "格雷厄姆", sub: "防御型估值" },
+    };
+    // 保存全部口径供计算器回填；DDM/DCF/自由现金流折现都在下方校准区展示，避免重复。
+    analysisValuation = {};
+    for (const item of (valuation || [])) analysisValuation[item.method] = item;
     for (const item of (valuation || []).filter(
       (v) => v.method === "relative" || v.method === "graham"
     )) {
+      const meta = display[item.method] || { title: item.method, sub: "" };
       const block = el("div", "val-block");
       block.id = "val-" + item.method;
-      const row = el("div", "val-row");
-      const nameCell = el("div", "val-name");
-      nameCell.appendChild(el("span", null, names[item.method] || item.method));
+
+      const head = el("div", "val-head");
+      const title = el("div", "val-title");
+      title.appendChild(el("div", "val-title-main", meta.title));
+      if (meta.sub) title.appendChild(el("div", "val-title-sub", meta.sub));
+      const actions = el("div", "val-actions");
+      const btn = calcButton(item.method, calcDataFromResult(item));
+      if (btn) actions.appendChild(btn);
       const help = el("button", "val-help", "?");
       help.type = "button";
       help.title = "查看该估值模型的历史与说明";
       help.setAttribute("aria-label", "查看估值模型说明");
       help.addEventListener("click", () => openValuationModal(item.method));
-      nameCell.appendChild(help);
-      const range = el(
+      actions.appendChild(help);
+      head.appendChild(title);
+      head.appendChild(actions);
+      block.appendChild(head);
+
+      const row = el("div", "val-row");
+      const rangeWrap = el("div", "val-range-wrap");
+      rangeWrap.appendChild(el("span", "val-range-label", "合理价区间"));
+      rangeWrap.appendChild(el(
         "div",
         "val-range",
-        item.fair_value_low == null ? "暂无数据" : `${item.fair_value_low} ~ ${item.fair_value_high}`
-      );
-      const margin = el("div", "val-margin", `安全边际 ${fmtPct(item.margin_of_safety)}`);
-      row.appendChild(nameCell);
-      row.appendChild(range);
+        item.fair_value_low == null
+          ? "暂无数据"
+          : `${item.fair_value_low} ~ ${item.fair_value_high} 元`
+      ));
+      const marginClass = item.margin_of_safety != null && item.margin_of_safety < 0
+        ? "val-margin val-margin-negative" : "val-margin";
+      const margin = el("div", marginClass, `安全边际 ${fmtPct(item.margin_of_safety)}`);
+      row.appendChild(rangeWrap);
       row.appendChild(margin);
       block.appendChild(row);
+
       if (item.assumptions && item.assumptions.formula) {
-        block.appendChild(el("div", "val-formula", item.assumptions.formula));
+        block.appendChild(el("div", "val-formula", humanizeFormula(item.assumptions.formula)));
       }
+      const alerts = [item.assumptions && item.assumptions.fcf_source,
+                      item.assumptions && item.assumptions.working_capital_alert]
+        .filter(Boolean);
+      if (alerts.length) block.appendChild(el("div", "val-alert", alerts.join("　｜　")));
       const params = renderParams(item);
-      if (params) {
-        block.appendChild(el("div", "val-params", params));
-      }
+      if (params) block.appendChild(params);
       box.appendChild(block);
     }
   }
@@ -432,28 +603,156 @@
 
   const pct1 = (v) => (v == null ? "-" : `${(v * 100).toFixed(1)}%`);
 
+  // 若 fcff 的 LLM 折现率被利率下限抬高，参数行补一句实际执行值，避免显示与计算不一致。
+  function floorNote(cal) {
+    const asm = (cal && cal.assumptions) || {};
+    if (!asm.discount_floor_applied || asm.discount == null) return "";
+    return ` · 低于利率下限，实际按 ${pct1(asm.discount)} 执行`;
+  }
+
   // 把模型的 g/r 翻译成用户能直接读懂的中文，并明确增长率适用的年限。
-  function describeParams(method, p) {
+  function describeParams(method, p, cal) {
     if (!p) return "";
     if (method === "ddm") {
       return `股息长期增长率 ${pct1(p.growth)}（长期永续） · 折现率 ${pct1(p.discount)}`;
     }
-    return `前 10 年现金流增长率 ${pct1(p.growth)} · 10 年后永续增长率 ${pct1(p.terminal_growth)} · 折现率 ${pct1(p.discount)}`;
+    const label = method === "fcff" ? "企业自由现金流"
+      : method === "adjusted_fcf" ? "自由现金流" : "现金流";
+    const discountLabel = method === "fcff" ? "WACC" : "折现率";
+    return `前 10 年${label}增长率 ${pct1(p.growth)} · 10 年后永续增长率 ${pct1(p.terminal_growth)} · ${discountLabel} ${pct1(p.discount)}`
+      + (method === "fcff" ? floorNote(cal) : "");
   }
 
   // 情景行空间有限，用更紧凑的中文表述，年限含义与基准卡片一致。
-  function describeScenarioParams(method, p) {
+  function describeScenarioParams(method, p, cal) {
     if (!p) return "-";
     if (method === "ddm") {
       return `永续增长率 ${pct1(p.growth)} · 折现率 ${pct1(p.discount)}`;
     }
-    return `前10年 ${pct1(p.growth)} · 永续 ${pct1(p.terminal_growth)} · 折现率 ${pct1(p.discount)}`;
+    const label = method === "fcff" ? "FCFF" : method === "adjusted_fcf" ? "FCF" : "前10年";
+    const discountLabel = method === "fcff" ? "WACC" : "折现率";
+    return `${label} ${pct1(p.growth)} · 永续 ${pct1(p.terminal_growth)} · ${discountLabel} ${pct1(p.discount)}`
+      + (method === "fcff" ? floorNote(cal) : "");
   }
 
   const PARAM_NOTES = {
     ddm: "股息增长率按长期永续假设（无固定预测年限）；折现率即要求回报率，越高则合理价越低。合理区间为中枢 ±20%。",
-    dcf: "前 10 年为可预测增长期，第 11 年起按永续增长率计算终值；折现率即要求回报率，越高则合理价越低。合理区间为中枢 ±20%。",
+    dcf: "期初现金流 = 经营活动现金流量净额（未扣资本开支、未调整利息收支），与下方标准FCF口径不同；前 10 年按该增长率增长，第 11 年起按永续增长率算终值。折现率即要求回报率，越高则合理价越低。合理区间为中枢 ±20%。",
+    adjusted_fcf: "期初自由现金流 = 经营现金流 − 资本开支 + 利息收入 − 利息支出；前 10 年按该增长率增长，第 11 年起按永续增长率算终值。增长率与折现率按财报和研报校准，越高越乐观。合理区间为中枢 ±20%。",
+    fcff: "FCFF = 经营现金流 + 实付利息 − 资本开支；按 WACC 两阶段折现得企业价值 EV，再桥接为股权价值：EV − 有息负债 + 超额现金 + 非经营投资（按资产质量折价）− 少数股东权益。超额现金留足 2% 营收作为经营周转；WACC 由财报与研报校准，并以市场无风险利率为下限（A股取中国10Y国债、其它取美国10Y国债），取值与来源见下方锚点。净现金公司与重资产公司的结果会明显不同于上面两种股权口径。",
   };
+
+  // 自由现金流折现的取数参数与"现金流质量提示"。
+  // 这些数据在主估值结果的 adjusted_fcf 里，校准接口只带三档假设，故从分析数据回填展示。
+  function renderFcfQuality() {
+    const item = analysisValuation.adjusted_fcf;
+    if (!item) return null;
+    const asm = item.assumptions || {};
+    const inp = item.inputs || {};
+    const src = inp.sources || {};
+    const wrap = el("div", "vp-fcf-detail");
+    wrap.appendChild(el("div", "vp-fcf-title", "现金流质量与取数提示（偏移项不进入公式，仅作风险提醒）"));
+
+    const chips = [];
+    const addChip = (key, value) => {
+      const missing = value == null || (typeof value === "number" && !Number.isFinite(value));
+      // 资本开支/利息确实未取到时要明确显示「数据缺失」，不能让用户误以为是 0。
+      if (missing && !["ocf", "capex", "interest_income", "interest_expense"].includes(key)) return;
+      chips.push(el("span", "val-param", `${PARAM_LABELS[key] || key} ${fmtParamValue(key, value)}`));
+    };
+    addChip("years", asm.years);
+    addChip("ocf", inp.ocf);
+    addChip("capex", inp.capex);
+    addChip("interest_income", inp.interest_income);
+    addChip("interest_expense", inp.interest_expense);
+    addChip("fcf", inp.fcf);
+    addChip("shares", inp.shares);
+    addChip("net_profit", src.net_profit);
+    // 合同负债/预付/应付/应收/存货是偏移项，只在下方质量提示里展示增减额，不混进取数参数。
+    if (chips.length) {
+      const row = el("div", "val-params vp-fcf-params");
+      row.appendChild(el("span", "val-param-label", "取数参数"));
+      chips.forEach((chip) => row.appendChild(chip));
+      wrap.appendChild(row);
+    }
+
+    if (asm.component_note) {
+      wrap.appendChild(el("div", "vp-fcf-source", asm.component_note));
+    }
+    if (asm.fcf_source) {
+      wrap.appendChild(el("div", "vp-fcf-source", asm.fcf_source));
+    }
+    if (asm.working_capital_alert) {
+      wrap.appendChild(el("div", "val-alert", asm.working_capital_alert));
+    }
+    return wrap.childNodes.length ? wrap : null;
+  }
+
+  // FCFF 的 EV→股权桥接明细：让「加回净现金/折价非经营投资」的每一步可核对。
+  function renderFcffBridge() {
+    const item = analysisValuation.fcff;
+    if (!item) return null;
+    const asm = item.assumptions || {};
+    const inp = item.inputs || {};
+    const wrap = el("div", "vp-fcf-detail");
+    wrap.appendChild(el("div", "vp-fcf-title", "EV→股权价值桥接与取数提示"));
+
+    const chips = [];
+    const addChip = (key) => {
+      const value = inp[key];
+      if (value == null || (typeof value === "number" && !Number.isFinite(value))) return;
+      chips.push(el("span", "val-param", `${PARAM_LABELS[key] || key} ${fmtParamValue(key, value)}`));
+    };
+    chips.push(el("span", "val-param", `预测年数 ${asm.years != null ? asm.years : "-"}`));
+    for (const key of ["ocf", "interest_expense", "capex", "fcff", "cash", "marketable_securities",
+                       "nonoperating_invest", "debt", "minority_equity", "revenue",
+                       "excess_cash", "nonoperating_assets_discounted", "enterprise_value",
+                       "equity_value", "shares"]) {
+      addChip(key);
+    }
+    if (chips.length) {
+      const row = el("div", "val-params vp-fcf-params");
+      row.appendChild(el("span", "val-param-label", "取数与桥接"));
+      chips.forEach((chip) => row.appendChild(chip));
+      wrap.appendChild(row);
+    }
+    if (asm.component_note) wrap.appendChild(el("div", "vp-fcf-source", asm.component_note));
+    if (asm.bridge_formula) wrap.appendChild(el("div", "vp-fcf-source", asm.bridge_formula));
+    if (asm.missing_bridge) wrap.appendChild(el("div", "val-alert", asm.missing_bridge));
+
+    // 无风险利率市场锚点：Rf 取值/来源、债务成本 Kd、WACC 下限与本次实际执行值。
+    const rf = asm.risk_free;
+    if (rf && !rf.missing) {
+      const rfBox = el("div", "vp-fcf-detail vp-rf-detail");
+      rfBox.appendChild(el("div", "vp-fcf-title", "折现率市场锚点（无风险利率）"));
+      const rfChips = [];
+      const addRf = (text) => rfChips.push(el("span", "val-param", text));
+      if (rf.rf_pct != null) addRf(`${rf.rf_label} ${rf.rf_pct}%`);
+      if (rf.rf_date) addRf(`数据日期 ${rf.rf_date}`);
+      if (rf.debt_cost_pct != null) addRf(`债务成本 Kd ${rf.debt_cost_pct}%`);
+      if (rf.discount_floor_pct != null) addRf(`WACC 下限 ${rf.discount_floor_pct}%`);
+      if (asm.discount != null) {
+        const pct = (asm.discount * 100).toFixed(2);
+        addRf(`本次 WACC ${pct}%${asm.discount_floor_applied ? "（已按下限执行）" : ""}`);
+      }
+      if (rfChips.length) {
+        const rfRow = el("div", "val-params vp-fcf-params");
+        rfRow.appendChild(el("span", "val-param-label", "利率锚点"));
+        rfChips.forEach((chip) => rfRow.appendChild(chip));
+        rfBox.appendChild(rfRow);
+      }
+      if (rf.rf_source) rfBox.appendChild(el("div", "vp-fcf-source", `数据来源：${rf.rf_source}；债务成本与下限为建模假设，见下方说明。`));
+      if (asm.wacc_note) rfBox.appendChild(el("div", "vp-fcf-source", asm.wacc_note));
+      if (rf.currency_mismatch) {
+        rfBox.appendChild(el("div", "val-alert",
+          `币种错配提示：无风险利率以 ${rf.rf_currency} 计、公司现金流以 ${rf.cashflow_currency} 计；按市场规则统一采用境外 10 年期国债，跨市场比较时需注意该口径差异。`));
+      }
+      wrap.appendChild(rfBox);
+    } else if (asm.wacc_note) {
+      wrap.appendChild(el("div", "vp-fcf-source", asm.wacc_note));
+    }
+    return wrap.childNodes.length ? wrap : null;
+  }
 
   // 悲观/基准/乐观三档对照：输入相同，只变增长与折现假设。
   function renderScenarioRows(data, method) {
@@ -472,7 +771,7 @@
       if (!row.v || row.v.fair_value_low == null) continue;
       const line = el("div", `vp-sc-row sc-${row.key}`);
       line.appendChild(el("span", "vp-sc-tag", row.label));
-      line.appendChild(el("span", "vp-sc-params", describeScenarioParams(method, row.p)));
+      line.appendChild(el("span", "vp-sc-params", describeScenarioParams(method, row.p, row.v)));
       line.appendChild(el("span", "vp-sc-range", `${row.v.fair_value_low} ~ ${row.v.fair_value_high}`));
       box.appendChild(line);
     }
@@ -553,16 +852,32 @@
       box.appendChild(card);
     }
 
-    const names = { ddm: "股利折现", dcf: "现金流折现" };
-    for (const method of ["ddm", "dcf"]) {
+    const names = {
+      ddm: "股利折现",
+      dcf: "现金流折现",
+      adjusted_fcf: "自由现金流折现（标准 FCF 口径）",
+      fcff: "企业自由现金流折现（FCFF / WACC）",
+    };
+    for (const method of ["ddm", "dcf", "adjusted_fcf", "fcff"]) {
       const p = params[method];
       const v = cal[method] || {};
       if (!p) continue;
       const card = el("div", "vp-card");
-      const head = el("div", "vp-card-head", names[method]);
+      const head = el("div", "vp-card-head");
+      head.appendChild(el("span", "vp-card-title", names[method]));
+      const calc = calcButton(method, calcDataFromCalibration(method, p, v, data));
+      const actions = el("div", "vp-card-actions");
+      if (calc) actions.appendChild(calc);
+      const help = el("button", "val-help", "?");
+      help.type = "button";
+      help.title = "查看该估值模型的说明";
+      help.setAttribute("aria-label", "查看估值模型说明");
+      help.addEventListener("click", () => openValuationModal(method));
+      actions.appendChild(help);
+      head.appendChild(actions);
       card.appendChild(head);
 
-      card.appendChild(el("div", "vp-params", describeParams(method, p)));
+      card.appendChild(el("div", "vp-params", describeParams(method, p, v)));
       card.appendChild(el("div", "vp-param-note", PARAM_NOTES[method] || ""));
 
       const range =
@@ -574,6 +889,14 @@
       card.appendChild(renderScenarioRows(data, method));
       if (p.rationale) {
         card.appendChild(el("div", "vp-rationale", p.rationale));
+      }
+      if (method === "adjusted_fcf") {
+        const fcfDetail = renderFcfQuality();
+        if (fcfDetail) card.appendChild(fcfDetail);
+      }
+      if (method === "fcff") {
+        const bridge = renderFcffBridge();
+        if (bridge) card.appendChild(bridge);
       }
       box.appendChild(card);
     }
@@ -603,7 +926,10 @@
   function loadValuationParams() {
     const box = document.getElementById("valuationParams");
     getJSON(`/api/stock/${symbol}/valuation-params`)
-      .then((data) => renderValuationParams(data))
+      .then((data) => {
+        valuationParamsData = data;
+        renderValuationParams(data);
+      })
       .catch(() => {
         box.innerHTML = "";
         box.appendChild(el("p", "muted", "估值参数校准暂不可用"));
@@ -652,6 +978,8 @@
     ]);
     renderScore(analysis.score);
     renderValuation(analysis.valuation);
+    // 若校准接口先于 analysis 返回，此时 analysisValuation 才就绪，补渲染一次带上取数提示。
+    if (valuationParamsData) renderValuationParams(valuationParamsData);
     renderMasters(analysis.masters);
     renderReview(analysis.review, analysis.moat, analysis.cycle, analysis.fraud, analysis.delisting);
     valuationHistory = valHistory;

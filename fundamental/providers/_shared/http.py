@@ -80,6 +80,26 @@ class HttpClient:
             return text
         return self.get(url, params=params, headers=headers).text
 
+    def post_json(
+        self,
+        url: str,
+        payload: Optional[dict] = None,
+        headers: Optional[dict] = None,
+        ttl: Optional[int] = None,
+    ) -> Any:
+        """POST JSON 并解析响应；与 GET 共用重试、限流和可选缓存。"""
+        if self.cache is not None:
+            cache_key = self.cache.key(url, payload)
+            cached = self.cache.get(cache_key, ttl)
+            if cached is not None:
+                return cached
+            data = self._parse_json(
+                self._request("POST", url, json=payload, headers=headers), url
+            )
+            self.cache.set(cache_key, data, ttl)
+            return data
+        return self._parse_json(self._request("POST", url, json=payload, headers=headers), url)
+
     def post_form(
         self,
         url: str,

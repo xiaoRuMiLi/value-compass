@@ -13,6 +13,10 @@ class ProviderRequestError(ProviderError):
     """上游请求失败（网络错误、超时、HTTP 错误状态）。"""
 
 
+class ProviderRateLimitError(ProviderRequestError):
+    """上游接口频率限制；调用方可用其它数据源降级。"""
+
+
 class ProviderDataError(ProviderError):
     """上游数据缺失或无法解析。"""
 

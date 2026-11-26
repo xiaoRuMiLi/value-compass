@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from fundamental.config import load_settings
 from fundamental.models import StatementType
+from fundamental.providers import ProviderError
 from fundamental.providers.announcement.cninfo import CninfoAnnouncementProvider
 from fundamental.providers.capitalflow.eastmoney import EastmoneyCapitalFlowProvider
 from fundamental.providers.commodity.sina import SinaCommodityProvider
@@ -21,7 +22,9 @@ from fundamental.providers.industry.eastmoney import EastmoneyIndustryProvider
 from fundamental.providers.integrity.cninfo import CninfoIntegrityProvider
 from fundamental.providers.macro.eastmoney import EastmoneyMacroProvider
 from fundamental.providers.official.official import OfficialSiteProvider
-from fundamental.providers.quote.eastmoney import EastmoneyQuoteProvider
+import fundamental.providers.quote.eastmoney  # noqa: F401 - 注册东财行情源
+import fundamental.providers.quote.tushare  # noqa: F401 - 注册 Tushare 行情源
+from fundamental.providers.registry import make_provider_chain
 from fundamental.providers.research.eastmoney import EastmoneyResearchProvider
 from fundamental.providers.sentiment.guba import GubaSentimentProvider
 from fundamental.storage import db, repository
@@ -36,6 +39,28 @@ def _insert(conn: Any, table: str, columns: list[str], models: list[Any], to_row
     return repository.insert_many(conn, table, columns, [to_row(model) for model in models])
 
 
+def fetch_with_fallback(providers: list[Any], method: str, *args: Any) -> Any:
+    """按配置顺序尝试 provider；异常或空结果都会切换到下一源。
+
+    列表类结果（K 线、估值序列）全失败时返回空列表，单值结果全失败时抛错。
+    """
+    last_error: ProviderError | None = None
+    for provider in providers:
+        try:
+            result = getattr(provider, method)(*args)
+        except ProviderError as exc:
+            last_error = exc
+            continue
+        if result is None or (isinstance(result, list) and not result):
+            continue
+        return result
+    if method in ("fetch_kline", "fetch_valuations"):
+        return []
+    if last_error is not None:
+        raise last_error
+    raise ProviderError(f"所有数据源均无法提供 {method}")
+
+
 def sync_stock(
     symbol: str,
     db_path: Path | None = None,
@@ -43,10 +68,16 @@ def sync_stock(
 ) -> dict[str, int]:
     """拉取单只股票全部数据并写入 SQLite，返回各表写入行数。"""
     conn = db.init_db(db_path)
-    quote = EastmoneyQuoteProvider()
+    quote_chain = make_provider_chain(load_settings(), "quote")
     financial = EastmoneyFinancialProvider()
 
-    stock = quote.fetch_stock_info(symbol)
+    def fetch_quote(method: str, *args: Any) -> Any:
+        try:
+            return fetch_with_fallback(quote_chain, method, *args)
+        except ProviderError as exc:
+            raise ProviderError(f"{symbol} 行情取数失败：{exc}") from exc
+
+    stock = fetch_quote("fetch_stock_info", symbol)
     stock_id = repository.get_or_create_stock(conn, stock)
     if stock.industry:
         industry_id = repository.get_or_create_industry(conn, stock.industry)
@@ -55,19 +86,19 @@ def sync_stock(
     stats: dict[str, int] = {}
 
     # 行情与估值
-    snapshot = quote.fetch_snapshot(symbol)
+    snapshot = fetch_quote("fetch_snapshot", symbol)
     repository.insert_many(
         conn, "snapshots", ["stock_id", "fetched_at", "price", "market_cap", "turnover_rate", "pct_change"],
         [(stock_id, snapshot.fetched_at, snapshot.price, snapshot.market_cap, snapshot.turnover_rate, snapshot.pct_change)],
     )
     stats["snapshots"] = 1
 
-    bars = quote.fetch_kline(symbol, kline_start, today)
+    bars = fetch_quote("fetch_kline", symbol, kline_start, today)
     stats["kline"] = _insert(
         conn, "kline", ["stock_id", "trade_date", "open", "high", "low", "close", "volume", "amount", "adj_factor"],
         bars, lambda b: (stock_id, b.trade_date, b.open, b.high, b.low, b.close, b.volume, b.amount, b.adj_factor),
     )
-    valuations = quote.fetch_valuations(symbol)
+    valuations = fetch_quote("fetch_valuations", symbol)
     stats["valuations"] = _insert(
         conn, "valuations",
         ["stock_id", "trade_date", "close_price", "pe_ttm", "pe_lar", "pb_mrq", "ps_ttm", "peg", "pcf_ocf_ttm", "total_market_cap"],
@@ -122,7 +153,7 @@ def sync_stock(
         ["stock_id", "publish_date", "org_name", "analyst", "rating", "rating_change", "target_price", "title", "source_url"],
         reports, lambda r: (stock_id, r.publish_date, r.org_name, r.analyst, _ev(r.rating), _ev(r.rating_change), r.target_price, r.title, r.source_url),
     )
-    macro = EastmoneyMacroProvider().fetch_macro_indicators(["cpi", "pmi"])
+    macro = EastmoneyMacroProvider().fetch_macro_indicators(["cpi", "pmi", "cn10y", "us10y"])
     stats["macro_indicators"] = _insert(
         conn, "macro_indicators", ["indicator_code", "indicator_name", "trade_date", "value", "source"],
         macro, lambda m: (m.indicator_code, m.indicator_name, m.trade_date, m.value, m.source),

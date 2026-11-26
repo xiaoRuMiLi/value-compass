@@ -41,6 +41,23 @@ _RE_FCF = re.compile(
 # 「若剔除…我们的自由现金流为X亿元」是调整后口径，与标准季度口径不可加，
 # 必须排除；否则会把 2026Q2 的调整值 376 当成标准值（正确应为 430）。
 _RE_FCF_ADJUSTED = re.compile(r"若剔\s*除[\s\S]{0,60}?自由現金流[為为]", re.S)
+# 季度现金流分项（归一化空白后匹配）：兼容正/负自由现金流表述。
+# 腾讯原文：自由现金流 = 经营现金流 − 资本开支 − 媒体内容 − 租赁负债；
+# 这里把 OCF 与资本开支单列出来，供标准 FCF（OCF−capex±利息）复核，
+# 媒体内容/租赁仅作口径差异说明，不混入标准 FCF。
+_RE_FCF_LINE = re.compile(
+    r"(?:第[一二三四]季的自由現金流[為为]|產生的自由現金流[為为]|錄得(?P<neg>負)自由現金流)"
+    r"\s*人民幣\s*(?P<fcf>[\d,]+)\s*億元",
+    re.S,
+)
+# PDF 断行常在词中插入空格（「淨 額」「人 民幣」），匹配前先去掉所有空白。
+_RE_OCF_LINE = re.compile(r"經營活動所(?:產生的)?現金(?:流量)?淨額人民幣(?P<ocf>[\d,]+)億元")
+_RE_CAPEX_LINE = re.compile(r"資本開支付款人民幣(?P<capex>[\d,]+)億元")
+_RE_MEDIA_LINE = re.compile(r"媒體內容付款人民幣(?P<media>[\d,]+)億元")
+_RE_LEASE_LINE = re.compile(r"租賃負債付款人民幣(?P<lease>[\d,]+)億元")
+# 年报损益表利息收支（单位：人民币百万元）
+_RE_INTEREST_INCOME = re.compile(r"利息收入\s+([\d,]{4,})\s+([\d,]{4,})")
+_RE_FINANCE_COST = re.compile(r"財務成本\s+\(([\d,]+)\)\s+\(([\d,]+)\)")
 # 回购注销：董事会报告段落。「总代价约X亿港元…购回合共N股股份。购回的股份其后已被注销」
 _RE_BUYBACK_HKD = re.compile(
     r"總代價約\s*([\d,]+)\s*億港元[\s\S]{0,120}?購回合共\s*([\d,]+)\s*股股份",
@@ -173,6 +190,130 @@ def extract_fcf_ttm(symbol: str) -> dict[str, Any]:
         "fcf_ttm_yi": total,
         "quarters": recent,
         "method": "公司财报原文披露的自由现金流口径",
+        "note": note,
+    }
+
+
+def extract_cashflow_ttm(symbol: str) -> dict[str, Any]:
+    """从港股财报原文抽取最近四季 OCF / 资本开支 / 利息收支（单位：亿元人民币）。
+
+    港股现金流量表长表在东财不存在，但腾讯在每季业绩公告里以固定句式披露：
+    「自由现金流为人民币X亿元，反映经营活动所产生的现金净额人民币Y亿元，
+      部分被资本开支Z亿元、媒体内容付款...所抵销」。
+    本函数把其中的 OCF 与资本开支单列出来，并取年报损益表的利息收入/财务成本，
+    供标准 FCF（OCF−资本开支+利息收入−利息支出）使用。公司披露的自由现金流
+    口径额外扣除了媒体内容与租赁负债，二者差异会在说明里注明。
+
+    返回结构：
+    {
+      "available": bool, "ocf_ttm_yi": float|None, "capex_ttm_yi": float|None,
+      "interest_income_yi": float|None, "interest_expense_yi": float|None,
+      "reported_fcf_ttm_yi": float|None, "quarters": [...], "note": str,
+    }
+    """
+    empty = {
+        "available": False, "ocf_ttm_yi": None, "capex_ttm_yi": None,
+        "interest_income_yi": None, "interest_expense_yi": None,
+        "reported_fcf_ttm_yi": None, "quarters": [], "note": "",
+    }
+    docs = _load_report_texts(symbol)
+    if not docs:
+        return {**empty, "reason": "无可用财报原文"}
+
+    quarters: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    for doc in docs:
+        raw = re.sub(r"\s+", "", doc["text"])
+        spaced = re.sub(r"\s+", " ", doc["text"])
+        q = _doc_quarter(str(doc.get("doc_type") or ""), spaced)
+        if q is None:
+            continue
+        match = None
+        for cand in _RE_FCF_LINE.finditer(raw):
+            # 「若剔除算力预付款…自由现金流」是调整口径，不能当标准季度值。
+            head = raw[max(0, cand.start() - 80):cand.end()]
+            if "若剔除" in head:
+                continue
+            match = cand
+            break
+        if match is None:
+            continue
+        period = str(doc.get("period") or "")
+        key = (period, q)
+        if key in seen:
+            continue
+        seen.add(key)
+        seg = raw[match.start():match.start() + 500]
+        ocf_m = _RE_OCF_LINE.search(seg)
+        capex_m = _RE_CAPEX_LINE.search(seg)
+        media_m = _RE_MEDIA_LINE.search(seg)
+        lease_m = _RE_LEASE_LINE.search(seg)
+        fcf_yi = _to_yi(match.group("fcf"))
+        if match.group("neg"):
+            fcf_yi = -fcf_yi
+        quarters.append({
+            "period": period,
+            "quarter": q,
+            "fcf_yi": fcf_yi,
+            "ocf_yi": _to_yi(ocf_m.group("ocf")) if ocf_m else None,
+            "capex_yi": _to_yi(capex_m.group("capex")) if capex_m else None,
+            "media_yi": _to_yi(media_m.group("media")) if media_m else None,
+            "lease_yi": _to_yi(lease_m.group("lease")) if lease_m else None,
+            "source": str(doc.get("title") or period),
+        })
+
+    if not quarters:
+        return {**empty, "reason": "财报原文未找到季度现金流披露句式"}
+
+    quarters.sort(key=lambda x: (int(x["period"]), x["quarter"]))
+    recent = quarters[-4:]
+    idx = lambda q: int(q["period"]) * 4 + q["quarter"]
+    continuous = all(idx(recent[i + 1]) - idx(recent[i]) == 1 for i in range(len(recent) - 1))
+
+    def total(key: str) -> float | None:
+        vals = [q[key] for q in recent if q.get(key) is not None]
+        return round(sum(vals), 2) if len(vals) == len(recent) else None
+
+    # 年报损益表利息收支（最新年度，单位百万元 → 亿元）
+    interest_income: float | None = None
+    interest_expense: float | None = None
+    annuals = sorted(
+        (d for d in docs if "annual_report" in str(d.get("doc_type") or "")),
+        key=lambda d: str(d.get("period") or ""), reverse=True,
+    )
+    for doc in annuals:
+        text = re.sub(r"\s+", " ", doc["text"])
+        inc = _RE_INTEREST_INCOME.search(text)
+        cost = _RE_FINANCE_COST.search(text)
+        if inc:
+            interest_income = round(_to_yi(inc.group(1)) / 100, 2)
+        if cost:
+            interest_expense = round(_to_yi(cost.group(1)) / 100, 2)
+        if inc or cost:
+            break
+
+    ocf_ttm = total("ocf_yi")
+    capex_ttm = total("capex_yi")
+    note = (
+        "港股现金流量表长表在行情源不存在，OCF 与资本开支取财报原文「自由现金流」段落"
+        "（经营活动现金净额、资本开支付款）按最近四个季度汇总；"
+        "利息收入/财务成本取最新年报损益表（财务成本含汇兑损益，按原文金额计入）。"
+        "公司披露的自由现金流还扣除了媒体内容付款与租赁负债付款，口径比标准 FCF 更严，"
+        "故两者数值不同，媒体内容/租赁在下方季度明细中单列。"
+    )
+    if not continuous:
+        note += f" 当前仅取到 {len(recent)} 个季度且不连续，TTM 代表性有限。"
+    if ocf_ttm is None or capex_ttm is None:
+        note += " 部分季度缺少 OCF/资本开支明细，该项按不可用处理，不用 0 冒充。"
+
+    return {
+        "available": ocf_ttm is not None or capex_ttm is not None,
+        "ocf_ttm_yi": ocf_ttm,
+        "capex_ttm_yi": capex_ttm,
+        "interest_income_yi": interest_income,
+        "interest_expense_yi": interest_expense,
+        "reported_fcf_ttm_yi": total("fcf_yi"),
+        "quarters": recent,
         "note": note,
     }
 

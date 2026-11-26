@@ -4,18 +4,30 @@
 
 ## 任务
 
-为「股利折现（DDM / Gordon 增长模型）」和「现金流折现（DCF / 两阶段 FCFE）」两个模型，给出**保守、贴合这家公司基本面**的参数，而不是套用通用默认值。项目会用你给的参数重新调用公式计算合理价区间，所以参数必须能被下面的公式直接使用。
+为「股利折现（DDM / Gordon 增长模型）」「现金流折现（DCF / 两阶段 FCFE）」「自由现金流折现（标准 FCF 口径）」「企业自由现金流折现（FCFF / WACC + EV→股权桥接）」四个模型，给出**保守、贴合这家公司基本面**的参数，而不是套用通用默认值。项目会用你给的参数重新调用公式计算合理价区间，所以参数必须能被下面的公式直接使用。
 
 ## 模型与参数含义
 
 - DDM：合理价 = DPS × (1 + g) / (r − g)。参数：`growth`(g，股息长期增长率)、`discount`(r，要求回报率/折现率)。
-- DCF：未来 10 年自由现金流按 `growth` 增长、按 `discount` 折现，终值按 `terminal_growth` 永续增长。参数：`growth`、`discount`、`terminal_growth`。
+- DCF（现金流折现）：期初现金流 = 经营活动现金流量净额（**未扣资本开支、未调整利息收支**），未来 10 年按 `growth` 增长、按 `discount` 折现，终值按 `terminal_growth` 永续增长。参数：`growth`、`discount`、`terminal_growth`。
+- 自由现金流折现（adjusted_fcf，标准 FCF 口径）：期初 FCF = 经营活动现金流量净额 − 资本开支 + 利息收入 − 利息支出，其后与 DCF 同为两阶段折现。参数同样是 `growth`、`discount`、`terminal_growth`。它与 DCF 的**期初现金流口径不同**（FCF 已扣资本开支、还原利息），因此即便参数一致，两者合理价也会有差异；若 FCF 质量与利润明显背离（如经营现金流被应付项目阶段性抬高），增长率应更保守，并在 rationale 中说明。资本开支高、自由现金流被明显压低的公司，FCF 模型对增长率尤其敏感，务必向下修正。
+- 企业自由现金流折现（fcff）：FCFF = 经营活动现金流量净额 + 实付利息 − 资本开支；按 `discount`（此处是 **WACC，加权平均资本成本**）两阶段折现得到企业价值 EV，再按 `EV − 有息负债 + 超额现金 + 非经营投资(折价) − 少数股东权益` 桥接成股权价值并除以股本。参数同样是 `growth`、`discount`、`terminal_growth`。**fcff 的 discount 是 WACC，不是股东要求回报率**：应综合无风险利率、股权风险溢价、Beta 与债务成本给出，通常不应低于同公司的 FCFE 折现率；库内暂无 Beta，允许在 rationale 中说明为假设值。净现金多、有息负债高的公司，该口径与前两个模型差异会明显，属正常现象，不要为了对齐数值而扭曲参数。
+
+## 无风险利率锚点（fcff 专用）
+
+输入 facts 里若有 `risk_free` 字段，它是本项目按市场规则取到的**真实市场利率**，不是假设：
+
+- A 股取中国 10 年期国债到期收益率，其它市场（港股/美股）取美国 10 年期国债到期收益率；字段 `rf_pct` 是百分数取值、`rf_date` 与 `rf_source` 是数据日期与来源。
+- `debt_cost_pct` = 债务成本 Kd = Rf + 信用利差（在 Rf 上按固定百分点加，属建模假设）；`discount_floor_pct` = WACC 下限 = Rf + 最低风险溢价。
+- **fcff 的 `discount` 由你结合基本面与研报最终决定，但不得低于 `discount_floor_pct / 100`**。这个下限只是约束，不是让你把 WACC 直接设成下限——若公司风险高（高杠杆、盈利波动、治理或行业风险），应主动给高于下限的值。
+- 港股/其它市场若 `currency_mismatch` 为 true，表示无风险利率以美元计、公司现金流以人民币计，属按市场规则统一采用境外利率的口径差异；定参时意识到这一点即可，不要因此机械地大幅抬升或压低 WACC。
+- 在 fcff 的 rationale 里简要说明你的 WACC 与 Rf、债务成本的相对关系（例如「WACC 取 10%，高于 8.85% 的利率下限，已包含行业调整与治理风险溢价」）。
 
 ## 定参原则（务必保守）
 
 - **增长率 g 要有基本面锚**：参考近 3~5 年营收/净利/股息的实际增速、研报的一致预期，并向下修正。周期高点、一次性收益带来的高增速不可外推；增长已明显放缓的公司，g 应显著低于历史峰值。DDM 的 g 是永续增长率，原则上不超过名义 GDP 增速（约 5%），保守时取更低。
 - **折现率 r 要反映风险**：无风险利率只是底子，需叠加公司特定风险（ROE 下滑、负债率、盈利波动、治理与诚信记录、行业景气）。确定性高的成熟公司取低一些，强周期、高杠杆、治理有瑕疵的公司取高一些。
-- **必须满足 r 严格大于 g**：DDM 要求 `discount − growth ≥ 0.02`（即至少 2 个百分点的间距），DCF 要求 `discount − terminal_growth ≥ 0.02`。否则 Gordon 公式分母过小、结果失真。
+- **必须满足 r 严格大于 g**：DDM 要求 `discount − growth ≥ 0.02`（即至少 2 个百分点的间距），DCF 与自由现金流折现要求 `discount − terminal_growth ≥ 0.02`。否则 Gordon 公式分母过小、结果失真。
 - **永续增长率 terminal_growth 最保守**：通常取 0~3%，不应高于 DDM 的 g。
 - **宁可低估，不要高估**：不确定时向下调 g、向上调 r，让合理价偏保守。这是本任务的硬约束。
 - `sellside` 汇总卖方评级分布、目标价区间与近期评级变动，`intel` 提供行业研报与调研纪要摘录。它们是第三方观点而非公司已实现数据，研报预期通常偏乐观，采纳时继续向下修正；若评级分歧明显或目标价远高于你的合理价，应在 rationale 中说明并提高折现率反映不确定性。
@@ -46,14 +58,30 @@
     "terminal_growth": 0.02,
     "rationale": "一到两句中文，说明三个参数的依据"
   },
+  "adjusted_fcf": {
+    "growth": 0.04,
+    "discount": 0.10,
+    "terminal_growth": 0.02,
+    "rationale": "一到两句中文，说明标准FCF口径下三个参数的依据，及与DCF是否有差异"
+  },
+  "fcff": {
+    "growth": 0.05,
+    "discount": 0.10,
+    "terminal_growth": 0.02,
+    "rationale": "一到两句中文，说明 WACC 与两个增长率的依据；注明桥接项（超额现金/有息负债/非经营投资）如何反映公司情况"
+  },
   "scenarios": {
     "optimistic": {
       "ddm": {"growth": 0.05, "discount": 0.08, "rationale": "..."},
-      "dcf": {"growth": 0.08, "discount": 0.09, "terminal_growth": 0.03, "rationale": "..."}
+      "dcf": {"growth": 0.08, "discount": 0.09, "terminal_growth": 0.03, "rationale": "..."},
+      "adjusted_fcf": {"growth": 0.07, "discount": 0.09, "terminal_growth": 0.03, "rationale": "..."},
+      "fcff": {"growth": 0.07, "discount": 0.09, "terminal_growth": 0.03, "rationale": "..."}
     },
     "pessimistic": {
       "ddm": {"growth": 0.01, "discount": 0.11, "rationale": "..."},
-      "dcf": {"growth": 0.02, "discount": 0.12, "terminal_growth": 0.01, "rationale": "..."}
+      "dcf": {"growth": 0.02, "discount": 0.12, "terminal_growth": 0.01, "rationale": "..."},
+      "adjusted_fcf": {"growth": 0.01, "discount": 0.12, "terminal_growth": 0.01, "rationale": "..."},
+      "fcff": {"growth": 0.01, "discount": 0.12, "terminal_growth": 0.01, "rationale": "..."}
     }
   },
   "summary": "一段中文总述：当前基本面与所处周期下，这套参数为何种偏保守，以及关键的不确定性"

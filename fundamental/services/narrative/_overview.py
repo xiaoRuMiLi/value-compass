@@ -201,7 +201,10 @@ def _render_template(facts: dict[str, Any]) -> list[dict[str, str]]:
     sections.append({"title": "经营与周期", "content": "；".join(cycle_segments) + "。"})
 
     if facts.get("valuation"):
-        method_names = {"relative": "相对估值", "graham": "格雷厄姆", "ddm": "股利折现", "dcf": "现金流折现"}
+        method_names = {
+            "relative": "相对估值", "graham": "格雷厄姆", "ddm": "股利折现",
+            "dcf": "现金流折现", "adjusted_fcf": "自由现金流折现",
+        }
         items = "；".join(
             f"{method_names.get(v['method'], v['method'])} {_fmt_price(v['fair_value_low'])}~"
             f"{_fmt_price(v['fair_value_high'])}（安全边际 {_fmt_ratio(v['margin_of_safety'])}）"

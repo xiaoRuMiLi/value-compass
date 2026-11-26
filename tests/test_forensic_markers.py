@@ -15,6 +15,7 @@ from pathlib import Path
 _ROOT = Path(__file__).parent.parent
 _FORENSICS_JS = _ROOT / "pages" / "static" / "js" / "forensics.js"
 _REPORT_JS = _ROOT / "pages" / "static" / "js" / "report.js"
+_REVIEW_JS = _ROOT / "pages" / "static" / "js" / "review.js"
 _REPORT_HTML = _ROOT / "pages" / "report.html"
 _REVIEW_HTML = _ROOT / "pages" / "review.html"
 _REPORT_CSS = _ROOT / "pages" / "static" / "css" / "report.css"
@@ -350,17 +351,25 @@ console.log('AUDIT_RENDER_OK');
 
 
 class StaticWiringTests(unittest.TestCase):
-    def test_report_page_has_event_band_container(self):
+    def test_report_page_uses_consistent_asset_versions(self):
         html = _REPORT_HTML.read_text(encoding="utf-8")
-        self.assertIn('id="klineMarkerLegend"', html)
-        self.assertIn("财报关键点事件带", html)
         # 静态资源版本会随功能升级而变化，这里只校验「带了版本号且各资源一致」，
         # 避免每次升版本都要改测试（写死版本的断言会让升级被误判为回归）。
         versions = re.findall(r"/static/(?:js|css)/[\w.-]+\?v=([\w]+)", html)
         self.assertTrue(versions, "report.html 未带静态资源版本号")
         self.assertEqual(len(set(versions)), 1, f"report.html 静态资源版本不一致: {set(versions)}")
-        self.assertIn(f'/static/js/forensics.js?v={versions[0]}', html)
         self.assertIn(f'/static/js/report.js?v={versions[0]}', html)
+
+    def test_review_page_has_event_band_container(self):
+        # 事件带在两页分工后迁移到体检页，报告页的 K 线改为估值叠加折线。
+        html = _REVIEW_HTML.read_text(encoding="utf-8")
+        self.assertIn('id="klineMarkerLegend"', html)
+        self.assertIn("财报关键点事件带", html)
+        versions = re.findall(r"/static/(?:js|css)/[\w.-]+\?v=([\w]+)", html)
+        self.assertTrue(versions, "review.html 未带静态资源版本号")
+        self.assertEqual(len(set(versions)), 1, f"review.html 静态资源版本不一致: {set(versions)}")
+        self.assertIn(f'/static/js/forensics.js?v={versions[0]}', html)
+        self.assertIn(f'/static/js/review.js?v={versions[0]}', html)
 
     def test_review_page_uses_same_asset_version(self):
         report_versions = re.findall(
@@ -406,8 +415,8 @@ class StaticWiringTests(unittest.TestCase):
         self.assertIn("data.report_mining", js)
         self.assertIn("function findingReportDate", js)
 
-    def test_report_js_wires_scatter_click_and_merge(self):
-        js = _REPORT_JS.read_text(encoding="utf-8")
+    def test_review_js_wires_scatter_click_and_merge(self):
+        js = _REVIEW_JS.read_text(encoding="utf-8")
         self.assertIn('type: "scatter"', js)
         self.assertIn("yAxisIndex: 1", js)
         self.assertIn("applyForensicMarkers", js)

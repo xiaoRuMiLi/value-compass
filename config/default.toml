@@ -58,5 +58,11 @@ survey_chars = 1500
 citation_per_kind = 5
 citation_total = 20
 
+# FCFF/WACC 无风险利率锚点（A股取中国10Y国债，其它市场取美国10Y国债）。
+# 债务成本 Kd = Rf + rf_credit_spread；折现率下限 = Rf + rf_min_risk_premium。
+# 两者均为建模假设，仅用于展示与约束 LLM 校准的折现率，不反推 WACC。
+rf_credit_spread = 0.015
+rf_min_risk_premium = 0.04
+
 [logging]
 level = "INFO"

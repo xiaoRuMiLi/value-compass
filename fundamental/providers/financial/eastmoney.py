@@ -40,14 +40,21 @@ _STATEMENT_FIELDS = {
         "FINANCE_EXPENSE": "财务费用",
         "OPERATE_PROFIT": "营业利润",
         "TOTAL_PROFIT": "利润总额",
+        "INCOME_TAX": "所得税费用",
         "NETPROFIT": "净利润",
         "PARENT_NETPROFIT": "归母净利润",
+        "MINORITY_INTEREST": "少数股东损益",
         "DEDUCT_PARENT_NETPROFIT": "扣非归母净利润",
+        # 财务费用明细：FCFF 口径补利息收支（现金流口径常为空）
+        "FE_INTEREST_EXPENSE": "利息费用（财务费用明细）",
+        "FE_INTEREST_INCOME": "利息收入（财务费用明细）",
+        "INVEST_INCOME": "投资收益",
         "BASIC_EPS": "基本每股收益",
     },
     StatementType.BALANCE: {
         "MONETARYFUNDS": "货币资金",
         "ACCOUNTS_RECE": "应收账款",
+        "PREPAYMENT": "预付款项",
         "INVENTORY": "存货",
         "TOTAL_CURRENT_ASSETS": "流动资产合计",
         "FIXED_ASSET": "固定资产",
@@ -58,10 +65,21 @@ _STATEMENT_FIELDS = {
         "TOTAL_ASSETS": "资产总计",
         "SHORT_LOAN": "短期借款",
         "ACCOUNTS_PAYABLE": "应付账款",
+        "CONTRACT_LIAB": "合同负债",
         "TOTAL_CURRENT_LIAB": "流动负债合计",
+        "NONCURRENT_LIAB_1YEAR": "一年内到期的非流动负债",
         "LONG_LOAN": "长期借款",
+        "SHORT_BOND_PAYABLE": "短期应付债券",
+        "BOND_PAYABLE": "应付债券",
+        "LEASE_LIAB": "租赁负债",
         "TOTAL_NONCURRENT_LIAB": "非流动负债合计",
         "TOTAL_LIABILITIES": "负债合计",
+        # EV→股权桥接：非经营/类现金资产
+        "TRADE_FINASSET": "交易性金融资产",
+        "HOLD_MATURITY_INVEST": "持有至到期投资",
+        "LONG_EQUITY_INVEST": "长期股权投资",
+        "OTHER_EQUITY_INVEST": "其他权益工具投资",
+        "INVEST_REALESTATE": "投资性房地产",
         "SHARE_CAPITAL": "股本",
         "CAPITAL_RESERVE": "资本公积",
         "SURPLUS_RESERVE": "盈余公积",
@@ -78,6 +96,19 @@ _STATEMENT_FIELDS = {
         "PAY_ALL_TAX": "支付的各项税费",
         "TOTAL_OPERATE_OUTFLOW": "经营活动现金流出小计",
         "NETCASH_OPERATE": "经营活动现金流量净额",
+        # 标准 FCF 分项：OCF − 资本开支 + 利息收入 − 利息支出
+        "CONSTRUCT_LONG_ASSET": "购建固定资产无形资产和其他长期资产支付的现金",
+        "RECEIVE_INTEREST_COMMISSION": "收取利息手续费及佣金的现金",
+        "PAY_INTEREST_COMMISSION": "支付利息手续费及佣金的现金",
+        # 现金流量表补充资料：经营性营运资本变动（用于现金流质量提示）
+        "OPERATE_PAYABLE_ADD": "经营性应付项目的增加",
+        "OPERATE_RECE_REDUCE": "经营性应收项目的减少",
+        "INVENTORY_REDUCE": "存货的减少",
+        # 折旧摊销：严格 FCFF 口径（EBIT×(1−税)+折旧摊销−资本开支−营运资本变动）所需
+        "FA_IR_DEPR": "固定资产/油气资产/生产性生物资产折旧",
+        "IA_AMORTIZE": "无形资产摊销",
+        "LPE_AMORTIZE": "长期待摊费用摊销",
+        "USERIGHT_ASSET_AMORTIZE": "使用权资产折旧",
         "NETCASH_INVEST": "投资活动现金流量净额",
         "NETCASH_FINANCE": "筹资活动现金流量净额",
         "CCE_ADD": "现金及现金等价物净增加额",
@@ -139,6 +170,10 @@ _HK_ITEM_CODE_MAP: dict[StatementType, dict[str, str]] = {
         "004011999": "TOTAL_PROFIT",            # 除税前溢利
         "004012999": "NETPROFIT",               # 除税后溢利
         "004025002": "PARENT_NETPROFIT",        # 股东应占溢利
+        "004025001": "MINORITY_INTEREST",       # 少数股东损益
+        "004011200": "INTEREST_INCOME",         # 利息收入
+        "004011201": "INTEREST_EXPENSE",        # 融资成本
+        "004012001": "INCOME_TAX",              # 税项
         "004027002": "BASIC_EPS",               # 每股基本盈利
         "004027003": "DILUTED_EPS",             # 每股摊薄盈利
     },
@@ -147,13 +182,25 @@ _HK_ITEM_CODE_MAP: dict[StatementType, dict[str, str]] = {
         "004001999": "TOTAL_NONCURRENT_ASSETS", # 非流动资产合计
         "004002001": "INVENTORY",               # 存货
         "004002003": "ACCOUNTS_RECE",           # 应收账款
+        "004002009": "RESTRICTED_CASH",         # 受限制存款及现金（桥接时剔除）
         "004002010": "MONETARYFUNDS",           # 现金及等价物
+        "004002011": "SHORT_TERM_DEPOSIT",      # 短期存款（类现金）
+        "004002013": "TRADE_FINASSET",          # 以公允价值记账之金融资产（流动）
         "004002999": "TOTAL_CURRENT_ASSETS",    # 流动资产合计
+        "004001003": "INVEST_REALESTATE",       # 投资物业
+        "004001013": "LONG_EQUITY_INVEST",      # 联营公司权益
+        "004001016": "JOINT_VENTURE_INVEST",    # 合营公司权益
+        "004001022": "NONCURRENT_FINASSET",     # 指定以公允价值记账之金融资产（非流动）
+        "004001030": "TERM_DEPOSIT",            # 中长期存款（类现金）
         "004009999": "TOTAL_ASSETS",            # 总资产
         "004011001": "ACCOUNTS_PAYABLE",        # 应付账款
+        "004011002": "SHORT_BOND_PAYABLE",      # 应付票据（流动）
+        "004011006": "SHORT_LEASE_LIAB",        # 融资租赁负债（流动）
         "004011010": "SHORT_LOAN",              # 短期贷款
         "004011999": "TOTAL_CURRENT_LIAB",      # 流动负债合计
         "004020001": "LONG_LOAN",               # 长期贷款
+        "004020005": "LEASE_LIAB",              # 融资租赁负债（非流动）
+        "004020018": "BOND_PAYABLE",            # 应付票据（非流动）
         "004020999": "TOTAL_NONCURRENT_LIAB",   # 非流动负债合计
         "004025999": "TOTAL_LIABILITIES",       # 总负债
         "004027999": "MINORITY_EQUITY",         # 少数股东权益
@@ -341,7 +388,9 @@ class EastmoneyFinancialProvider:
         fields = _STATEMENT_FIELDS[statement]
         report_dates = [item.report_date for item in self.fetch_financials(symbol, start, end)]
         items: list[StatementItem] = []
-        for chunk in _chunks(report_dates, 8):
+        # 东财 xjllbAjaxNew/zcfzbAjaxNew/lrbAjaxNew 单次 dates 最多返回 5 个报告期，
+        # 传更多会静默截断（例如传 8 个只回 5 个），导致历史只落到隔年数据。
+        for chunk in _chunks(report_dates, 5):
             payload = self.client.get_json(
                 f"{_STATEMENT_URL}/{_STATEMENT_ENDPOINT[statement]}",
                 params={

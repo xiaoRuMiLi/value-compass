@@ -1,5 +1,7 @@
 [providers.quote]
 primary = "eastmoney"
+# 东财行情端点异常时自动切换；Tushare token 见 .env 的 TUSHARE_TOKEN。
+fallback = "tushare"
 
 [providers.financial]
 primary = "eastmoney"

@@ -47,6 +47,35 @@ class FcfExtractionTests(unittest.TestCase):
         self.assertFalse(result["available"])
         self.assertIn("reason", result)
 
+    def test_splits_ocf_capex_and_interest_from_report_text(self) -> None:
+        """PDF 断行会在「淨 額」「人 民幣」中插空格，必须仍能拆出 OCF/资本开支。"""
+        docs = [
+            _doc("2025", "q4_report",
+                 "二零二五年第四季的自由現金流為人民幣340 億元，反映經營活動所產生的現金淨 "
+                 "額人民幣665 億元，部分被資本開支付款人民幣224 億元、媒體內容付款人民幣81 億元"
+                 "及租賃負債付款人民幣20 億元所抵銷。"),
+            _doc("2025", "annual_report",
+                 "利息收入 16,909 16,004 財務成本 (15,130) (11,981)"),
+        ]
+        with mock.patch.object(hk, "_load_report_texts", return_value=docs):
+            result = hk.extract_cashflow_ttm("00700.HK")
+        self.assertTrue(result["available"])
+        self.assertAlmostEqual(result["ocf_ttm_yi"], 665.0)
+        self.assertAlmostEqual(result["capex_ttm_yi"], 224.0)
+        self.assertAlmostEqual(result["interest_income_yi"], 169.09)
+        self.assertAlmostEqual(result["interest_expense_yi"], 151.3)
+        q = result["quarters"][0]
+        self.assertAlmostEqual(q["media_yi"], 81.0)
+        self.assertAlmostEqual(q["lease_yi"], 20.0)
+
+    def test_missing_ocf_is_none_not_zero(self) -> None:
+        docs = [_doc("2025", "q4_report", "第四季的自由現金流為人民幣340 億元。")]
+        with mock.patch.object(hk, "_load_report_texts", return_value=docs):
+            result = hk.extract_cashflow_ttm("00700.HK")
+        self.assertIsNone(result["ocf_ttm_yi"])
+        self.assertIsNone(result["capex_ttm_yi"])
+        self.assertIn("不用 0 冒充", result["note"])
+
 
 class BuybackExtractionTests(unittest.TestCase):
     def test_extracts_amount_shares_and_cancelled(self) -> None:
