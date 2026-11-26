@@ -379,7 +379,8 @@ def _valuation_facts(
             dcf_cash = (item.inputs or {}).get("fcf")
             shares = (item.inputs or {}).get("shares")
         elif item.method == "adjusted_fcf":
-            # 标准 FCF 口径的分项输入：OCF − 资本开支 + 利息收入 − 利息支出。
+            # 股权自由现金流 FCFE 分项：OCF − 资本开支 − 实付利息；
+            # 利息收入已含在 OCF，按国际通用惯例不重复加回，只作披露核对。
             inp = item.inputs or {}
             src = inp.get("sources") or {}
             fcf_components = {

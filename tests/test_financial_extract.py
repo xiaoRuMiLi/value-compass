@@ -163,8 +163,8 @@ class TestCashflowFieldFallback(unittest.TestCase):
             "INTEREST_INCOME_DETAIL": {"value_cny": 26.93e8, "report_date": "2025-12-31"},
         }
         comps = _fcf_components(self.items, extracted=extracted)
-        # 标准口径未采集时保留 None（公式层 _num() 按 0 处理），抽取值只写进 note。
-        self.assertIsNone(comps["interest_income"])
+        # A 股利息收入不进公式（按 0），原文抽取值只写入披露字段与 note。
+        self.assertEqual(comps["interest_income"], 0.0)
         self.assertAlmostEqual(comps["fcf"], 297.06e8)
         self.assertAlmostEqual(comps["interest_income_disclosed"], 26.93e8)
         self.assertIn("利息收入 26.93亿已含在经营现金流内，未重复加回", comps["note"])

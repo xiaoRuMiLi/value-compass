@@ -3,8 +3,9 @@
   const symbol = new URLSearchParams(window.location.search).get("symbol") || "600519.SH";
   const { getJSON } = window.VC;
 
-  function el(tag, text) {
+  function el(tag, className, text) {
     const node = document.createElement(tag);
+    if (className) node.className = className;
     node.textContent = text ?? "";
     return node;
   }
@@ -52,7 +53,7 @@
     if (!box) return;
     box.innerHTML = "";
     if (!total) {
-      const empty = el("span", "财报体检加载后，将按报告期在此标注关键点");
+      const empty = el("span", null, "财报体检加载后，将按报告期在此标注关键点");
       empty.className = "kl-legend-empty";
       box.appendChild(empty);
       return;
@@ -153,18 +154,18 @@
     document.getElementById("summary").textContent = a.review.summary;
     const findings = document.getElementById("findings");
     for (const f of a.review.findings || []) {
-      findings.appendChild(el("li", `[${f.severity}] ${f.type}：${f.detail}`));
+      findings.appendChild(el("li", null, `[${f.severity}] ${f.type}：${f.detail}`));
     }
     for (const f of a.red_flags || []) {
-      findings.appendChild(el("li", `[${f.severity}] ${f.flag_type}：${f.description}`));
+      findings.appendChild(el("li", null, `[${f.severity}] ${f.flag_type}：${f.description}`));
     }
     document.getElementById("integrity").textContent = a.review.integrity_summary;
     const delisting = document.getElementById("delisting");
     const triggers = (a.delisting && a.delisting.triggers) || [];
     if (triggers.length) {
-      triggers.forEach((t) => delisting.appendChild(el("li", t)));
+      triggers.forEach((t) => delisting.appendChild(el("li", null, t)));
     } else {
-      delisting.appendChild(el("li", "未触及退市指标"));
+      delisting.appendChild(el("li", null, "未触及退市指标"));
     }
   }
 
@@ -188,6 +189,71 @@
       });
     }
   }
+
+  function docTypeLabel(type) {
+    return {
+      annual_report: "年度报告", semi_report: "半年度报告",
+      q1_report: "一季报", q3_report: "三季报",
+    }[type] || type || "财报";
+  }
+
+  function renderDocRow(doc, current) {
+    const row = el("div", "sd-item");
+    const link = document.createElement("a");
+    link.href = window.VC.readerUrl(doc.id, { symbol: symbol, from: "source-docs" });
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = doc.title || `${doc.period} ${docTypeLabel(doc.doc_type)}`;
+    row.appendChild(link);
+    row.appendChild(el("span", "sd-meta", `${doc.period || "—"} · ${docTypeLabel(doc.doc_type)}`));
+    if (current) row.appendChild(el("span", "sd-current", "当期"));
+    if (!doc.has_text) row.appendChild(el("span", "sd-meta", "暂无全文"));
+    if (doc.has_pdf) {
+      const pdf = document.createElement("a");
+      pdf.className = "sd-pdf";
+      pdf.href = `/api/document/${doc.id}/pdf`;
+      pdf.textContent = "原文 PDF";
+      pdf.target = "_blank";
+      pdf.rel = "noopener noreferrer";
+      row.appendChild(pdf);
+    }
+    return row;
+  }
+
+  function renderSourceDocs(docs) {
+    const host = document.getElementById("sourceDocs");
+    if (!host) return;
+    host.innerHTML = "";
+    const usable = (docs || []).filter((d) => d.has_text);
+    if (!usable.length) {
+      host.appendChild(el("p", "muted", "该股票暂无可阅读的财报全文"));
+      return;
+    }
+    const years = [...new Set(usable.map((d) => String(d.period || "").slice(0, 4)))].sort().reverse();
+    const currentYear = years[0];
+    for (const year of years) {
+      const group = usable.filter((d) => String(d.period || "").startsWith(year));
+      if (year === currentYear) {
+        const box = el("div", "sd-current-box");
+        box.appendChild(el("h3", "sd-year-label", `${year} 年 · 当期`));
+        for (const doc of group) box.appendChild(renderDocRow(doc, true));
+        host.appendChild(box);
+      } else {
+        const details = el("details", "fx-details sd-year-details");
+        const summary = el("summary", null, `${year} 年（${group.length} 份）`);
+        details.appendChild(summary);
+        for (const doc of group) details.appendChild(renderDocRow(doc, false));
+        host.appendChild(details);
+      }
+    }
+  }
+
+  getJSON(`/api/stock/${encodeURIComponent(symbol)}/documents`)
+    .then(renderSourceDocs)
+    .catch(() => {
+      const host = document.getElementById("sourceDocs");
+      if (host) host.textContent = "财报清单加载失败";
+    });
 
   getJSON(`/api/stock/${symbol}/kline`)
     .then(renderKline)

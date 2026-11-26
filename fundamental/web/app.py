@@ -46,6 +46,11 @@ def review_page() -> FileResponse:
     return FileResponse(_PAGES_DIR / "review.html")
 
 
+@app.get("/document")
+def document_page() -> FileResponse:
+    return FileResponse(_PAGES_DIR / "document.html")
+
+
 @app.get("/integrity")
 def integrity_page() -> FileResponse:
     return FileResponse(_PAGES_DIR / "integrity.html")

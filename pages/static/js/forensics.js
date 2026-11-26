@@ -71,6 +71,63 @@
     return a;
   }
 
+  /* ---- 财报引文 → 原文阅读器 ----
+   * 文档清单由 loadForensics 并行拉取并注入；只保存 id/类型/期间，前端不接触服务端路径。
+   */
+  let docIndex = [];
+
+  VC.setForensicDocuments = function setForensicDocuments(docs) {
+    docIndex = Array.isArray(docs) ? docs : [];
+  };
+
+  function findDoc(item) {
+    if (!item || !docIndex.length) return null;
+    const label = [item.source, item.source_doc, item.report_label, item.period]
+      .filter(Boolean).join(" ");
+    const year = (label.match(/(20\d{2})/) || [])[1];
+    if (!year) return null;
+    const docType = /半年|中报|semi/i.test(label) ? "semi_report"
+      : /一季|Q1/i.test(label) ? "q1_report"
+      : /三季|Q3/i.test(label) ? "q3_report"
+      : "annual_report";
+    const candidates = docIndex.filter((d) => String(d.period || "").startsWith(year));
+    return candidates.find((d) => d.doc_type === docType && d.has_text)
+      || candidates.find((d) => d.has_text)
+      || null;
+  }
+
+  /** 生成带「阅」按钮的引文节点；按钮跳阅读页并带引文/章节/关键词定位参数。 */
+  function quoteNode(text, item, className) {
+    const node = el("p", className || "fx-mining-quote", text);
+    const doc = findDoc(item);
+    const link = document.createElement("a");
+    link.className = "fx-read-btn";
+    let symbol = "";
+    try {
+      symbol = new URLSearchParams(location.search).get("symbol") || "";
+    } catch (err) {
+      symbol = "";
+    }
+    const options = {
+      q: item && (item.quote || item.text || item.baseline_ref) ? (item.quote || item.text || item.baseline_ref) : text,
+      keywords: item && (item.keywords || item.why) ? (item.keywords || item.why) : "",
+      section: item && item.section ? item.section : "",
+      symbol: symbol,
+      from: "forensics",
+    };
+    // 测试环境可能未加载 document-link.js，这里保留等价的降级拼装。
+    link.href = typeof VC.readerUrl === "function"
+      ? VC.readerUrl(doc ? doc.id : null, options)
+      : `/document?symbol=${encodeURIComponent(symbol || "600519")}${doc ? "&doc=" + doc.id : ""}`;
+
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    link.title = doc ? `在「${doc.title || doc.period}」原文中定位` : "在财报原文中定位（请选择文档）";
+    link.textContent = "阅";
+    node.appendChild(link);
+    return node;
+  }
+
   function renderVerdict(data) {
     const scan = data.scan || {};
     const summary = scan.summary || {};
@@ -190,7 +247,7 @@
         head.appendChild(el("span", "fx-mining-desc", it.title || ""));
         item.appendChild(head);
         if (it.detail) item.appendChild(el("p", "fx-audit-detail", it.detail));
-        if (it.quote) item.appendChild(el("p", "fx-mining-quote", `“${it.quote}”`));
+        if (it.quote) item.appendChild(quoteNode(`“${it.quote}”`, it, "fx-mining-quote"));
         list.appendChild(item);
       });
       wrap.appendChild(list);
@@ -220,7 +277,7 @@
       counter.forEach((c) => {
         const row = el("div", "fx-counter-item");
         row.appendChild(chip(c.item || "", "clear"));
-        row.appendChild(el("span", "fx-counter-quote", c.quote || ""));
+        row.appendChild(quoteNode(c.quote || "", { ...c, quote: c.quote }, "fx-counter-quote"));
         list.appendChild(row);
       });
       counterWrap.appendChild(list);
@@ -270,7 +327,7 @@
       if (item.why) meta.appendChild(el("span", "fx-official-kw", `关联：${item.why}`));
       else if (item.keywords) meta.appendChild(el("span", "fx-official-kw", `命中：${item.keywords}`));
       card.appendChild(meta);
-      card.appendChild(el("p", "fx-official-text", item.text || ""));
+      card.appendChild(quoteNode(item.text || "", item, "fx-official-text"));
       wrap.appendChild(card);
     }
     return wrap;
@@ -597,7 +654,7 @@
         head.appendChild(el("span", "fx-mining-desc", f.description || ""));
         item.appendChild(head);
         if (f.quote) {
-          const quote = el("p", "fx-mining-quote", `“${f.quote}”`);
+          const quote = quoteNode(`“${f.quote}”`, f, "fx-mining-quote");
           item.appendChild(quote);
           if (f.quote_kind === "numeric") {
             quote.appendChild(el("span", "fx-quote-kind", "报表数据（数字摘录）"));
@@ -690,7 +747,7 @@
         if (f.quote) {
           const c = el("div", "fx-drift-quote fx-drift-quote-current");
           c.appendChild(el("span", "fx-drift-quote-label", "当期原文"));
-          c.appendChild(el("span", "fx-drift-quote-text", `“${f.quote}”`));
+          c.appendChild(quoteNode(`“${f.quote}”`, f, "fx-drift-quote-text"));
           quotes.appendChild(c);
         }
         item.appendChild(quotes);
@@ -1094,8 +1151,7 @@
       for (const e of p.evidence || []) {
         if (!e.quote) continue;
         item.appendChild(
-          el("div", "fx-fraud-ev",
-            `据${e.source || "财报原文"}（${e.period || "-"}）：${e.quote}`)
+          quoteNode(`据${e.source || "财报原文"}（${e.period || "-"}）：${e.quote}`, e, "fx-fraud-ev")
         );
       }
       const shownQuotes = new Set(
@@ -1278,8 +1334,15 @@
       el("p", "fx-loading", "正在生成财报深度体检…（首次需逐段通读财报原文提取证据，约需 1-2 分钟；再次生成命中缓存会很快）")
     );
     const query = opts.refresh ? "?refresh=true" : "";
-    return VC.getJSON(`/api/stock/${encodeURIComponent(symbol)}/financial-forensics${query}`)
-      .then((data) => {
+    // 文档清单与体检结论并行拉取，供引文「阅」按钮把文本定位回原文。
+    const docsPromise = VC.getJSON(`/api/stock/${encodeURIComponent(symbol)}/documents`)
+      .catch(() => []);
+    return Promise.all([
+      VC.getJSON(`/api/stock/${encodeURIComponent(symbol)}/financial-forensics${query}`),
+      docsPromise,
+    ])
+      .then(([data, docs]) => {
+        VC.setForensicDocuments(docs);
         VC.renderForensics(container, data);
         return data;
       })

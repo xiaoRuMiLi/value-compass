@@ -158,6 +158,17 @@ class TestFcfDcf(unittest.TestCase):
         self.assertLess(with_capex.fair_value_low, base.fair_value_low)
         self.assertGreater(with_interest.fair_value_low, base.fair_value_low)
 
+    def test_formula_follows_international_fcfe_convention(self):
+        """公式文案按国际通用惯例更正：利息收入不重复加回，并写明口径依据。"""
+        result = evaluate_fcf(1e10, 1e9, 10.0, capex=1e9, interest_expense=5e7)
+        formula = result.assumptions["formula"]
+        self.assertIn("FCFE", formula)
+        self.assertIn("不重复加回", formula)
+        self.assertNotIn("+ 利息收入", formula)
+        methodology = result.assumptions["methodology"]
+        self.assertIn("FCFE = CFO − CapEx + 净借债", methodology)
+        self.assertIn("FCFF = CFO + 利息×(1−税率) − CapEx", methodology)
+
     def test_working_capital_is_prompt_only(self):
         wc = {
             "inventory": 2e8, "receivable": 1e8,
@@ -214,7 +225,10 @@ class TestFcfSourcing(unittest.TestCase):
         ]
         comps = _fcf_components(items)
         self.assertAlmostEqual(comps["capex"], 20.0)
-        self.assertAlmostEqual(comps["fcf"], 82.0)  # 100 - 20 + 3 - 1
+        # A 股利息收入已含在 OCF，按国际通用惯例不重复加回：100 − 20 − 1 = 79。
+        self.assertAlmostEqual(comps["fcf"], 79.0)
+        self.assertEqual(comps["interest_income"], 0.0)
+        self.assertAlmostEqual(comps["interest_income_disclosed"], 3.0)
         self.assertNotIn("库内缺少", comps["note"])
 
     def test_zero_disclosed_is_not_reported_as_missing(self):
@@ -228,6 +242,18 @@ class TestFcfSourcing(unittest.TestCase):
         self.assertNotIn("库内缺少", comps["note"])
         self.assertIn("披露为 0 / 未单列", comps["note"])
         self.assertAlmostEqual(comps["fcf"], 100.0)
+
+    def test_interest_income_is_disclosure_only_in_note(self):
+        items = [
+            self._cf("NETCASH_OPERATE", 100.0),
+            self._cf("CONSTRUCT_LONG_ASSET", 20.0),
+            self._cf("PAY_INTEREST_COMMISSION", 1.0),
+        ]
+        comps = _fcf_components(items)
+        self.assertIn("不重复加回", comps["note"])
+        self.assertNotIn("+ 利息收入", comps["note"])
+        # 利息收入不进公式，也不该被报成「库内整列未采集」的缺数项。
+        self.assertNotIn("利息收入", comps["note"].split("；")[0])
 
     def test_entirely_missing_column_is_flagged(self):
         comps = _fcf_components([self._cf("NETCASH_OPERATE", 100.0)])

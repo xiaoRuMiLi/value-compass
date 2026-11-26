@@ -211,10 +211,14 @@ def _fcf_components(
     statement_items: list[StatementItem],
     extracted: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, float | None]:
-    """按最新年报构造标准 FCF 分项：OCF − 资本开支 + 利息收入 − 利息支出。
+    """按最新年报构造股权自由现金流 FCFE 分项：OCF − 资本开支 − 实付利息。
 
-    资本开支/利息支出若标准口径整列缺失，可回退财报原文抽取值（需报告期一致）；
-    利息收入已含在经营活动现金流内，抽取值只披露、不重复加回公式。
+    国际通用惯例（Damodaran, NYU Stern / CFI）：CFO 已是扣息后的杠杆口径，
+    FCFE = CFO − CapEx + 净借债，FCFF = CFO + 利息×(1−税率) − CapEx；
+    利息收入已含在 CFO 内，重复加回会虚增现金流，故本项目不进公式。
+    本项目为保守简化：未含净借债、额外扣减实付利息；港股 OCF 不含损益表利息收支时
+    按财报原文单独调整。资本开支/利息支出若标准口径整列缺失，可回退财报原文抽取值
+    （需报告期一致）；利息收入的抽取值只作披露与口径核对。
     仍缺的项按 0 处理并在 note 中说明，由前端计算器允许用户补填。
     """
     result: dict[str, float | None] = {
@@ -237,7 +241,11 @@ def _fcf_components(
 
     ocf = by_code("NETCASH_OPERATE")
     capex = by_code("CONSTRUCT_LONG_ASSET")
-    interest_income = by_code("RECEIVE_INTEREST_COMMISSION")
+    # A 股标准现金流量表的利息收入通常已计入「收到其他与经营活动有关的现金」，
+    # 即已含在 OCF 内；按国际通用惯例不得重复加回，故只作披露与口径核对。
+    # 港股 OCF 不含损益表利息收支时另走 _resolve_fcf_components 的原文调整分支。
+    interest_income_disclosed = by_code("RECEIVE_INTEREST_COMMISSION")
+    interest_income = 0.0
     interest_expense = by_code("PAY_INTEREST_COMMISSION")
     # 区分两种情况：科目整列未采集（库内缺少）vs 科目有披露但值为 0/空（该年没有该项）。
     # 后者是年报"披露即 0"的正常情形，不应让用户以为数据缺失。
@@ -245,7 +253,6 @@ def _fcf_components(
         label for label, code in (
             ("经营活动现金流量净额", "NETCASH_OPERATE"),
             ("购建固定资产等支付的现金（资本开支）", "CONSTRUCT_LONG_ASSET"),
-            ("利息收入", "RECEIVE_INTEREST_COMMISSION"),
             ("利息支出", "PAY_INTEREST_COMMISSION"),
         )
         if not any(i.item_code == code for i in items)
@@ -276,9 +283,9 @@ def _fcf_components(
         capex = from_extracted("CAPEX_CASH_PAID", "资本开支", "购建固定资产等支付的现金（资本开支）")
     if interest_expense is None:
         interest_expense = from_extracted("INTEREST_EXPENSE_DETAIL", "利息支出", "利息支出")
-    interest_income_disclosed = None
     income_item = extracted.get("INTEREST_INCOME_DETAIL")
     if income_item and income_item.get("value_cny") is not None:
+        # 财报原文抽取值优先级高于标准科目值，二者都只用于披露，不进公式。
         interest_income_disclosed = float(income_item["value_cny"])
         extraction_notes.append(
             f"利息收入 {interest_income_disclosed / 1e8:.2f}亿已含在经营现金流内，未重复加回"
@@ -288,9 +295,10 @@ def _fcf_components(
         if "利息收入" in missing:
             missing.remove("利息收入")
 
+    # 利息收入不进公式，不必列入「披露为 0 / 按 0 计入」清单；其原文披露值单独在 note 说明。
     zero_disclosed = [
         label for label, value in (
-            ("资本开支", capex), ("利息收入", interest_income), ("利息支出", interest_expense)
+            ("资本开支", capex), ("利息支出", interest_expense)
         )
         if (value is None or value == 0) and label not in extraction_disclosed
     ]
@@ -304,7 +312,7 @@ def _fcf_components(
         "interest_income_disclosed": interest_income_disclosed,
         "interest_expense": interest_expense,
         "fcf": None if ocf is None else (
-            ocf - (capex or 0.0) + (interest_income or 0.0) - (interest_expense or 0.0)
+            ocf - (capex or 0.0) - (interest_expense or 0.0)
         ),
         "note": note,
     })
@@ -320,14 +328,18 @@ def _fcf_note(
     missing: list[str],
     zero_disclosed: list[str],
 ) -> str:
-    """用中文分项展示标准 FCF 的实际取数，避免误把披露为 0 当成数据缺失。"""
+    """用中文分项展示 FCFE 的实际取数，避免误把披露为 0 当成数据缺失。"""
     def yi(value: float | None) -> str:
         return "—" if value is None else f"{value / 1e8:.2f}亿"
 
     note = (
-        f"标准FCF取 {date} 年报：经营活动现金流量净额 {yi(ocf)} − 资本开支 {yi(capex)} "
-        f"+ 利息收入 {yi(interest_income)} − 利息支出 {yi(interest_expense)}"
+        f"股权自由现金流（FCFE）取 {date} 年报：经营活动现金流量净额 {yi(ocf)} "
+        f"− 资本开支 {yi(capex)} − 实付利息 {yi(interest_expense)}"
     )
+    if interest_income:
+        note += f"；港股财报原文利息收入 {yi(interest_income)} 未含在 OCF，按披露值单独调整"
+    else:
+        note += "；A股利息收入已含在经营现金流内，按国际通用惯例不重复加回"
     if zero_disclosed:
         note += f"；{'、'.join(zero_disclosed)}该年披露为 0 / 未单列，按 0 计入"
     if missing:
@@ -809,8 +821,8 @@ def analyze_stock(
         fcf_components = _resolve_fcf_components(symbol, statement_items, extracted=extracted_bridge)
         fcf_value = fcf_components["fcf"]
         # 「现金流折现」用未扣资本开支/利息的经营活动现金流净额作为期初；
-        # 「自由现金流折现」才按标准 FCF（OCF−资本开支+利息收入−利息支出）。
-        # 两者口径不同，避免两张卡片数值完全撞车。
+        # 「自由现金流折现」按股权自由现金流 FCFE（OCF−资本开支−实付利息，
+        # 利息收入已含在 OCF、按国际惯例不加回）。两者口径不同，避免两张卡片数值撞车。
         ocf_value = fcf_components["ocf"] if fcf_components["ocf"] is not None else fcf_value
         dcf_basis = (
             "现金流折现期初采用经营活动现金流量净额（未扣资本开支与利息收支）；"

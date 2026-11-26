@@ -28,7 +28,7 @@
     fcfSource: { label: "期初 FCF 来源", unit: "", def: "derived" },
     ocf: { label: "经营活动现金流量净额", unit: "元", def: 0 },
     capex: { label: "资本开支（购建固定资产等）", unit: "元，未取到请手工填入，勿按 0", def: 0 },
-    interestIncome: { label: "利息收入", unit: "元，未取到请手工填入，勿按 0", def: 0 },
+    interestIncome: { label: "利息收入（仅港股原文调整项）", unit: "A 股已含在经营现金流内，按国际惯例不加回、填 0；仅港股 OCF 未含时填财报披露值", def: 0 },
     interestExpense: { label: "利息支出", unit: "元，未取到请手工填入，勿按 0", def: 0 },
     inventory: { label: "存货增加额（提示项）", unit: "元，不进入公式", def: 0 },
     receivable: { label: "应收增加额（提示项）", unit: "元，不进入公式", def: 0 },
@@ -50,7 +50,7 @@
   };
 
   const SOURCES = [
-    { value: "derived", label: "标准公式：OCF − 资本开支 + 利息收入 − 利息支出" },
+    { value: "derived", label: "FCFE 标准公式：OCF − 资本开支 − 实付利息（利息收入不加回）" },
     { value: "direct", label: "直接输入 FCF（港股财报原文 / 已计算值）" },
   ];
 
@@ -167,7 +167,7 @@
       group.className = "calc-group";
       const groupTitle = document.createElement("div");
       groupTitle.className = "calc-group-title";
-      groupTitle.textContent = "期初自由现金流（标准口径：OCF − 资本开支 + 利息收入 − 利息支出）";
+      groupTitle.textContent = "期初股权自由现金流 FCFE（OCF − 资本开支 − 实付利息；利息收入不加回）";
       group.appendChild(groupTitle);
       form.appendChild(group);
       addField(form, "fcfSource", defaults.fcfSource || "derived");
@@ -221,7 +221,7 @@
     graham: "内在价值 = √(22.5 × EPS × BPS)；区间取 ±20%。",
     ddm: "合理价 = DPS × (1+g) ÷ (r−g)；区间取 ±20%。要求 r > g。",
     dcf: "前 N 年 FCF 按 g 增长逐年以 r 折现，加永续终值折现，除以股本；区间 ±20%。",
-    adjusted_fcf: "期初FCF = 经营活动现金流量净额 − 资本开支 + 利息收入 − 利息支出；其后与两阶段 DCF 相同。存货/应收/应付/预付差额只作提示，不进入公式；缺失的资本开支与利息项按 0 处理，请按财报补填。",
+    adjusted_fcf: "期初 FCFE = 经营活动现金流量净额 − 资本开支 − 实付利息；按国际通用惯例（Damodaran / CFI），CFO 已扣息、A 股利息收入已含在经营现金流内，不重复加回（A 股填 0；港股 OCF 未含损益表利息收支时才按原文调整）。严格 FCFE 还应加回净借债，本项目为保守简化、未含。其后与两阶段 DCF 相同。存货/应收/应付/预付差额只作提示，不进入公式；缺失的资本开支与实付利息按 0 处理，请按财报补填。",
     fcff: "FCFF = 经营现金流 + 实付利息 − 资本开支；按 WACC（discount）两阶段折现得 EV；股权价值 = EV − 有息负债 + 超额现金 + 公允价值类资产×折价 + 权益类投资×折价 − 少数股东权益。现金与短期/中长期存款理财按面值加回、不打折；超额现金 = 现金存款 − 营收×最低经营现金比例。区间 ±20%。页面校准值以市场无风险利率为下限（A股中国10Y国债/其它美国10Y国债），此处为手动试算，可直接调整 WACC 与各档折价观察敏感性。",
   };
 
@@ -316,9 +316,12 @@
           const ocf = num("calc-ocf"), capex = num("calc-capex");
           const inc = num("calc-interestIncome"), exp = num("calc-interestExpense");
           base = ocf - capex + inc - exp;
-          detail.push(["经营活动现金流量净额", fmt(ocf) + " 元"]);
+          detail.push(["经营活动现金流量净额（已扣息）", fmt(ocf) + " 元"]);
           detail.push(["资本开支", "− " + fmt(capex) + " 元"]);
-          detail.push(["利息收入 / 支出", "+ " + fmt(inc) + " / − " + fmt(exp) + " 元"]);
+          detail.push(["实付利息", "− " + fmt(exp) + " 元"]);
+          if (inc) {
+            detail.push(["港股原文利息收入调整", "+ " + fmt(inc) + " 元（A 股应为 0，利息收入已含在 OCF）"]);
+          }
         }
         detail.push(["期初自由现金流", fmt(base) + " 元"]);
         if (defaults.workingCapitalAlert) {

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>value-compass · 财报原文</title>
+  <link rel="stylesheet" href="/static/css/base.css?v=20261126n">
+  <link rel="stylesheet" href="/static/css/report.css?v=20261126n">
+  <link rel="stylesheet" href="/static/css/document.css?v=20261126n">
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/common.js"></script>
+  <script src="/static/js/nav.js?v=20261126n" defer></script>
+</head>
+<body>
+  <main>
+    <div class="fx-page-head">
+      <h1 id="docTitle">财报原文 <span id="docPeriodBadge" class="doc-period-badge" hidden></span></h1>
+    </div>
+
+    <section class="panel" id="pickerPanel" hidden>
+      <h2>选择财报</h2>
+      <div id="docPicker"></div>
+    </section>
+
+    <section class="panel" id="readerPanel" hidden>
+      <div class="reader-layout">
+        <aside class="reader-toc">
+          <div id="textTocBlock" class="sidebar-block">
+            <input id="tocFilter" type="search" placeholder="筛选章节" aria-label="筛选章节">
+            <div id="docToc" class="doc-toc"></div>
+          </div>
+          <div id="pdfTocBlock" class="sidebar-block" hidden>
+            <input id="pdfTocFilter" type="search" placeholder="筛选目录" aria-label="筛选 PDF 目录">
+            <div id="pdfTocMeta" class="pdf-toc-meta">目录加载中…</div>
+            <div id="pdfToc" class="pdf-toc"></div>
+          </div>
+        </aside>
+
+        <div class="reader-content">
+          <div id="textMode">
+            <article id="docText" class="doc-text" tabindex="0"></article>
+          </div>
+          <div id="pdfMode" class="pdf-mode" hidden>
+            <div id="pdfPages" class="pdf-pages">
+              <div id="pdfPageWrap" class="pdf-page-wrap">
+                <img id="pdfImage" class="pdf-image" alt="PDF 页面">
+                <canvas id="pdfCanvas" hidden></canvas>
+                <div id="pdfHighlights" class="pdf-highlights"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="reader-controls">
+          <div class="fx-page-actions sidebar-actions">
+            <button id="prevDoc" type="button" title="切换到上一期财报">← 上一期</button>
+            <span id="docPosition" class="doc-position"></span>
+            <button id="nextDoc" type="button" title="切换到下一期财报">下一期 →</button>
+            <button id="modePdf" type="button" class="doc-mode-btn" title="阅读原始 PDF，按引文定位页码">PDF 原版</button>
+            <button id="modeText" type="button" class="doc-mode-btn" title="阅读 PDF 转出的文字，便于复制搜索">文字版</button>
+            <a id="backReview" class="fx-refresh" href="/review">返回体检</a>
+            <a id="downloadPdf" class="fx-refresh" href="#" title="下载归档的原始 PDF 文件">下载原始 PDF</a>
+          </div>
+          <p id="docMeta" class="muted"></p>
+          <div id="locateStatus" class="doc-status" hidden></div>
+
+          <div class="doc-toolbar sidebar-toolbar">
+            <input id="searchInput" type="search" placeholder="在原文中搜索（句子片段 / 关键词）" aria-label="搜索原文">
+            <button id="searchBtn" type="button">搜索</button>
+            <div class="sidebar-row">
+              <button id="prevMatch" type="button" title="上一处命中">‹ 上一处</button>
+              <span id="matchIndex" class="doc-match-index">—</span>
+              <button id="nextMatch" type="button" title="下一处命中">下一处 ›</button>
+            </div>
+
+            <div id="textTools" class="sidebar-tools">
+              <div class="sidebar-row">
+                <button id="loadEarlier" type="button" title="向前翻阅同一份财报的文字">← 上一段</button>
+                <button id="loadLater" type="button" title="向后翻阅同一份财报的文字">下一段 →</button>
+              </div>
+              <span id="docProgress" class="doc-progress"></span>
+            </div>
+
+            <div id="pdfTools" class="sidebar-tools" hidden>
+              <div class="sidebar-row">
+                <button id="pdfPrev" type="button" title="上一页">← 上一页</button>
+                <span id="pdfPage" class="doc-match-index">—</span>
+                <button id="pdfNext" type="button" title="下一页">下一页 →</button>
+              </div>
+              <div class="sidebar-row">
+                <button id="pdfZoomOut" type="button" title="缩小">−</button>
+                <span id="pdfZoom" class="doc-match-index">100%</span>
+                <button id="pdfZoomIn" type="button" title="放大">+</button>
+                <button id="pdfFit" type="button" title="整页适应窗口">整页</button>
+                <button id="pdfFitWidth" type="button" title="适应宽度，不产生横向滚动">适宽</button>
+              </div>
+              <span id="pdfProgress" class="doc-progress"></span>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+  <script src="/static/js/document.js?v=20261126n"></script>
+</body>
+</html>

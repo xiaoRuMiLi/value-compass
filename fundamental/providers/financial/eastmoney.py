@@ -96,7 +96,9 @@ _STATEMENT_FIELDS = {
         "PAY_ALL_TAX": "支付的各项税费",
         "TOTAL_OPERATE_OUTFLOW": "经营活动现金流出小计",
         "NETCASH_OPERATE": "经营活动现金流量净额",
-        # 标准 FCF 分项：OCF − 资本开支 + 利息收入 − 利息支出
+        # FCFE 分项：OCF − 资本开支 − 实付利息。
+        # 利息收入科目仅供披露与口径核对：A 股该现金流已含在 OCF 内，按国际通用惯例
+        # 不重复加回；港股 OCF 未含损益表利息收支时另走财报原文调整分支。
         "CONSTRUCT_LONG_ASSET": "购建固定资产无形资产和其他长期资产支付的现金",
         "RECEIVE_INTEREST_COMMISSION": "收取利息手续费及佣金的现金",
         "PAY_INTEREST_COMMISSION": "支付利息手续费及佣金的现金",

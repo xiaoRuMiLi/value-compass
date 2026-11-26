@@ -4,11 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>value-compass · 财报深度体检</title>
-  <link rel="stylesheet" href="/static/css/base.css?v=20261126c">
-  <link rel="stylesheet" href="/static/css/report.css?v=20261126c">
+  <link rel="stylesheet" href="/static/css/base.css?v=20261126o">
+  <link rel="stylesheet" href="/static/css/report.css?v=20261126o">
   <script src="/static/js/api.js"></script>
   <script src="/static/js/common.js"></script>
-  <script src="/static/js/nav.js?v=20261126c" defer></script>
+  <script src="/static/js/nav.js?v=20261126o" defer></script>
 </head>
 <body>
   <main>
@@ -19,6 +19,10 @@
         <button id="forensicsRefresh" class="fx-refresh" type="button">重新分析</button>
       </div>
     </div>
+    <section class="panel" id="reportFactsPanel">
+      <div id="reportFacts"></div>
+    </section>
+
     <section class="panel">
       <p id="summary" class="muted"></p>
       <div id="forensics"></div>
@@ -29,6 +33,11 @@
         <ul id="delisting"></ul>
       </details>
     </section>
+    <section class="panel" id="sourceDocsPanel">
+      <h2>财报原文阅览 <span class="fx-section-extra">当期默认展开 · 往期按年份折叠 · 点击标题阅读全文</span></h2>
+      <div id="sourceDocs"></div>
+    </section>
+
     <section class="panel">
       <h2>日 K 线 <span class="fx-section-extra">财报关键点事件带 · 含原文通读线索 · 点击圆点定位对应卡片</span></h2>
       <div id="kline" class="chart"></div>
@@ -36,7 +45,9 @@
     </section>
   </main>
   <script src="/static/js/vendor/echarts.min.js"></script>
-  <script src="/static/js/forensics.js?v=20261126c"></script>
-  <script src="/static/js/review.js?v=20261126c"></script>
+  <script src="/static/js/document-link.js?v=20261126o"></script>
+  <script src="/static/js/forensics.js?v=20261126o"></script>
+  <script src="/static/js/report-facts.js?v=20261126o"></script>
+  <script src="/static/js/review.js?v=20261126o"></script>
 </body>
 </html>

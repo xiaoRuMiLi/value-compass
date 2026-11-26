@@ -13,6 +13,7 @@ from fundamental.services.analyze import (
     price_compare,
     screen_stocks,
 )
+from fundamental.services import document_reader, report_facts
 from fundamental.services.financial_dashboard import build_financial_dashboard
 from fundamental.services.narrative import (
     generate_financial_forensics,
@@ -337,19 +338,156 @@ def get_industries(date: str | None = None) -> list[dict[str, Any]]:
         conn.close()
 
 
+@router.get("/stock/{symbol}/report-facts")
+def get_report_facts(symbol: str, report_date: str | None = None) -> dict[str, Any]:
+    """体检页当期全量财务数据：核心指标 + 三大表 + 原文抽取字段。"""
+    conn = db.init_db()
+    try:
+        try:
+            return report_facts.build_for_symbol(conn, symbol, report_date)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
 @router.get("/stock/{symbol}/documents")
 def get_documents(symbol: str) -> list[dict[str, Any]]:
+    """文档清单：只返回前端可读元数据，不下发服务端路径与 sha256。"""
     conn = db.init_db()
     try:
         stock_id = _resolve_stock(conn, symbol)
-        return _rows(
+        rows = _rows(
             repository.fetch_all(
                 conn,
-                "SELECT id, doc_type, period, title, source_url, local_path, file_size, sha256, status "
+                "SELECT id, doc_type, period, title, source_url, file_size, status "
                 "FROM documents WHERE stock_id = ? ORDER BY period DESC",
                 (stock_id,),
             )
         )
+        for row in rows:
+            # has_text / has_pdf 由服务层按库内路径判定，前端无需知道绝对路径。
+            info = document_reader.metadata(int(row["id"]), conn)
+            row["has_text"] = info["has_text"]
+            row["has_pdf"] = info["has_pdf"]
+        return rows
+    finally:
+        conn.close()
+
+
+@router.get("/document/{doc_id}")
+def get_document(doc_id: int) -> dict[str, Any]:
+    """财报原文元数据 + 章节目录（不含全文正文）。"""
+    conn = db.init_db()
+    try:
+        try:
+            return document_reader.get_document(doc_id, conn)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.get("/document/{doc_id}/text")
+def get_document_text(doc_id: int, start: int = 0, length: int = 8000) -> dict[str, Any]:
+    """按字符偏移分块读取原文，前端滚动到定位点后按需加载。"""
+    conn = db.init_db()
+    try:
+        try:
+            return document_reader.get_text(doc_id, start, length, conn)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.get("/document/{doc_id}/locate")
+def locate_document(
+    doc_id: int,
+    q: str | None = None,
+    keywords: str | None = None,
+    section: str | None = None,
+) -> dict[str, Any]:
+    """引文定位：精确 → 归一化 → 关键词 → 章节，未命中给明确提示。"""
+    conn = db.init_db()
+    try:
+        try:
+            return document_reader.locate_document(doc_id, conn, query=q, keywords=keywords, section=section)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.get("/document/{doc_id}/pdf-outline")
+def get_document_pdf_outline(doc_id: int) -> dict[str, Any]:
+    """PDF 阅读器目录：原生书签优先，无书签时按页首标题生成。"""
+    conn = db.init_db()
+    try:
+        try:
+            return document_reader.pdf_outline(doc_id, conn)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.get("/document/{doc_id}/pdf-page")
+def get_document_pdf_page(doc_id: int, page: int = 1, scale: float = 1.0):
+    """服务端按页渲染 PDF，规避浏览器对部分嵌入字体的兼容问题。"""
+    from fastapi.responses import Response
+
+    conn = db.init_db()
+    try:
+        try:
+            png, width, height = document_reader.render_pdf_page(doc_id, page, scale, conn)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return Response(
+            content=png,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "X-Pdf-Page-Width": str(width),
+                "X-Pdf-Page-Height": str(height),
+            },
+        )
+    finally:
+        conn.close()
+
+
+@router.get("/document/{doc_id}/pdf-locate")
+def locate_document_pdf(
+    doc_id: int,
+    q: str | None = None,
+    keywords: str | None = None,
+) -> dict[str, Any]:
+    """在原始 PDF 中定位引文，返回页码与页面内矩形坐标。"""
+    conn = db.init_db()
+    try:
+        try:
+            return document_reader.locate_in_pdf(doc_id, conn, query=q, keywords=keywords)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.get("/document/{doc_id}/pdf")
+def download_document_pdf(doc_id: int):
+    """下载归档的原始 PDF；文件不在库里时返回 404，不外链第三方站点。"""
+    from fastapi.responses import FileResponse
+
+    conn = db.init_db()
+    try:
+        path = document_reader.pdf_path(doc_id, conn)
+        if path is None:
+            raise HTTPException(status_code=404, detail="原始 PDF 未归档")
+        info = document_reader.metadata(doc_id, conn)
+        filename = f"{info['symbol']}_{info['period'] or 'report'}_{info['doc_type']}.pdf"
+        return FileResponse(path, media_type="application/pdf", filename=filename)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         conn.close()
 

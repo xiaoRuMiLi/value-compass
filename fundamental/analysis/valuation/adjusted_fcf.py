@@ -1,12 +1,18 @@
-"""自由现金流折现（标准 FCF 口径）。
+"""自由现金流折现（股权自由现金流 FCFE 口径）。
 
-期初自由现金流按市场常用公式计算：
+期初自由现金流按国际通用惯例计算（Damodaran, NYU Stern / CFI）：
 
-    FCF = 经营活动现金流量净额 − 资本开支 + 利息收入 − 利息支出
+    FCFE = 经营活动现金流量净额 CFO − 资本开支 CapEx + 净借债
+    FCFF = CFO + 利息 × (1 − 税率) − CapEx        （WACC 折现，见 fcff.py）
 
-营运资本（存货/应收/应付/预付）的增减不再进入公式，只作为现金流质量提示项传入，
-用来提醒「经营现金流被应付项目阶段性抬高」这类可能的失真。
-之后按两阶段折现：前 N 年按 g 增长逐年折现，末尾按永续终值折现。
+CFO 已是「扣息后」的杠杆口径，因此 **利息收入不得再加回**：A 股存款利息通常计入
+「收到其他与经营活动有关的现金」，已包含在 CFO 内，重复加回会虚增现金流；严格 FCFF
+还应把非经营利息收入从 CFO 中剔除，改用 EV→股权桥接单列金融资产，而不是计入经营流量。
+
+本项目采用保守简化：期初现金流 = OCF − CapEx − 实付利息，未含净借债，且额外扣减实付
+利息以避免把债权人报酬算作股东可支配现金；港股因 OCF 不含损益表利息收支，按财报原文
+披露值单独调整并在 note 标注。营运资本（存货/应收/应付/预付）增减只作现金流质量提示，
+不进入公式。之后按两阶段折现：前 N 年按 g 增长逐年折现，末尾按永续终值折现。
 """
 
 from __future__ import annotations
@@ -36,9 +42,11 @@ def evaluate_fcf(
     working_capital_alert: str | None = None,
     component_note: str | None = None,
 ) -> ValuationResult:
-    """标准自由现金流两阶段折现。
+    """股权自由现金流两阶段折现。
 
-    FCF = OCF − 资本开支 + 利息收入 − 利息支出。
+    期初 FCFE ≈ OCF − 资本开支 − 实付利息；利息收入已含在 OCF，按国际惯例不加回。
+    interest_income 参数仅为兼容港股原文调整保留（A 股恒为 0），
+    interest_income_disclosed 是原文披露值，只用于展示与口径核对。
     working_capital / working_capital_alert 只写入结果与提示，不参与计算。
     """
     method = "adjusted_fcf"
@@ -76,8 +84,16 @@ def evaluate_fcf(
     }
     assumptions: dict[str, Any] = {
         "formula": (
-            "标准FCF两阶段折现：FCF = 经营活动现金流量净额 − 资本开支 + 利息收入 − 利息支出，"
+            "股权自由现金流（FCFE）两阶段折现：期初FCFE ≈ 经营活动现金流量净额 − 资本开支 − 实付利息；"
+            "A 股利息收入已含在经营现金流内，按国际通用惯例不重复加回（只作披露与口径核对），"
+            "港股 OCF 未含损益表利息收支时按财报原文调整；"
             "前N年按g增长折现 + 永续终值，区间取±20%；营运资本变动仅作现金流质量提示，不进入公式"
+        ),
+        "methodology": (
+            "国际通用口径：FCFE = CFO − CapEx + 净借债（Damodaran, NYU Stern），以权益成本折现；"
+            "FCFF = CFO + 利息×(1−税率) − CapEx（CFI），以 WACC 折现。"
+            "本项目为保守简化：未含净借债、额外扣减实付利息、FCFF 加回的是税前而非税后利息；"
+            "A 股利息收入已含在 CFO，故不加回，避免重复计算。"
         ),
         "growth": growth,
         "discount": discount,
