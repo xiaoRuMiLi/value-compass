@@ -27,6 +27,7 @@ def evaluate_fcf(
     capex: float | None = 0.0,
     interest_income: float | None = 0.0,
     interest_expense: float | None = 0.0,
+    interest_income_disclosed: float | None = None,
     growth: float = 0.04,
     discount: float = 0.10,
     years: int = 10,
@@ -66,6 +67,8 @@ def evaluate_fcf(
         "ocf": ocf,
         "capex": _num(capex),
         "interest_income": _num(interest_income),
+        # 原文披露的利息收入：已含在 OCF，不进公式，仅供前端展示与口径核对。
+        "interest_income_disclosed": interest_income_disclosed,
         "interest_expense": _num(interest_expense),
         "fcf": fcf,
         "shares": shares,

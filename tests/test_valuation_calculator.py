@@ -136,10 +136,9 @@ class TestValuationCalculator(unittest.TestCase):
     def test_fcff_bridge_matches_backend_logic(self):
         fields = {
             "ocf": 1000.0, "interestExpense": 50.0, "capex": 200.0,
-            "cash": 300.0, "marketableSecurities": 20.0,
-            "nonoperatingInvest": 500.0, "debt": 120.0,
-            "minorityEquity": 90.0, "revenue": 1000.0,
-            "excessCashRatio": 0.02, "nonoperatingDiscount": 0.8,
+            "cash": 300.0, "fairValueAssets": 25.0, "equityAssets": 500.0,
+            "debt": 120.0, "minorityEquity": 90.0, "revenue": 1000.0,
+            "excessCashRatio": 0.02, "fairValueDiscount": 0.8, "equityDiscount": 0.8,
             "shares": 100.0, "growth": 0.05, "discount": 0.10,
             "terminalGrowth": 0.02, "years": 10, "price": 10.0,
         }
@@ -147,8 +146,12 @@ class TestValuationCalculator(unittest.TestCase):
         self.assertIn("企业自由现金流 FCFF", joined)
         self.assertIn("企业价值 EV", joined)
         self.assertIn("超额现金", joined)
-        self.assertIn("300", joined.replace(",", ""))  # 超额现金 = 300 − 20 + 20
-        self.assertIn("400", joined.replace(",", ""))  # 非经营投资 500 × 0.8
+        self.assertIn("公允价值类资产（折价后）", joined)
+        self.assertIn("权益类投资（折价后）", joined)
+        # 现金存款按面值、不打折：超额现金 = 300 − 20(最低经营现金) = 280
+        self.assertIn("280", joined.replace(",", ""))
+        # 公允价值类 25 × 0.8 = 20；权益类 500 × 0.8 = 400
+        self.assertIn("400", joined.replace(",", ""))
 
     def test_invalid_ddm_shows_error(self):
         r = self._run_js({"dps": 2.58, "growth": 0.10, "discount": 0.08, "price": 72.55})

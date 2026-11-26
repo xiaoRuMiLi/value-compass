@@ -29,6 +29,7 @@ from ._common import (
     _valuation_params_cache_path,
     _write_cache,
 )
+from ._asset_quality import asset_quality_digest
 from ._data import _load_master_context, _load_score_financials
 
 # 参数边界：防止 LLM 给出极端值导致 Gordon 公式失真。
@@ -46,7 +47,9 @@ _GAP = 0.02  # discount - growth 的最小间距
 # v8：新增 FCFF/WACC 企业价值折现 + EV→股权桥接，独立卡片与三档参数。
 # v9：WACC 引入无风险利率市场锚点（A股中国10Y国债/其它美国10Y国债），
 #     LLM 折现率受「Rf + 最低风险溢价」下限约束，旧缓存需重算。
-_VALUATION_PARAMS_VERSION = 9
+# v10：桥接三参数（公允价值折价/权益折价/最低现金比例）改由 LLM 按资产质量定参，
+#      并新增财报原文资产构成摘要输入，旧缓存需重算。
+_VALUATION_PARAMS_VERSION = 10
 
 _METHOD_LABELS = {
     "ddm": "股利折现",
@@ -102,8 +105,55 @@ def _two_stage_block(raw: Any, defaults: dict[str, float], rationale_fallback: s
     }
 
 
-def _normalize_block(raw: Any, defaults: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
-    """把一组 DDM/DCF 参数钳制到边界，并保证 discount - growth 有足够间距。"""
+def _bridge_defaults() -> dict[str, float]:
+    """从配置读取桥接三参数的默认值与钳制边界；缺失时用保守内置值。"""
+    settings = load_settings()
+    return {
+        "fair_value": _num(settings.get("valuation.bridge_discounts.fair_value"), 0.8),
+        "equity_invest": _num(settings.get("valuation.bridge_discounts.equity_invest"), 0.8),
+        "excess_cash": _num(settings.get("valuation.excess_cash_ratio.default"), 0.02),
+        "fv_min": _num(settings.get("valuation.bridge_discounts.fair_value_min"), 0.6),
+        "fv_max": _num(settings.get("valuation.bridge_discounts.fair_value_max"), 1.0),
+        "eq_min": _num(settings.get("valuation.bridge_discounts.equity_invest_min"), 0.6),
+        "eq_max": _num(settings.get("valuation.bridge_discounts.equity_invest_max"), 1.0),
+        "cash_min": _num(settings.get("valuation.excess_cash_ratio.min"), 0.01),
+        "cash_max": _num(settings.get("valuation.excess_cash_ratio.max"), 0.05),
+    }
+
+
+def _fcff_block(
+    raw: Any, defaults: dict[str, float], rationale_fallback: str,
+    bridge: dict[str, float] | None = None, inherit: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """归一化 fcff：g/r/永续 + 三个桥接参数（LLM 定值，钳制到配置边界）。
+
+    inherit 用于情景档继承基准档的桥接参数——情景只变增长率/折现率，资产折价不变。
+    """
+    block = _two_stage_block(raw, defaults, rationale_fallback)
+    b = bridge or _bridge_defaults()
+    src = raw if isinstance(raw, dict) else {}
+    inherited = inherit or {}
+
+    def pick(key: str, default_key: str, low: float, high: float) -> float:
+        value = src.get(key, inherited.get(key))
+        fallback = inherited.get(key, b[default_key])
+        return round(_clamp(value, low, high, _num(fallback, b[default_key])), 4)
+
+    block["fair_value_discount"] = pick("fair_value_discount", "fair_value", b["fv_min"], b["fv_max"])
+    block["equity_discount"] = pick("equity_discount", "equity_invest", b["eq_min"], b["eq_max"])
+    block["excess_cash_ratio"] = pick("excess_cash_ratio", "excess_cash", b["cash_min"], b["cash_max"])
+    return block
+
+
+def _normalize_block(
+    raw: Any,
+    defaults: dict[str, dict[str, float]] | None = None,
+    bridge_inherit: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """把一组 DDM/DCF 参数钳制到边界，并保证 discount - growth 有足够间距。
+
+    bridge_inherit：情景档传入基准档的 fcff 块，继承其桥接三参数（只变增速/折现率）。
+    """
 
     raw = raw if isinstance(raw, dict) else {}
     ddm = raw.get("ddm") if isinstance(raw.get("ddm"), dict) else {}
@@ -133,8 +183,9 @@ def _normalize_block(raw: Any, defaults: dict[str, dict[str, float]] | None = No
         "adjusted_fcf": _two_stage_block(
             raw.get("adjusted_fcf"), base["adjusted_fcf"], "由模型按保守原则校准；详见参数依据。"
         ),
-        "fcff": _two_stage_block(
-            raw.get("fcff"), base["fcff"], "由模型按保守原则校准；详见参数依据。"
+        "fcff": _fcff_block(
+            raw.get("fcff"), base["fcff"], "由模型按保守原则校准；详见参数依据。",
+            inherit=bridge_inherit,
         ),
     }
 
@@ -159,7 +210,8 @@ def _derive_scenarios(base: dict[str, Any]) -> dict[str, Any]:
                 "fcff": {"growth": e["growth"] + 0.02, "discount": e["discount"] - 0.01,
                          "terminal_growth": e["terminal_growth"] + 0.01,
                          "rationale": "假设经营景气回升、资本开支效率改善，企业自由现金流与永续增长上调、WACC 回落；股权桥接项不变；属情景推演。"},
-            }
+            },
+            bridge_inherit=e,
         ),
         "pessimistic": _normalize_block(
             {
@@ -174,7 +226,8 @@ def _derive_scenarios(base: dict[str, Any]) -> dict[str, Any]:
                 "fcff": {"growth": e["growth"] - 0.02, "discount": e["discount"] + 0.01,
                          "terminal_growth": max(0.0, e["terminal_growth"] - 0.01),
                          "rationale": "假设主业增长放缓、资本开支刚性与融资成本上升推高 WACC，企业自由现金流与永续下调；属情景推演。"},
-            }
+            },
+            bridge_inherit=e,
         ),
     }
 
@@ -192,7 +245,7 @@ def _normalize_params(raw: Any) -> dict[str, Any]:
         if isinstance(block, dict) and any(
             isinstance(block.get(key), dict) for key in ("ddm", "dcf", "adjusted_fcf", "fcff")
         ):
-            scenarios[name] = _normalize_block(block)
+            scenarios[name] = _normalize_block(block, bridge_inherit=base["fcff"])
         else:
             scenarios[name] = derived[name]
     base["scenarios"] = scenarios
@@ -291,6 +344,7 @@ def _valuation_facts(
     context: dict[str, Any],
     research: list[dict[str, Any]],
     intel: dict[str, Any] | None = None,
+    db_path: Path | None = None,
 ) -> dict[str, Any]:
     snapshot = result.get("snapshot")
     price = snapshot.price if snapshot else None
@@ -305,6 +359,12 @@ def _valuation_facts(
     intel_limit = int(settings.get("valuation.intel_limit", 3))
     industry_chars = int(settings.get("valuation.industry_chars", 1200))
     survey_chars = int(settings.get("valuation.survey_chars", 1500))
+    # 资产构成摘要：从财报原文抽取投资资产段落，供 LLM 按公司实际情况定桥接折价率。
+    digest_chars = int(settings.get("valuation.asset_digest.max_chars", 2200))
+    digest_snippets = int(settings.get("valuation.asset_digest.max_snippets", 6))
+    asset_digest = asset_quality_digest(
+        symbol, db_path, max_chars=digest_chars, max_snippets=digest_snippets
+    ) if symbol else []
     dps = None
     dcf_cash = None
     shares = None
@@ -326,6 +386,7 @@ def _valuation_facts(
                 "ocf": inp.get("ocf", src.get("ocf")),
                 "capex": inp.get("capex", src.get("capex")),
                 "interest_income": inp.get("interest_income", src.get("interest_income")),
+                "interest_income_disclosed": inp.get("interest_income_disclosed", src.get("interest_income_disclosed")),
                 "interest_expense": inp.get("interest_expense", src.get("interest_expense")),
             }
             component_note = (item.assumptions or {}).get("component_note")
@@ -336,9 +397,12 @@ def _valuation_facts(
                 key: inp.get(key)
                 for key in (
                     "ocf", "capex", "interest_expense", "cash", "marketable_securities",
-                    "nonoperating_invest", "debt", "minority_equity", "revenue",
+                    "nonoperating_invest", "fair_value_assets", "equity_assets",
+                    "debt", "minority_equity", "revenue",
                 )
             }
+            # 现金流/桥接取数说明（含港股原文回退标注），供重算结果透传到前端。
+            fcff_inputs["component_note"] = (item.assumptions or {}).get("component_note")
 
     return {
         "company": {
@@ -360,6 +424,7 @@ def _valuation_facts(
             "fcff_inputs": fcff_inputs,
         },
         "risk_free": risk_free,
+        "asset_digest": asset_digest,
         "research_reports": research,
         "sellside": _sellside_sentiment(research),
         "intel": {
@@ -562,6 +627,7 @@ def _recompute(facts: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
                     fcfc.get("ocf"), shares, price,
                     capex=fcfc.get("capex"),
                     interest_income=fcfc.get("interest_income"),
+                    interest_income_disclosed=fcfc.get("interest_income_disclosed"),
                     interest_expense=fcfc.get("interest_expense"),
                     growth=f["growth"], discount=f["discount"],
                     terminal_growth=f["terminal_growth"],
@@ -575,13 +641,17 @@ def _recompute(facts: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
                     interest_expense=fic.get("interest_expense"),
                     capex=fic.get("capex"),
                     cash=fic.get("cash"),
-                    marketable_securities=fic.get("marketable_securities"),
-                    nonoperating_invest=fic.get("nonoperating_invest"),
+                    fair_value_assets=fic.get("fair_value_assets"),
+                    equity_assets=fic.get("equity_assets"),
+                    fair_value_discount=e.get("fair_value_discount"),
+                    equity_discount=e.get("equity_discount"),
+                    excess_cash_ratio=e.get("excess_cash_ratio"),
                     debt=fic.get("debt"),
                     minority_equity=fic.get("minority_equity"),
                     revenue=fic.get("revenue"),
                     growth=e["growth"], discount=e["discount"],
                     terminal_growth=e["terminal_growth"],
+                    component_note=fic.get("component_note"),
                     risk_free=risk_free,
                 ),
                 "fcff",
@@ -674,7 +744,7 @@ def generate_valuation_params(
     context = _load_master_context(symbol, db_path)
     intel = load_intel_digest(symbol, refresh=refresh, research_limit=research_limit)
     research = intel.get("company_reports") or []
-    facts = _valuation_facts(result, financials, context, research, intel)
+    facts = _valuation_facts(result, financials, context, research, intel, db_path)
 
     output = _finalize(facts)
     output["sellside"] = _sellside_sentiment(research)

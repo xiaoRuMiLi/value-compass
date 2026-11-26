@@ -8,7 +8,7 @@
     ddm: { name: "股利折现（Gordon）", fields: ["dps", "growth", "discount", "price"] },
     dcf: { name: "现金流折现（期初经营现金流）", fields: ["fcf", "shares", "growth", "discount", "terminalGrowth", "years", "price"] },
     adjusted_fcf: { name: "自由现金流折现", fields: ["fcfSource", "ocf", "capex", "interestIncome", "interestExpense", "fcf", "shares", "growth", "discount", "terminalGrowth", "years", "price"] },
-    fcff: { name: "企业自由现金流折现（FCFF/WACC）", fields: ["ocf", "interestExpense", "capex", "cash", "marketableSecurities", "nonoperatingInvest", "debt", "minorityEquity", "revenue", "excessCashRatio", "nonoperatingDiscount", "shares", "growth", "discount", "terminalGrowth", "years", "price"] },
+    fcff: { name: "企业自由现金流折现（FCFF/WACC）", fields: ["ocf", "interestExpense", "capex", "cash", "fairValueAssets", "equityAssets", "debt", "minorityEquity", "revenue", "excessCashRatio", "fairValueDiscount", "equityDiscount", "shares", "growth", "discount", "terminalGrowth", "years", "price"] },
   };
 
   const FIELD_META = {
@@ -35,14 +35,18 @@
     payable: { label: "应付增加额（提示项）", unit: "元，不进入公式", def: 0 },
     prepaid: { label: "预付款项增加额（提示项，压低OCF）", unit: "元，不进入公式", def: 0 },
     contractLiability: { label: "合同负债/经销商预付款增加额（提示项，抬高OCF）", unit: "元，不进入公式", def: 0 },
-    cash: { label: "货币资金", unit: "元，超额现金的基数；受限制资金请自行剔除", def: 0 },
-    marketableSecurities: { label: "交易性金融资产/短期存款", unit: "元，类现金，全额加回", def: 0 },
-    nonoperatingInvest: { label: "非经营投资原值", unit: "元，长期股权投资/金融资产/投资性物业等，未折价", def: 0 },
+    cash: { label: "货币资金及存款理财", unit: "元，现金+短期/中长期存款理财，按面值加回、不打折；受限制资金请自行剔除", def: 0 },
+    fairValueAssets: { label: "公允价值类金融资产", unit: "元，交易性/指定公允价值金融资产等，按公允价值类折价计入", def: 0 },
+    equityAssets: { label: "权益类投资", unit: "元，联营/合营/权益工具/投资物业等，按权益类折价计入", def: 0 },
+    marketableSecurities: { label: "交易性金融资产/短期存款（旧口径）", unit: "元，兼容旧数据，优先用上方公允价值类", def: 0 },
+    nonoperatingInvest: { label: "非经营投资原值（旧口径）", unit: "元，兼容旧数据，优先用上方权益类", def: 0 },
     debt: { label: "有息负债", unit: "元，短期+长期借款、债券、租赁负债、一年内到期部分", def: 0 },
     minorityEquity: { label: "少数股东权益", unit: "元，桥接时扣减", def: 0 },
     revenue: { label: "营业收入（最近完整财年）", unit: "元，用于计提最低经营现金", def: 0 },
     excessCashRatio: { label: "最低经营现金比例", unit: "小数，营收 × 该比例", def: 0.02 },
-    nonoperatingDiscount: { label: "非经营投资折价系数", unit: "小数，如 0.8 表示打八折", def: 0.8 },
+    fairValueDiscount: { label: "公允价值类折价系数", unit: "小数，如 0.8 表示打八折", def: 0.8 },
+    equityDiscount: { label: "权益类投资折价系数", unit: "小数，如 0.8 表示打八折", def: 0.8 },
+    nonoperatingDiscount: { label: "非经营投资折价系数（旧口径）", unit: "兼容旧数据，优先用上方两类系数", def: 0.8 },
   };
 
   const SOURCES = [
@@ -147,11 +151,12 @@
       bridge.className = "calc-group";
       const bridgeTitle = document.createElement("div");
       bridgeTitle.className = "calc-group-title";
-      bridgeTitle.textContent = "EV → 股权价值桥接（减有息负债，加超额现金与折价后非经营投资）";
+      bridgeTitle.textContent = "EV → 股权价值桥接（减有息负债，加面值现金存款 + 折价后公允价值/权益类资产）";
       bridge.appendChild(bridgeTitle);
       form.appendChild(bridge);
-      for (const k of ["cash", "marketableSecurities", "nonoperatingInvest", "debt",
-                       "minorityEquity", "revenue", "excessCashRatio", "nonoperatingDiscount"]) {
+      for (const k of ["cash", "fairValueAssets", "equityAssets", "debt",
+                       "minorityEquity", "revenue", "excessCashRatio",
+                       "fairValueDiscount", "equityDiscount"]) {
         addField(form, k, defaults[k]);
       }
       for (const k of ["shares", "growth", "discount", "terminalGrowth", "years", "price"]) {
@@ -217,7 +222,7 @@
     ddm: "合理价 = DPS × (1+g) ÷ (r−g)；区间取 ±20%。要求 r > g。",
     dcf: "前 N 年 FCF 按 g 增长逐年以 r 折现，加永续终值折现，除以股本；区间 ±20%。",
     adjusted_fcf: "期初FCF = 经营活动现金流量净额 − 资本开支 + 利息收入 − 利息支出；其后与两阶段 DCF 相同。存货/应收/应付/预付差额只作提示，不进入公式；缺失的资本开支与利息项按 0 处理，请按财报补填。",
-    fcff: "FCFF = 经营现金流 + 实付利息 − 资本开支；按 WACC（discount）两阶段折现得 EV；股权价值 = EV − 有息负债 + 超额现金 + 非经营投资×折价系数 − 少数股东权益；超额现金 = 货币资金 − 营收×最低经营现金比例 + 类现金金融资产。区间 ±20%。页面校准值以市场无风险利率为下限（A股中国10Y国债/其它美国10Y国债），此处为手动试算，可直接调整 WACC 观察敏感性。",
+    fcff: "FCFF = 经营现金流 + 实付利息 − 资本开支；按 WACC（discount）两阶段折现得 EV；股权价值 = EV − 有息负债 + 超额现金 + 公允价值类资产×折价 + 权益类投资×折价 − 少数股东权益。现金与短期/中长期存款理财按面值加回、不打折；超额现金 = 现金存款 − 营收×最低经营现金比例。区间 ±20%。页面校准值以市场无风险利率为下限（A股中国10Y国债/其它美国10Y国债），此处为手动试算，可直接调整 WACC 与各档折价观察敏感性。",
   };
 
   function resultBlock(title, rows, invalid) {
@@ -277,20 +282,24 @@
       const terminalPv = cashFlow * (1 + gt) / (r - gt) / Math.pow(1 + r, years);
       const ev = pv + terminalPv;
       const ratio = Math.max(0, num("calc-excessCashRatio"));
-      const disc = Math.max(0, Math.min(1, num("calc-nonoperatingDiscount")));
+      const fvDisc = Math.max(0, Math.min(1, num("calc-fairValueDiscount")));
+      const eqDisc = Math.max(0, Math.min(1, num("calc-equityDiscount")));
       const minCash = num("calc-revenue") * ratio;
-      const excessCash = Math.max(0, num("calc-cash") - minCash) + num("calc-marketableSecurities");
-      const nonop = num("calc-nonoperatingInvest") * disc;
-      const equity = ev - num("calc-debt") + excessCash + nonop - num("calc-minorityEquity");
+      // 现金及存款理财按面值加回、不打折；公允价值类与权益类分别按各自系数折价。
+      const excessCash = Math.max(0, num("calc-cash") - minCash);
+      const fvAfter = num("calc-fairValueAssets") * fvDisc;
+      const eqAfter = num("calc-equityAssets") * eqDisc;
+      const equity = ev - num("calc-debt") + excessCash + fvAfter + eqAfter - num("calc-minorityEquity");
       if (equity <= 0) {
-        resultBlock("桥接后股权价值 ≤ 0：请检查有息负债与非经营投资取值", [], true);
+        resultBlock("桥接后股权价值 ≤ 0：请检查有息负债与两类投资资产取值", [], true);
         return;
       }
       center = equity / shares; low = center * 0.8; high = center * 1.2;
       detail.push(["企业自由现金流 FCFF", fmt(base) + " 元"]);
       detail.push(["企业价值 EV（两阶段折现）", fmt(ev) + " 元"]);
       detail.push(["最低经营现金 / 超额现金", fmt(minCash) + " / " + fmt(excessCash) + " 元"]);
-      detail.push(["非经营投资（折价后）", fmt(nonop) + " 元"]);
+      detail.push(["公允价值类资产（折价后）", fmt(fvAfter) + " 元"]);
+      detail.push(["权益类投资（折价后）", fmt(eqAfter) + " 元"]);
       detail.push(["股权价值（桥接后）", fmt(equity) + " 元"]);
     } else {
       // dcf / adjusted_fcf 共用两阶段

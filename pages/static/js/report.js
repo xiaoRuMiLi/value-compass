@@ -54,13 +54,18 @@
       // 桥接项全部来自校准重算后的 inputs（与 analysis 同源），保证计算器与卡片一致。
       for (const [js, key] of [
         ["ocf", "ocf"], ["capex", "capex"], ["interestExpense", "interest_expense"],
-        ["cash", "cash"], ["marketableSecurities", "marketable_securities"],
+        ["cash", "cash"],
+        ["fairValueAssets", "fair_value_assets"], ["equityAssets", "equity_assets"],
+        ["marketableSecurities", "marketable_securities"],
         ["nonoperatingInvest", "nonoperating_invest"], ["debt", "debt"],
         ["minorityEquity", "minority_equity"], ["revenue", "revenue"], ["shares", "shares"],
       ]) {
         const val = calInp[key] != null ? calInp[key] : anaInp[key];
         if (val != null) base[js] = val;
       }
+      // 若校准结果仍用旧合并键，回填到新三档（优先新键，旧键兜底）。
+      if (base.fairValueAssets == null && calInp.marketable_securities != null) base.fairValueAssets = calInp.marketable_securities;
+      if (base.equityAssets == null && calInp.nonoperating_invest != null) base.equityAssets = calInp.nonoperating_invest;
     }
     return base;
   }
@@ -89,12 +94,17 @@
       terminalGrowth: asm.terminal_growth, years: asm.years,
       price: item && item.current_price,
       cash: inp.cash,
+      // 三档桥接：现金/存款按面值；公允价值类与权益类分别折价。
+      fairValueAssets: inp.fair_value_assets != null ? inp.fair_value_assets : inp.marketable_securities,
+      equityAssets: inp.equity_assets != null ? inp.equity_assets : inp.nonoperating_invest,
       marketableSecurities: inp.marketable_securities,
       nonoperatingInvest: inp.nonoperating_invest,
       debt: inp.debt,
       minorityEquity: inp.minority_equity,
       revenue: inp.revenue,
       excessCashRatio: asm.excess_cash_ratio,
+      fairValueDiscount: asm.fair_value_discount != null ? asm.fair_value_discount : asm.nonoperating_discount,
+      equityDiscount: asm.equity_discount != null ? asm.equity_discount : asm.nonoperating_discount,
       nonoperatingDiscount: asm.nonoperating_discount,
     };
   }
@@ -619,8 +629,16 @@
     const label = method === "fcff" ? "企业自由现金流"
       : method === "adjusted_fcf" ? "自由现金流" : "现金流";
     const discountLabel = method === "fcff" ? "WACC" : "折现率";
-    return `前 10 年${label}增长率 ${pct1(p.growth)} · 10 年后永续增长率 ${pct1(p.terminal_growth)} · ${discountLabel} ${pct1(p.discount)}`
-      + (method === "fcff" ? floorNote(cal) : "");
+    let text = `前 10 年${label}增长率 ${pct1(p.growth)} · 10 年后永续增长率 ${pct1(p.terminal_growth)} · ${discountLabel} ${pct1(p.discount)}`;
+    if (method === "fcff") {
+      text += floorNote(cal);
+      const bits = [];
+      if (p.fair_value_discount != null) bits.push(`公允价值类 ${pct1(p.fair_value_discount)}`);
+      if (p.equity_discount != null) bits.push(`权益类 ${pct1(p.equity_discount)}`);
+      if (p.excess_cash_ratio != null) bits.push(`最低经营现金 ${pct1(p.excess_cash_ratio)}`);
+      if (bits.length) text += ` · 资产折价（按公司质量校准）：${bits.join(" / ")}`;
+    }
+    return text;
   }
 
   // 情景行空间有限，用更紧凑的中文表述，年限含义与基准卡片一致。
@@ -663,7 +681,16 @@
     addChip("years", asm.years);
     addChip("ocf", inp.ocf);
     addChip("capex", inp.capex);
-    addChip("interest_income", inp.interest_income);
+    // 利息收入已含在经营现金流内、按 0 进公式；有原文披露值时展示披露值并标注口径，
+    // 避免用户看到「0」以为漏采。计算器入参仍用公式值 0，二者不可混用。
+    const disclosed = inp.interest_income_disclosed != null
+      ? inp.interest_income_disclosed : src.interest_income_disclosed;
+    if (disclosed != null && Number.isFinite(Number(disclosed)) && Number(disclosed) !== 0) {
+      chips.push(el("span", "val-param",
+        `利息收入 ${fmtParamValue("interest_income", disclosed)}（已含经营现金流，未加回）`));
+    } else {
+      addChip("interest_income", inp.interest_income);
+    }
     addChip("interest_expense", inp.interest_expense);
     addChip("fcf", inp.fcf);
     addChip("shares", inp.shares);
@@ -718,6 +745,14 @@
     }
     if (asm.component_note) wrap.appendChild(el("div", "vp-fcf-source", asm.component_note));
     if (asm.bridge_formula) wrap.appendChild(el("div", "vp-fcf-source", asm.bridge_formula));
+    // 桥接折价来源：LLM 按公司资产质量校准的具体取值，便于与普通配置默认值区分。
+    const bridgeBits = [];
+    if (asm.fair_value_discount != null) bridgeBits.push(`公允价值类按 ${pct1(asm.fair_value_discount)}`);
+    if (asm.equity_discount != null) bridgeBits.push(`权益类按 ${pct1(asm.equity_discount)}`);
+    if (asm.excess_cash_ratio != null) bridgeBits.push(`最低经营现金 ${pct1(asm.excess_cash_ratio)} 营收`);
+    if (bridgeBits.length) {
+      wrap.appendChild(el("div", "vp-fcf-source", `资产折价（LLM 结合财报资产构成校准）：${bridgeBits.join("；")}`));
+    }
     if (asm.missing_bridge) wrap.appendChild(el("div", "val-alert", asm.missing_bridge));
 
     // 无风险利率市场锚点：Rf 取值/来源、债务成本 Kd、WACC 下限与本次实际执行值。

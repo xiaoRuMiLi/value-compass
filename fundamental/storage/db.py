@@ -7,7 +7,31 @@ from pathlib import Path
 
 from fundamental.utils import paths
 
-SCHEMA_VERSION = 6  # 5→6: financials.eps_ttm（港股拆股前后口径一致）
+SCHEMA_VERSION = 7  # 6→7: extracted_financial_items（财报原文抽取口径，与标准表隔离）
+
+_EXTRACTED_FINANCIAL_DDL = """
+CREATE TABLE IF NOT EXISTS extracted_financial_items (
+  id INTEGER PRIMARY KEY,
+  stock_id INTEGER NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  field_code TEXT NOT NULL,
+  report_date TEXT NOT NULL,
+  report_type TEXT NOT NULL,
+  value_cny REAL NOT NULL,
+  original_value REAL NOT NULL,
+  currency TEXT NOT NULL,
+  unit TEXT NOT NULL,
+  fx_rate REAL NOT NULL DEFAULT 1.0,
+  fx_source TEXT,
+  quote TEXT,
+  source_doc TEXT,
+  source_path TEXT,
+  status TEXT NOT NULL DEFAULT 'verified',
+  fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(stock_id, field_code, report_date, report_type)
+);
+CREATE INDEX IF NOT EXISTS idx_extracted_financial_lookup
+  ON extracted_financial_items(stock_id, field_code, report_date);
+"""
 
 _MIGRATIONS = {
     1: ["ALTER TABLE snapshots ADD COLUMN pct_change REAL;"],
@@ -28,6 +52,10 @@ _MIGRATIONS = {
     5: [
         # 港股 F10 直接披露 EPS_TTM；用它替代累计 EPS 推导，避免拆股前后口径混用。
         "ALTER TABLE financials ADD COLUMN eps_ttm REAL;",
+    ],
+    6: [
+        # 原文抽取口径单独建表，不写进 statement_items：标准科目优先，缺项才回退。
+        _EXTRACTED_FINANCIAL_DDL,
     ],
 }
 

@@ -175,6 +175,87 @@ class TestNormalizeParams(unittest.TestCase):
         self.assertIsInstance(p["ddm"]["growth"], float)
         self.assertIsInstance(p["summary"], str)
 
+    def test_clamps_bridge_params_to_config_bounds(self):
+        raw = {
+            "fcff": {
+                "fair_value_discount": 1.5,
+                "equity_discount": 0.3,
+                "excess_cash_ratio": 0.5,
+            }
+        }
+        p = _normalize_params(raw)
+        f = p["fcff"]
+        self.assertLessEqual(f["fair_value_discount"], 1.0)
+        self.assertGreaterEqual(f["equity_discount"], 0.6)
+        self.assertLessEqual(f["excess_cash_ratio"], 0.05)
+
+    def test_bridge_params_default_and_scenario_inherit(self):
+        p = _normalize_params({
+            "fcff": {"fair_value_discount": 0.9, "equity_discount": 0.7,
+                     "excess_cash_ratio": 0.03}
+        })
+        self.assertEqual(p["fcff"]["fair_value_discount"], 0.9)
+        # 情景档只变增速/折现率，桥接折价继承基准
+        self.assertEqual(p["scenarios"]["optimistic"]["fcff"]["fair_value_discount"], 0.9)
+        self.assertEqual(p["scenarios"]["pessimistic"]["fcff"]["equity_discount"], 0.7)
+        self.assertEqual(p["scenarios"]["optimistic"]["fcff"]["excess_cash_ratio"], 0.03)
+
+    def test_bridge_params_fallback_to_config_when_missing(self):
+        p = _normalize_params({})
+        b = vp._bridge_defaults()
+        self.assertEqual(p["fcff"]["fair_value_discount"], round(b["fair_value"], 4))
+        self.assertEqual(p["fcff"]["equity_discount"], round(b["equity_invest"], 4))
+        self.assertEqual(p["fcff"]["excess_cash_ratio"], round(b["excess_cash"], 4))
+
+
+class TestAssetQualityDigest(unittest.TestCase):
+    def test_extracts_investment_composition_from_filings(self):
+        from fundamental.services.narrative._asset_quality import asset_quality_digest
+
+        snips = asset_quality_digest("00700.HK")
+        self.assertIsInstance(snips, list)
+        if snips:  # 有归档财报时才断言内容
+            joined = " ".join(s["text"] for s in snips)
+            self.assertTrue(any(k in joined for k in ("投資組合", "投资组合", "公允價值", "公允价值", "上市投資", "上市投资")))
+            for s in snips:
+                self.assertIn("category", s)
+                self.assertIn("source", s)
+                self.assertIn("text", s)
+
+    def test_unknown_symbol_returns_empty(self):
+        from fundamental.services.narrative._asset_quality import asset_quality_digest
+
+        self.assertEqual(asset_quality_digest("999999.NOPE"), [])
+
+
+class TestRecomputeBridgeParams(unittest.TestCase):
+    def test_recompute_uses_calibrated_bridge_discounts(self):
+        from fundamental.services.narrative._valuation_params import (
+            _normalize_params as norm, _recompute as recompute,
+        )
+
+        facts = {
+            "model_inputs": {
+                "price": 100.0, "shares": 1e8,
+                "fcff_inputs": {
+                    "ocf": 1e10, "capex": 2e9, "interest_expense": 5e8,
+                    "cash": 2e10, "fair_value_assets": 5e10,
+                    "equity_assets": 3e10, "debt": 1e10,
+                    "minority_equity": 1e9, "revenue": 2e10,
+                },
+            }
+        }
+        p = norm({"fcff": {"growth": 0.05, "discount": 0.10, "terminal_growth": 0.02,
+                           "fair_value_discount": 0.9, "equity_discount": 0.7}})
+        out = recompute(facts, p)
+        f = out["fcff"]
+        inp = f["inputs"]
+        self.assertEqual(f["assumptions"]["fair_value_discount"], 0.9)
+        self.assertEqual(f["assumptions"]["equity_discount"], 0.7)
+        self.assertEqual(f["assumptions"]["excess_cash_ratio"], 0.02)
+        self.assertAlmostEqual(inp["fair_value_discounted"], 5e10 * 0.9, places=0)
+        self.assertAlmostEqual(inp["equity_discounted"], 3e10 * 0.7, places=0)
+
 
 class TestFallbackParams(unittest.TestCase):
     def test_uses_history_and_is_conservative(self):

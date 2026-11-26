@@ -126,6 +126,31 @@ CREATE TABLE statement_items (
 CREATE INDEX idx_statement_items_lookup
   ON statement_items(stock_id, statement_type, report_date);
 
+-- 财报原文抽取的非标准口径（与东财标准 statement_items 分表，避免覆盖/重复加回）。
+-- value_cny 为代码按原文币种与单位换算后的人民币元；引文与来源文档用于溯源。
+CREATE TABLE extracted_financial_items (
+  id INTEGER PRIMARY KEY,
+  stock_id INTEGER NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+  field_code TEXT NOT NULL,
+  report_date TEXT NOT NULL,
+  report_type TEXT NOT NULL,
+  value_cny REAL NOT NULL,
+  original_value REAL NOT NULL,
+  currency TEXT NOT NULL,
+  unit TEXT NOT NULL,
+  fx_rate REAL NOT NULL DEFAULT 1.0,
+  fx_source TEXT,
+  quote TEXT,
+  source_doc TEXT,
+  source_path TEXT,
+  status TEXT NOT NULL DEFAULT 'verified',
+  fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(stock_id, field_code, report_date, report_type)
+);
+
+CREATE INDEX idx_extracted_financial_lookup
+  ON extracted_financial_items(stock_id, field_code, report_date);
+
 CREATE TABLE revenue_composition (
   id INTEGER PRIMARY KEY,
   stock_id INTEGER NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,

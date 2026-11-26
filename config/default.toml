@@ -12,6 +12,8 @@ cache_ttl_seconds = 3600
 [fx]
 hkd_to_cny_default = 0.85
 fx_cache_ttl_seconds = 86400
+# 美元口径仅在财报原文以美元披露时使用，当前不做联网核验，来源会随抽取结果一并落库。
+usd_to_cny_default = 7.2
 
 [narrative]
 cache_ttl_days = 10
@@ -63,6 +65,40 @@ citation_total = 20
 # 两者均为建模假设，仅用于展示与约束 LLM 校准的折现率，不反推 WACC。
 rf_credit_spread = 0.015
 rf_min_risk_premium = 0.04
+
+# FCFF 的 EV→股权桥接：非经营资产按类别计折价（1.0=全额，0.8=八折）。
+# 公允价值类金融资产（交易性/指定公允价值/其他金融资产）与权益类投资（联营/合营/权益工具）
+# 流动性或估值确定性较弱，默认八折；存款与长短期理财按面值全额加回，不打折。
+# 折价属建模假设，仅影响桥接项、不改变经营现金流折现出的 EV。
+# default = 无 LLM / 模板回退时的取值；min/max = LLM 定参边界，代码会钳制到区间内。
+[valuation.bridge_discounts]
+fair_value = 0.8
+equity_invest = 0.8
+deposit = 1.0
+fair_value_min = 0.6
+fair_value_max = 1.0
+equity_invest_min = 0.6
+equity_invest_max = 1.0
+
+# 超额现金 = 现金类资产 − 营收 × 最低经营现金比例。
+# default 同上为回退值；min/max 为 LLM 定参边界。该参数杠杆较小（营收×比例差）。
+[valuation.excess_cash_ratio]
+default = 0.02
+min = 0.01
+max = 0.05
+
+# 资产构成摘要：从财报原文抽取投资资产段落供 LLM 判断折价率，控制上下文预算。
+[valuation.asset_digest]
+max_chars = 2200
+max_snippets = 6
+
+# 财报原文非标准口径抽取：字段注册表在 services/financial_extract.py（代码白名单），
+# 这里只控制上下文预算。抽取结果按真实报告期落库，标准口径优先、缺项才回退。
+[financial_extract]
+max_docs = 2
+max_chars_per_doc = 12000
+max_tokens = 2000
+annual_only = false
 
 [logging]
 level = "INFO"

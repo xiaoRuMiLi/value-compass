@@ -186,11 +186,13 @@ _HK_ITEM_CODE_MAP: dict[StatementType, dict[str, str]] = {
         "004002010": "MONETARYFUNDS",           # 现金及等价物
         "004002011": "SHORT_TERM_DEPOSIT",      # 短期存款（类现金）
         "004002013": "TRADE_FINASSET",          # 以公允价值记账之金融资产（流动）
+        "004002022": "OTHER_CURRENT_FINASSET",  # 其他金融资产（流动）
         "004002999": "TOTAL_CURRENT_ASSETS",    # 流动资产合计
         "004001003": "INVEST_REALESTATE",       # 投资物业
         "004001013": "LONG_EQUITY_INVEST",      # 联营公司权益
         "004001016": "JOINT_VENTURE_INVEST",    # 合营公司权益
         "004001022": "NONCURRENT_FINASSET",     # 指定以公允价值记账之金融资产（非流动）
+        "004001031": "OTHER_NONCURRENT_FINASSET",  # 其他金融资产（非流动）
         "004001030": "TERM_DEPOSIT",            # 中长期存款（类现金）
         "004009999": "TOTAL_ASSETS",            # 总资产
         "004011001": "ACCOUNTS_PAYABLE",        # 应付账款

@@ -30,7 +30,13 @@ from fundamental.analysis.valuation import (
     evaluate_graham,
     evaluate_relative,
 )
+from fundamental.services.financial_extract import (
+    bridge_value_from_extracted,
+    latest_extracted_for_bridge,
+    latest_extracted_values,
+)
 from fundamental.services.risk_free import resolve_risk_free
+from fundamental.config import load_settings
 from fundamental.models import (
     AuditOpinion,
     BehaviorType,
@@ -201,14 +207,20 @@ def _resolve_dps(
     return _latest_dividend(dividends), None
 
 
-def _fcf_components(statement_items: list[StatementItem]) -> dict[str, float | None]:
+def _fcf_components(
+    statement_items: list[StatementItem],
+    extracted: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, float | None]:
     """按最新年报构造标准 FCF 分项：OCF − 资本开支 + 利息收入 − 利息支出。
 
-    数据源缺少某项时按 0 处理并在 note 中说明，由前端计算器允许用户补填。
+    资本开支/利息支出若标准口径整列缺失，可回退财报原文抽取值（需报告期一致）；
+    利息收入已含在经营活动现金流内，抽取值只披露、不重复加回公式。
+    仍缺的项按 0 处理并在 note 中说明，由前端计算器允许用户补填。
     """
     result: dict[str, float | None] = {
         "ocf": None, "capex": 0.0, "interest_income": 0.0,
-        "interest_expense": 0.0, "fcf": None, "note": None,
+        "interest_expense": 0.0, "interest_income_disclosed": None,
+        "fcf": None, "note": None,
     }
     yearly = [
         item for item in statement_items
@@ -238,21 +250,63 @@ def _fcf_components(statement_items: list[StatementItem]) -> dict[str, float | N
         )
         if not any(i.item_code == code for i in items)
     ]
+    # 标准口径整列缺失时，回退到财报原文抽取的现金流明细；报告期必须与 FCF 基准一致。
+    # 利息收入已在经营现金流内，抽取值只写进 note 披露，不重复加回公式。
+    extracted = extracted or {}
+    extraction_notes: list[str] = []
+    extraction_disclosed: set[str] = set()
+
+    def from_extracted(field_code: str, label: str, missing_label: str) -> float | None:
+        item = extracted.get(field_code)
+        if not item or item.get("value_cny") is None:
+            return None
+        if str(item.get("report_date") or "") != latest_date:
+            extraction_notes.append(
+                f"{label}原文抽取报告期 {item.get('report_date')} 与 FCF 基准 {latest_date} 不一致，未回退"
+            )
+            return None
+        value = float(item["value_cny"])
+        extraction_notes.append(f"{label}改取财报原文抽取值 {value / 1e8:.2f}亿（附引文）")
+        extraction_disclosed.add(label)
+        if missing_label in missing:
+            missing.remove(missing_label)
+        return value
+
+    if capex is None:
+        capex = from_extracted("CAPEX_CASH_PAID", "资本开支", "购建固定资产等支付的现金（资本开支）")
+    if interest_expense is None:
+        interest_expense = from_extracted("INTEREST_EXPENSE_DETAIL", "利息支出", "利息支出")
+    interest_income_disclosed = None
+    income_item = extracted.get("INTEREST_INCOME_DETAIL")
+    if income_item and income_item.get("value_cny") is not None:
+        interest_income_disclosed = float(income_item["value_cny"])
+        extraction_notes.append(
+            f"利息收入 {interest_income_disclosed / 1e8:.2f}亿已含在经营现金流内，未重复加回"
+        )
+        extraction_disclosed.add("利息收入")
+        # 原文已披露利息收入，不能再写「该年披露为 0 / 未单列」，否则 note 自相矛盾。
+        if "利息收入" in missing:
+            missing.remove("利息收入")
+
     zero_disclosed = [
         label for label, value in (
             ("资本开支", capex), ("利息收入", interest_income), ("利息支出", interest_expense)
         )
-        if value is None or value == 0
+        if (value is None or value == 0) and label not in extraction_disclosed
     ]
+    note = _fcf_note(latest_date, ocf, capex, interest_income, interest_expense, missing, zero_disclosed)
+    if extraction_notes:
+        note += "；" + "；".join(extraction_notes)
     result.update({
         "ocf": ocf,
         "capex": capex,
         "interest_income": interest_income,
+        "interest_income_disclosed": interest_income_disclosed,
         "interest_expense": interest_expense,
         "fcf": None if ocf is None else (
             ocf - (capex or 0.0) + (interest_income or 0.0) - (interest_expense or 0.0)
         ),
-        "note": _fcf_note(latest_date, ocf, capex, interest_income, interest_expense, missing, zero_disclosed),
+        "note": note,
     })
     return result
 
@@ -291,7 +345,9 @@ def _compute_fcf(statement_items: list[StatementItem]) -> float | None:
 
 
 def _resolve_fcf_components(
-    symbol: str, statement_items: list[StatementItem]
+    symbol: str,
+    statement_items: list[StatementItem],
+    extracted: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, float | None]:
     """为 DCF/FCF 折现选定现金流分项，返回与 _fcf_components 同构的字典。"""
     code, market = parse_symbol(symbol)
@@ -334,11 +390,17 @@ def _resolve_fcf_components(
                 }
         except Exception:  # noqa: BLE001 - 补充数据失败不应拖垮主分析
             pass
-        return {
-            "ocf": None, "capex": None, "interest_income": None,
-            "interest_expense": None, "fcf": None, "note": None,
-        }
-    return _fcf_components(statement_items)
+        # 原文抽取不可用（如小米只有中期报告、无季度「自由现金流」句式）时，
+        # 回退到库内年报现金流表，避免把已落库的 OCF 一并丢弃导致估值整档为空。
+        # 口径与 A 股一致：缺失分项按 0 计入并由 note 说明，前端仍可补填。
+        fallback = _fcf_components(statement_items, extracted=extracted)
+        if fallback.get("ocf") is not None:
+            fallback["note"] = (
+                "港股财报原文未披露季度自由现金流句式，已回退库内年报现金流口径；"
+                + (fallback.get("note") or "")
+            )
+        return fallback
+    return _fcf_components(statement_items, extracted=extracted)
 
 
 def _resolve_fcf(symbol: str, statement_items: list[StatementItem]) -> tuple[float | None, str | None]:
@@ -348,9 +410,19 @@ def _resolve_fcf(symbol: str, statement_items: list[StatementItem]) -> tuple[flo
 
 
 # EV→股权桥接取数口径：A 股用东财三大报表归一化码，港股用东财港股长表归一化码。
+# EV→股权桥接的科目分档：
+# - cash/deposit：货币资金与短期/中长期存款理财，按面值全额加回（不打折）；
+# - fair_value：以公允价值计量的金融资产，按配置折价（默认八折）；
+# - equity：联营/合营/权益工具/投资物业等权益类投资，按配置折价（默认八折）。
 _FCFF_BRIDGE_CODES = {
     "A": {
         "cash": ["MONETARYFUNDS"],
+        "deposit": ["HOLD_MATURITY_INVEST"],
+        "fair_value": ["TRADE_FINASSET"],
+        "equity": [
+            "LONG_EQUITY_INVEST", "OTHER_EQUITY_INVEST", "INVEST_REALESTATE",
+        ],
+        # 保留旧键供兼容读取；语义见上方分档注释。
         "marketable": ["TRADE_FINASSET"],
         "nonoperating": [
             "LONG_EQUITY_INVEST", "OTHER_EQUITY_INVEST",
@@ -364,7 +436,15 @@ _FCFF_BRIDGE_CODES = {
     },
     "HK": {
         # 受限制存款（004002009）显式不纳入，避免把不可自由支配的现金加回。
-        "cash": ["MONETARYFUNDS", "SHORT_TERM_DEPOSIT"],
+        "cash": ["MONETARYFUNDS"],
+        "deposit": ["SHORT_TERM_DEPOSIT", "TERM_DEPOSIT"],
+        "fair_value": [
+            "TRADE_FINASSET", "NONCURRENT_FINASSET",
+            "OTHER_CURRENT_FINASSET", "OTHER_NONCURRENT_FINASSET",
+        ],
+        "equity": [
+            "LONG_EQUITY_INVEST", "JOINT_VENTURE_INVEST", "INVEST_REALESTATE",
+        ],
         "marketable": ["TRADE_FINASSET", "TERM_DEPOSIT"],
         "nonoperating": [
             "LONG_EQUITY_INVEST", "JOINT_VENTURE_INVEST",
@@ -379,13 +459,24 @@ _FCFF_BRIDGE_CODES = {
 }
 
 
+def _sum_or_zero(value: float | None) -> float:
+    return float(value) if value is not None else 0.0
+
+
 def _fcff_inputs(
     symbol: str,
     statement_items: list[StatementItem],
     financials: list[FinancialReport],
     fcf_components: dict[str, float | None],
+    extracted: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """为 FCFF/WACC 模型取桥接科目，缺项返回 None 并在 note 中说明。"""
+    """为 FCFF/WACC 模型取桥接科目，缺项返回 None 并在 note 中说明。
+
+    非经营资产按三档返回：fair_value_assets（公允价值类金融资产）、equity_assets
+    （权益类投资）按配置折价；deposit_assets（存款/理财）并入现金、按面值加回。
+    extracted 为财报原文抽取的补充口径，仅在该档标准数据整体缺失时回退，
+    并在 note 中标注报告期与来源，避免与东财标准科目重复加回。
+    """
     code, market = parse_symbol(symbol)
     codes = _FCFF_BRIDGE_CODES["HK" if market == Market.HK else "A"]
 
@@ -423,13 +514,63 @@ def _fcff_inputs(
              if item_value(income, c) is not None),
             None,
         )
-    result: dict[str, float | None] = {
+    # 现金 = 货币资金 + 短期/中长期存款理财，按面值全额加回（不打折）。
+    cash = summed(balance, codes["cash"])
+    deposit = summed(balance, codes["deposit"])
+    cash_with_deposit = (
+        None if cash is None and deposit is None else _sum_or_zero(cash) + _sum_or_zero(deposit)
+    )
+    fair_value = summed(balance, codes["fair_value"])
+    equity = summed(balance, codes["equity"])
+
+    # 标准口径优先；只有整档缺失才回退到原文抽取值，避免与东财科目重复加回。
+    # 期间必须与标准资产负债表一致：禁止拿 2026H1 原文数字补 2025FY 桥接。
+    extracted_all = extracted or {}
+    mismatched_periods = sorted({
+        str(value.get("report_date") or "") for value in extracted_all.values()
+        if value.get("report_date") != balance_date
+    }) if balance_date else []
+    extracted = {
+        key: value for key, value in extracted_all.items()
+        if not balance_date or value.get("report_date") == balance_date
+    }
+    extracted_sources: dict[str, str] = {}
+    if mismatched_periods:
+        extracted_sources["期间提示"] = (
+            f"财报原文抽取报告期 {'、'.join(mismatched_periods)} 与桥接基准 {balance_date} 不一致，未回退"
+        )
+
+    def with_extracted_fallback(bridge_key: str, label: str, standard: float | None) -> float | None:
+        if standard is not None:
+            return standard
+        value = bridge_value_from_extracted(extracted, bridge_key)
+        source = latest_extracted_for_bridge(extracted, bridge_key)
+        if value is None or source is None:
+            return None
+        extracted_sources[label] = (
+            f"{label}改取财报原文抽取值（{source['report_date']}，{source['source_doc']}）"
+        )
+        return value
+
+    fair_value = with_extracted_fallback("fair_value", "公允价值类金融资产", fair_value)
+    equity = with_extracted_fallback("equity", "权益类投资", equity)
+    deposit = with_extracted_fallback("deposit", "存款理财", deposit)
+    # 存款回退后须重算现金合计，否则超额现金仍按旧口径计算。
+    cash_with_deposit = (
+        None if cash is None and deposit is None else _sum_or_zero(cash) + _sum_or_zero(deposit)
+    )
+    result: dict[str, Any] = {
         "ocf": fcf_components.get("ocf"),
         "capex": fcf_components.get("capex"),
         "interest_expense": interest,
-        "cash": summed(balance, codes["cash"]),
-        "marketable_securities": summed(balance, codes["marketable"]),
-        "nonoperating_invest": summed(balance, codes["nonoperating"]),
+        "cash": cash_with_deposit,
+        "cash_pure": cash,
+        "deposit_assets": deposit,
+        "fair_value_assets": fair_value,
+        "equity_assets": equity,
+        # 兼容旧键：公允价值与权益类合并为旧「非经营投资」，供叙述/校准沿用。
+        "marketable_securities": fair_value,
+        "nonoperating_invest": equity,
         "debt": summed(balance, codes["debt"]),
         "minority_equity": item_value(balance, "MINORITY_EQUITY"),
         "revenue": revenue,
@@ -440,16 +581,29 @@ def _fcff_inputs(
         ("有息负债", result["debt"]), ("少数股东权益", result["minority_equity"]),
         ("营业收入", revenue),
     ) if value is None]
+    settings = load_settings()
+    fv_disc = float(settings.get("valuation.bridge_discounts.fair_value", 0.8))
+    eq_disc = float(settings.get("valuation.bridge_discounts.equity_invest", 0.8))
+    cash_ratio = float(settings.get("valuation.excess_cash_ratio.default", 0.02))
+    result["fair_value_discount"] = fv_disc
+    result["equity_discount"] = eq_disc
+    result["excess_cash_ratio"] = cash_ratio
     note = (
-        f"FCFF 桥接取 {balance_date or '最新'} 年报资产负债表：有息负债、货币资金、"
-        "类现金金融资产、非经营投资、少数股东权益；超额现金按营业收入的 2% 留足经营周转，"
-        "非经营投资按 8 折计入"
+        f"FCFF 桥接取 {balance_date or '最新'} 年报资产负债表：有息负债、货币资金及存款理财、"
+        f"公允价值类金融资产、权益类投资、少数股东权益；超额现金按营业收入的 {cash_ratio:.0%} 留足经营周转，"
+        f"公允价值类按 {fv_disc:.0%}、权益类按 {eq_disc:.0%} 计入，存款与理财按面值全额加回"
     )
     if market == Market.HK:
-        note += "；港股现金含短期存款、不含受限制存款，非经营投资含联营/合营与指定金融资产"
+        note += "；港股现金含短期存款、不含受限制存款；金融资产含指定公允价值与非流动其他金融资产，权益类含联营/合营与投资物业"
+    if extracted_sources:
+        note += "；" + "；".join(extracted_sources.values())
     if missing:
         note += "；未取到：" + "、".join(missing) + "（按 0 桥接，可在计算器补填）"
+    cf_note = fcf_components.get("note") or ""
+    if "回退库内" in cf_note:
+        note += "；经营现金流已回退库内年报口径（港股原文未披露季度自由现金流句式）"
     result["note"] = note
+    result["extracted_sources"] = extracted_sources
     return result
 
 
@@ -626,6 +780,8 @@ def analyze_stock(
         snapshot = _load_snapshot(conn, stock_id)
         integrity = _load_integrity(conn, stock_id)
         statement_items = _load_statement_items(conn, stock_id)
+        # 财报原文抽取的补充口径：标准桥接科目缺失时按报告期回退（见 _fcff_inputs）。
+        extracted_bridge = latest_extracted_values(conn, stock_id)
 
         latest = financials[-1] if financials else None
         price = snapshot.price if snapshot else None
@@ -650,7 +806,7 @@ def analyze_stock(
         ret = returns_mod.compute_return(
             kline, dividends, (date.today() - timedelta(days=365 * 5)).isoformat(), date.today().isoformat()
         )
-        fcf_components = _resolve_fcf_components(symbol, statement_items)
+        fcf_components = _resolve_fcf_components(symbol, statement_items, extracted=extracted_bridge)
         fcf_value = fcf_components["fcf"]
         # 「现金流折现」用未扣资本开支/利息的经营活动现金流净额作为期初；
         # 「自由现金流折现」才按标准 FCF（OCF−资本开支+利息收入−利息支出）。
@@ -676,7 +832,20 @@ def analyze_stock(
         dcf_p = (params or {}).get("dcf") or {}
         acf_p = (params or {}).get("adjusted_fcf") or (params or {}).get("dcf") or {}
         fcff_p = (params or {}).get("fcff") or (params or {}).get("dcf") or {}
-        fcff_inputs = _fcff_inputs(symbol, statement_items, financials, fcf_components)
+        fcff_inputs = _fcff_inputs(symbol, statement_items, financials, fcf_components, extracted=extracted_bridge)
+        # 桥接三参数：优先用 LLM 校准值（按公司资产质量定），无校准则沿用 _fcff_inputs 的配置默认。
+        # 校准链路与这里同源，避免「上方卡片」与「校准重算」出现两套折价。
+        fv_disc = _as_float(fcff_p.get("fair_value_discount"), fcff_inputs["fair_value_discount"])
+        eq_disc = _as_float(fcff_p.get("equity_discount"), fcff_inputs["equity_discount"])
+        cash_ratio = _as_float(fcff_p.get("excess_cash_ratio"), fcff_inputs["excess_cash_ratio"])
+        if any(fcff_p.get(k) is not None for k in ("fair_value_discount", "equity_discount", "excess_cash_ratio")):
+            note = fcff_inputs["note"]
+            note = note.replace(
+                f"公允价值类按 {fcff_inputs['fair_value_discount']:.0%}、权益类按 {fcff_inputs['equity_discount']:.0%} 计入",
+                f"公允价值类按 {fv_disc:.0%}、权益类按 {eq_disc:.0%} 计入（LLM 按资产质量校准）",
+            )
+            note = note.replace("按营业收入的 2% 留足经营周转", f"按营业收入的 {cash_ratio:.0%} 留足经营周转")
+            fcff_inputs["note"] = note
         # 无风险利率锚点：A股取中国10Y国债、其它取美国10Y国债，作为 WACC 下限。
         # 复用已打开的 conn，避免重复开库；缺数据时返回 missing=True，不施加下限。
         rf_anchor = resolve_risk_free(symbol, conn)
@@ -702,6 +871,7 @@ def analyze_stock(
                 capex=fcf_components["capex"],
                 interest_income=fcf_components["interest_income"],
                 interest_expense=fcf_components["interest_expense"],
+                interest_income_disclosed=fcf_components.get("interest_income_disclosed"),
                 shares=shares,
                 current_price=price,
                 growth=_as_float(acf_p.get("growth"), 0.04),
@@ -720,8 +890,11 @@ def analyze_stock(
                 interest_expense=fcff_inputs["interest_expense"],
                 capex=fcff_inputs["capex"],
                 cash=fcff_inputs["cash"],
-                marketable_securities=fcff_inputs["marketable_securities"],
-                nonoperating_invest=fcff_inputs["nonoperating_invest"],
+                fair_value_assets=fcff_inputs["fair_value_assets"],
+                equity_assets=fcff_inputs["equity_assets"],
+                fair_value_discount=fv_disc,
+                equity_discount=eq_disc,
+                excess_cash_ratio=cash_ratio,
                 debt=fcff_inputs["debt"],
                 minority_equity=fcff_inputs["minority_equity"],
                 revenue=fcff_inputs["revenue"],
@@ -757,6 +930,7 @@ def analyze_stock(
                     "ocf": fcf_components["ocf"],
                     "capex": fcf_components["capex"],
                     "interest_income": fcf_components["interest_income"],
+                    "interest_income_disclosed": fcf_components.get("interest_income_disclosed"),
                     "interest_expense": fcf_components["interest_expense"],
                     "fcf": fcf_value,
                 }

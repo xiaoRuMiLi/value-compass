@@ -29,9 +29,9 @@ def _num(value: float | None) -> float:
 
 
 _BRIDGE_LABELS = {
-    "cash": "货币资金",
-    "marketable_securities": "交易性金融资产/存款",
-    "nonoperating_invest": "非经营投资",
+    "cash": "货币资金/存款",
+    "marketable_securities": "公允价值类金融资产",
+    "nonoperating_invest": "权益类投资",
     "debt": "有息负债",
     "minority_equity": "少数股东权益",
     "revenue": "营业收入",
@@ -48,6 +48,8 @@ def evaluate_fcff(
     cash: float | None = None,
     marketable_securities: float | None = None,
     nonoperating_invest: float | None = None,
+    fair_value_assets: float | None = None,
+    equity_assets: float | None = None,
     debt: float | None = None,
     minority_equity: float | None = None,
     revenue: float | None = None,
@@ -57,6 +59,8 @@ def evaluate_fcff(
     years: int = 10,
     excess_cash_ratio: float = 0.02,
     nonoperating_discount: float = 0.8,
+    fair_value_discount: float = 0.8,
+    equity_discount: float = 0.8,
     component_note: str | None = None,
     risk_free: dict[str, Any] | None = None,
 ) -> ValuationResult:
@@ -64,6 +68,13 @@ def evaluate_fcff(
 
     折现率由 LLM 校准，但不得低于「Rf + 最低风险溢价」的市场锚点下限；
     下限只是约束，不以此反推 WACC，也不改变 LLM 给出的更高取值。
+
+    非经营资产按类别分档计入股权价值（折价均为建模假设，由配置注入）：
+    - fair_value_assets（公允价值类金融资产）按 fair_value_discount；
+    - equity_assets（权益类投资）按 equity_discount；
+    - 现金及存款/理财并入 cash，走超额现金、不打折。
+    旧参数 marketable_securities / nonoperating_invest 仍兼容：前者归入公允价值档，
+    后者归入权益档；新参数显式传入时覆盖旧值。
     """
     rf_floor = (risk_free or {}).get("discount_floor")
     llm_discount = discount
@@ -90,9 +101,27 @@ def evaluate_fcff(
     terminal_pv = terminal / (1.0 + discount) ** years
     enterprise_value = pv + terminal_pv
 
+    # 分档桥接：新参数优先，缺省回落到旧参数（保持旧调用方兼容）。
+    fv_raw = fair_value_assets if fair_value_assets is not None else marketable_securities
+    eq_raw = equity_assets if equity_assets is not None else nonoperating_invest
+
+    def _haircut(rate: float) -> float:
+        return max(0.0, min(1.0, float(rate)))
+
+    # 旧调用只传 nonoperating_invest + nonoperating_discount 时，用旧折扣覆盖两档，
+    # 使历史测试与校准行为完全一致。
+    if fair_value_assets is None and equity_assets is None and nonoperating_invest is not None:
+        fv_discount = eq_discount = nonoperating_discount
+    else:
+        fv_discount = fair_value_discount
+        eq_discount = equity_discount
+
     min_operating_cash = _num(revenue) * max(0.0, float(excess_cash_ratio))
-    excess_cash = max(0.0, _num(cash) - min_operating_cash) + _num(marketable_securities)
-    discounted_nonop = _num(nonoperating_invest) * max(0.0, min(1.0, float(nonoperating_discount)))
+    # 现金、短期/中长期存款按面值全额加回，不打折。
+    excess_cash = max(0.0, _num(cash) - min_operating_cash)
+    fv_discounted = _num(fv_raw) * _haircut(fv_discount)
+    eq_discounted = _num(eq_raw) * _haircut(eq_discount)
+    discounted_nonop = fv_discounted + eq_discounted
     equity_value = (
         enterprise_value
         - _num(debt)
@@ -104,10 +133,12 @@ def evaluate_fcff(
         return ValuationResult(method=method)
 
     fair_value = equity_value / shares
+    # 缺失提示按「实际参与桥接的取值」判断：校准重算只传新键，
+    # 旧键（marketable_securities / nonoperating_invest）为空属正常，不应误报。
     supplied = {
         "cash": cash,
-        "marketable_securities": marketable_securities,
-        "nonoperating_invest": nonoperating_invest,
+        "marketable_securities": fv_raw,
+        "nonoperating_invest": eq_raw,
         "debt": debt,
         "minority_equity": minority_equity,
         "revenue": revenue,
@@ -119,20 +150,31 @@ def evaluate_fcff(
             "按 WACC 两阶段折现得企业价值 EV，再桥接股权价值；区间取 ±20%"
         ),
         "bridge_formula": (
-            "股权价值 = EV − 有息负债 + 超额现金 + 非经营投资(折价) − 少数股东权益"
+            "股权价值 = EV − 有息负债 + 超额现金 + 公允价值类资产×折价 + 权益类资产×折价 − 少数股东权益"
         ),
         "growth": growth,
         "discount": discount,
         "terminal_growth": terminal_growth,
         "years": years,
         "excess_cash_rule": (
-            f"超额现金 = 货币资金 + 交易性金融资产/存款 − 营业收入×{excess_cash_ratio:.1%}"
-            "（经营所需最低现金）；受限制资金不计入"
+            f"超额现金 = 货币资金 + 短期/中长期存款与理财 − 营业收入×{excess_cash_ratio:.1%}"
+            "（经营所需最低现金）；存款与理财按面值加回、不打折；受限制资金不计入"
         ),
         "nonoperating_discount": nonoperating_discount,
+        "fair_value_discount": fv_discount,
+        "equity_discount": eq_discount,
+        "excess_cash_ratio": max(0.0, float(excess_cash_ratio)),
+        "bridge_discount_note": (
+            "公允价值类金融资产按 %.0f%%、权益类投资按 %.0f%% 计入；"
+            "现金与短期/中长期存款理财按面值全额计入"
+            % (fv_discount * 100, eq_discount * 100)
+        ),
     }
     if missing:
-        assumptions["missing_bridge"] = "、".join(missing) + " 本期未单独披露或为 0，按 0 桥接；如财报列示该类资产，可在计算器中补填"
+        assumptions["missing_bridge"] = (
+            "、".join(missing) + " 本期未取到对应科目数据，按 0 桥接；"
+            "如财报列示该类资产，可在计算器中补填"
+        )
     if component_note:
         assumptions["component_note"] = component_note
     if risk_free:
@@ -153,6 +195,10 @@ def evaluate_fcff(
         "cash": cash,
         "marketable_securities": marketable_securities,
         "nonoperating_invest": nonoperating_invest,
+        "fair_value_assets": fv_raw,
+        "equity_assets": eq_raw,
+        "fair_value_discounted": fv_discounted,
+        "equity_discounted": eq_discounted,
         "debt": debt,
         "minority_equity": minority_equity,
         "revenue": revenue,
