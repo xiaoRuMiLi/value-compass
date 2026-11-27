@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>value-compass · 财务全景</title>
   <link rel="stylesheet" href="/static/css/base.css?v=20261125f">
-  <link rel="stylesheet" href="/static/css/financials.css?v=20261125j">
+  <link rel="stylesheet" href="/static/css/financials.css?v=20261127l">
   <script src="/static/js/api.js?v=20261125j"></script>
   <script src="/static/js/common.js?v=20261125j"></script>
   <script src="/static/js/nav.js?v=20261125f" defer></script>
@@ -13,7 +13,7 @@
 <body>
   <main>
     <section class="panel">
-      <h2>主要指标 <span class="fx-section-extra">上方 K 线取报告期末交易日 · 下方柱形为对应报告期数值</span></h2>
+      <h2>主要指标 <span class="fx-section-extra">上方 K 线与下方柱形按同一财报周期对齐：如 2026Q3 = 7/1~9/30 整段行情 · 柱形为单季数值</span></h2>
       <div class="fx-toolbar">
         <div class="fx-switch" id="freqSwitch">
           <button class="active" data-freq="quarter">单季财报</button>
@@ -27,8 +27,12 @@
     </section>
 
     <section class="panel">
-      <h2>三大报表 <span class="fx-section-extra">与上方同频率 · 可切换科目</span></h2>
+      <h2>三大报表 <span class="fx-section-extra">可切换单季 / 年报与科目 · 与上方主要指标同频率</span></h2>
       <div class="fx-toolbar">
+        <div class="fx-switch" id="stmtFreqSwitch">
+          <button class="active" data-freq="quarter">单季财报</button>
+          <button data-freq="annual">只看年报</button>
+        </div>
         <div class="tabs" id="stmtTabs">
           <button class="tab active" data-type="income">利润表</button>
           <button class="tab" data-type="balance">资产负债表</button>
@@ -40,6 +44,44 @@
       </div>
       <div id="statementChart" class="chart chart-mid"></div>
       <div class="scroll" id="statementTable"></div>
+    </section>
+
+    <section class="panel" id="balancePanel">
+      <h2>资产负债表拆解 <span class="fx-section-extra">按财报周期逐项拆解 · 金额、占比、同比由代码计算</span></h2>
+      <div class="fx-toolbar">
+        <span class="fx-hint" id="balanceMeta"></span>
+        <button class="fx-btn" id="refreshBalanceNarrative">重新解读</button>
+      </div>
+      <div class="fx-balance-grid">
+        <div class="fx-balance-card">
+          <h3>投资资产构成 <span id="investTotal"></span></h3>
+          <div id="investPie" class="chart chart-mid"></div>
+        </div>
+        <div class="fx-balance-card">
+          <h3>资产 / 负债 / 权益总览（亿元）</h3>
+          <div id="balanceTotals" class="chart chart-mid"></div>
+        </div>
+      </div>
+      <h3 class="fx-sub">投资资产明细（占比以总资产为分母）</h3>
+      <div class="scroll"><table id="investTable"></table></div>
+      <h3 class="fx-sub">科目分组明细（流动 / 非流动 / 权益）</h3>
+      <div id="balanceSections" class="fx-balance-sections"></div>
+      <h3 class="fx-sub">历史自由现金流 vs 经营现金流（亿元）· 叠加期末股价（右轴）</h3>
+      <div class="fx-toolbar">
+        <div class="fx-switch" id="fcfFreqSwitch">
+          <button class="active" data-freq="quarter">按单季</button>
+          <button data-freq="year">按年度</button>
+        </div>
+        <span class="fx-hint" id="fcfHint"></span>
+      </div>
+      <div id="fcfChart" class="chart chart-mid"></div>
+      <div class="fx-note" id="fcfNote"></div>
+      <h3 class="fx-sub">LLM 分组解读</h3>
+      <div class="fx-narrative" id="balanceNarrative">解读生成中…</div>
+      <details class="fx-evidence">
+        <summary>联营 / 合营公司财报原文摘录（点击展开）</summary>
+        <div id="associateEvidence"></div>
+      </details>
     </section>
 
     <section class="panel">
@@ -69,7 +111,61 @@
       <div class="scroll"><table id="holderCount"></table></div>
     </section>
   </main>
+
+  <!-- 科目分组明细：点击迷你走势后放大的弹出层 -->
+  <div class="fx-modal" id="detailModal" hidden>
+    <div class="fx-modal-backdrop" data-close-detail></div>
+    <div class="fx-modal-dialog" role="dialog" aria-modal="true" aria-label="科目明细大图">
+      <div class="fx-modal-header">
+        <div>
+          <h3 id="detailTitle">科目明细</h3>
+          <span class="fx-hint" id="detailMeta"></span>
+        </div>
+        <button class="fx-modal-close" data-close-detail aria-label="关闭">×</button>
+      </div>
+      <div class="fx-toolbar">
+        <div class="fx-switch" id="detailFreqSwitch">
+          <button class="active" data-freq="quarter">按单季</button>
+          <button data-freq="year">按年度</button>
+        </div>
+        <button class="fx-btn" id="detailOverlayBtn">叠加其他科目（最多 3 项）</button>
+        <span class="fx-hint" id="detailHint"></span>
+      </div>
+      <div class="fx-overlay-panel" id="detailOverlayPanel" hidden>
+        <div class="fx-overlay-title">选择要叠加的科目（已选 <span id="detailOverlayCount">0</span>/3）</div>
+        <div class="fx-overlay-list" id="detailOverlayList"></div>
+        <button class="fx-btn" id="detailOverlayClear">清空叠加</button>
+      </div>
+      <div id="detailChart" class="chart"></div>
+      <div class="fx-note">上方为报告期股价 K 线（开=期初首日、收=期末末日、高低取区间极值）；下方为科目账面金额柱状图。年度口径的时点值取当年最后一个已披露报告期，不做累加。点击柱子可查看该期指标的财报解释。</div>
+    </div>
+  </div>
+
+  <!-- 单期指标解释：点击主要指标 / 三大报表 / 科目大图的柱子触发 -->
+  <div class="fx-modal" id="explainModal" hidden>
+    <div class="fx-modal-backdrop" data-close-explain></div>
+    <div class="fx-modal-dialog fx-explain-dialog" role="dialog" aria-modal="true" aria-label="单期指标解释">
+      <div class="fx-modal-header">
+        <div>
+          <h3 id="explainTitle">指标解释</h3>
+          <span class="fx-hint" id="explainMeta"></span>
+        </div>
+        <button class="fx-modal-close" data-close-explain aria-label="关闭">×</button>
+      </div>
+      <div class="fx-explain-facts" id="explainFacts"></div>
+      <div class="fx-toolbar">
+        <button class="fx-btn" id="explainGenerate">生成解释（读取当期财报原文）</button>
+        <button class="fx-btn" id="explainRefresh">重新生成</button>
+        <span class="fx-hint" id="explainStatus"></span>
+      </div>
+      <div class="fx-narrative" id="explainText">点击「生成解释」后，系统会先让模型确定检索词、读取对应报告期财报原文，再生成解释。</div>
+      <details class="fx-evidence" id="explainEvidenceBox" hidden>
+        <summary>财报原文证据（点击展开，供人工核对）</summary>
+        <div id="explainEvidence"></div>
+      </details>
+    </div>
+  </div>
   <script src="/static/js/vendor/echarts.min.js"></script>
-  <script src="/static/js/financials.js?v=20261125j"></script>
+  <script src="/static/js/financials.js?v=20261127l"></script>
 </body>
 </html>

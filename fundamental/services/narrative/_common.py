@@ -89,6 +89,10 @@ def _financial_trend_cache_path(symbol: str) -> Path:
     return _cache_dir() / f"financial_trend_{symbol}.json"
 
 
+def _balance_breakdown_cache_path(symbol: str) -> Path:
+    return _cache_dir() / f"balance_breakdown_{symbol}.json"
+
+
 def _read_cache(path: Path, ttl_days: float) -> dict[str, Any] | None:
     if not path.exists():
         return None

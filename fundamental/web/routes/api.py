@@ -14,11 +14,15 @@ from fundamental.services.analyze import (
     screen_stocks,
 )
 from fundamental.services import document_reader, report_facts
+from fundamental.services.balance_breakdown import build_balance_view
 from fundamental.services.financial_dashboard import build_financial_dashboard
 from fundamental.services.narrative import (
+    generate_balance_breakdown_narrative,
     generate_financial_forensics,
     generate_financial_trend_narrative,
     generate_masters_narrative,
+    generate_metric_explanation,
+    list_cached_explanations,
     generate_overview_narrative,
     generate_score_narrative,
     generate_valuation_narrative,
@@ -150,6 +154,52 @@ def get_financial_dashboard(symbol: str, frequency: str = "quarter") -> dict[str
 
     try:
         return build_financial_dashboard(symbol, frequency)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/stock/{symbol}/balance-breakdown")
+def get_balance_breakdown(symbol: str) -> dict[str, Any]:
+    """资产负债表拆解：科目分组、占比/同比、投资资产归类、历史 FCF。"""
+    try:
+        return build_balance_view(symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/stock/{symbol}/balance-narrative")
+def get_balance_narrative(symbol: str, refresh: bool = False) -> dict[str, Any]:
+    """资产负债表分组解读：LLM 写文字，数字由代码算。"""
+    return generate_balance_breakdown_narrative(symbol, refresh=refresh)
+
+
+@router.get("/stock/{symbol}/metric-explanation-index")
+def get_metric_explanation_index(symbol: str) -> dict[str, Any]:
+    """图表悬停用：一次取回该标的全部已缓存解释的摘要。"""
+    return {"items": list_cached_explanations(symbol)}
+
+
+@router.get("/stock/{symbol}/metric-explanation")
+def get_metric_explanation(
+    symbol: str,
+    period: str,
+    keys: str,
+    scope: str = "primary",
+    stmt_type: str = "income",
+    refresh: bool = False,
+    cached_only: bool = False,
+) -> dict[str, Any]:
+    """单期指标解释：代码重建 facts，agent 检索财报原文并解释，按钮触发。"""
+    try:
+        return generate_metric_explanation(
+            symbol,
+            period,
+            scope,
+            [key for key in keys.split(",") if key.strip()],
+            stmt_type=stmt_type,
+            refresh=refresh,
+            cached_only=cached_only,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

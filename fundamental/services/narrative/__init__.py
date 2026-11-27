@@ -7,18 +7,23 @@ _overview / _score / _valuation / _masters / _valuation_params / _forensics
 
 from __future__ import annotations
 
+from ._balance_breakdown import generate_balance_breakdown_narrative
 from ._financial_trend import generate_financial_trend_narrative
 from ._forensics import generate_financial_forensics
 from ._masters import generate_masters_narrative
+from ._metric_explanation import generate_metric_explanation, list_cached_explanations
 from ._overview import generate_overview_narrative
 from ._score import generate_score_narrative
 from ._valuation import generate_valuation_narrative
 from ._valuation_params import generate_valuation_params
 
 __all__ = [
+    "generate_balance_breakdown_narrative",
     "generate_financial_trend_narrative",
     "generate_financial_forensics",
     "generate_masters_narrative",
+    "generate_metric_explanation",
+    "list_cached_explanations",
     "generate_overview_narrative",
     "generate_score_narrative",
     "generate_valuation_narrative",

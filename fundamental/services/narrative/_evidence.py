@@ -214,12 +214,31 @@ def _slice_explanations(text: str) -> list[str]:
     return out
 
 
-def _score_paragraph(paragraph: str, terms: tuple[str, ...]) -> int:
+# 动态检索词里的通用词：只命中它们通常说明段落并未真正解释目标指标
+_GENERIC_TERMS: frozenset[str] = frozenset(
+    {
+        "变动原因", "主要原因", "主要是", "管理层讨论与分析", "经营情况讨论与分析",
+        "主要由於", "主要是由于", "主要反映", "管理層討論與分析", "主要原因",
+        "同比增長", "同比下降", "营业收入", "净利润", "歸母淨利潤", "归母净利润",
+    }
+)
+
+# 报告期季度标记：用于把「第三季」的解释与「第一季/全年」的段落区分开
+_QUARTER_MARKERS: dict[int, tuple[str, ...]] = {
+    1: ("第一季", "一季度", "首季", "三月三十一日", "止三個月"),
+    2: ("第二季", "二季度", "中期", "上半年", "半年度", "六月三十日"),
+    3: ("第三季", "三季度", "九月三十日", "止九個月", "前九個月"),
+    4: ("第四季", "四季度", "全年", "年度", "十二月三十一日", "全年業績"),
+}
+
+
+def _score_paragraph(
+    paragraph: str, terms: tuple[str, ...], target_quarter: int | None = None
+) -> int:
     """命中关键词数 + 黄金段落标记加权；精准的「变动原因说明」短句优先。
 
-    大表格段落会命中很多关键词从而得分虚高，但它往往在截断后才出现原因说明。
-    单条/少条的「XX变动原因说明：主要是……」才是公司最有价值的官方解释，
-    因此给这类短句额外加权，确保它能进入 max_per_signal 的展示名额。
+    指标解释场景下额外按目标报告期打分：同季度的段落优先，含具体指标名称的
+    段落优先；只命中「主要由於」等通用词、且明显属于其他季度的段落降权。
     """
     # 长段落关键词命中数天然虚高，封顶后让短解释句有机会胜出
     score = min(sum(1 for term in terms if term in paragraph), 6)
@@ -231,37 +250,192 @@ def _score_paragraph(paragraph: str, terms: tuple[str, ...]) -> int:
         marker in paragraph for marker in ("該下降主要由於", "主要由於", "主要反映")
     ):
         score += 8
+
+    if target_quarter:
+        markers = _QUARTER_MARKERS.get(target_quarter, ())
+        if any(marker in paragraph for marker in markers):
+            score += 2
+        else:
+            other = [
+                marker
+                for quarter, words in _QUARTER_MARKERS.items()
+                if quarter != target_quarter
+                for marker in words
+                if marker in paragraph
+            ]
+            if other:
+                score -= 6
+    specific = [term for term in terms if term not in _GENERIC_TERMS]
+    if specific:
+        hits = sum(1 for term in specific if term in paragraph)
+        score += min(hits, 4) * 3
+        if hits == 0:
+            score -= 3
     return score
 
 
+_DOC_QUARTER: dict[str, int] = {
+    "q1_report": 1, "q3_report": 3, "semi_report": 2, "annual_report": 4,
+}
+
+
+def _doc_period_key(doc: dict[str, Any]) -> tuple[int | None, int | None]:
+    """从 documents 元数据推断 (年份, 季度)。
+
+    港股披露易归档的 period 字段常常只有年份（如 2022），具体期次要靠 doc_type
+    与公告标题区分；否则 2022Q3 的解释会误用 Q1 或全年业绩公告的段落。
+    """
+    match = re.match(r"(20\d{2})", str(doc.get("period") or ""))
+    year = int(match.group(1)) if match else None
+    quarter = _DOC_QUARTER.get(str(doc.get("doc_type") or ""))
+    if quarter is None:
+        title = str(doc.get("title") or "")
+        if "九月三十日" in title or "第三季" in title or "三季度" in title:
+            quarter = 3
+        elif "三月三十一日" in title or "第一季度" in title or "一季度" in title:
+            quarter = 1
+        elif "中期" in title or "六月三十日" in title or "半年度" in title:
+            quarter = 2
+        elif "十二月三十一日" in title or "年度" in title or "全年" in title:
+            quarter = 4
+    return year, quarter
+
+
+def _target_period_key(period: str | None) -> tuple[int | None, int | None]:
+    """从指标解释传入的报告期标签解析 (年份, 季度)。"""
+    text = str(period or "")
+    match = re.search(r"(20\d{2})", text)
+    year = int(match.group(1)) if match else None
+    quarter_match = re.search(r"Q([1-4])", text, flags=re.IGNORECASE)
+    quarter = int(quarter_match.group(1)) if quarter_match else None
+    if quarter is None:
+        if re.fullmatch(r"20\d{2}年", text) or any(
+            marker in text for marker in ("年报", "年度报告", "年度", "全年")
+        ):
+            quarter = 4
+        elif "三季" in text or "九月" in text:
+            quarter = 3
+        elif "中期" in text or "半年" in text or "六月" in text:
+            quarter = 2
+        elif "一季" in text or "三月" in text:
+            quarter = 1
+        else:
+            month = re.search(r"-(\d{2})-\d{2}", text)
+            if month:
+                quarter = (int(month.group(1)) - 1) // 3 + 1
+    return year, quarter
+
+
 def _pick_documents(
-    docs: list[dict[str, Any]], year: str | None
+    docs: list[dict[str, Any]], year: str | None, period: str | None = None
 ) -> list[dict[str, Any]]:
-    """选与报告期同年的财报；没有则退回最近的两年（年报优先）。"""
+    """选与报告期同年的财报；给出 period 时进一步匹配季度。
+
+    指标解释传 period（如 2022Q3）：优先且只用该季度公告，避免混入 Q1/年报的
+    原因说明。没有同季公告时才退回同年最近文档；风险点扫描只传 year，保留
+    原先「同年年报优先，取三份」的行为。
+    """
     if not docs:
         return []
     usable = [d for d in docs if _text_path(d)]
     if not usable:
         return []
 
-    def doc_year(d: dict[str, Any]) -> int:
-        try:
-            return int(str(d.get("period") or "0")[:4])
-        except ValueError:
-            return 0
+    if period:
+        target_year, target_quarter = _target_period_key(period)
+    else:
+        target_year, target_quarter = (int(year) if year and year.isdigit() else None), None
 
-    if year:
-        # 有报告期：按与目标的年份差排序，年报优先
-        usable.sort(key=lambda d: (abs(doc_year(d) - int(year)), 0 if d.get("doc_type") == "annual_report" else 1))
-        same = [d for d in usable if str(d.get("period")) == year]
+    keyed = [(doc, *_doc_period_key(doc)) for doc in usable]
+    if target_year is not None:
+        same = [row for row in keyed if row[1] == target_year]
+        if target_quarter is not None and same:
+            exact = [row for row in same if row[2] == target_quarter]
+            if exact:
+                return [row[0] for row in exact]
+            return [
+                row[0]
+                for row in sorted(same, key=lambda row: 0 if row[2] == 4 else 1)[:2]
+            ]
         if same:
-            # 同年的年报 + 季报都要（季报的「变动原因」表更细）
-            return same[:3]
-        return usable[:2]
+            return [
+                row[0]
+                for row in sorted(same, key=lambda row: 0 if row[2] == 4 else 1)[:3]
+            ]
+        keyed.sort(key=lambda row: (abs((row[1] or 0) - target_year), 0 if row[2] == 4 else 1))
+        return [row[0] for row in keyed[:2]]
 
     # 无报告期（如第三方/监管类信号）：取最近年份的年报，避免拿多年前的老解释
-    usable.sort(key=lambda d: (-doc_year(d), 0 if d.get("doc_type") == "annual_report" else 1))
-    return usable[:2]
+    keyed.sort(key=lambda row: (-(row[1] or 0), 0 if row[2] == 4 else 1))
+    return [row[0] for row in keyed[:2]]
+
+
+def retrieve_for_terms(
+    symbol: str,
+    terms: list[str],
+    period: str | None = None,
+    *,
+    db_path: Path | None = None,
+    max_snippets: int = 4,
+    max_chars: int = 420,
+) -> list[dict[str, str]]:
+    """按任意关键词检索该报告期的财报原文解释段落。
+
+    与 :func:`retrieve_evidence` 的区别：后者面向预设风险信号（title → 固定词表），
+    本函数面向调用方动态给出的关键词（如指标解释 agent 第一轮产出的检索词）。
+    文档选择 / 段落切片 / 评分全部复用同一套逻辑，保证口径一致；只检索、不判断。
+
+    返回 ``[{text, source, period, keywords}]``；未命中或无文档时返回空列表。
+    """
+    cleaned = [str(t).strip() for t in terms if str(t).strip()]
+    if not cleaned:
+        return []
+    terms_tuple = tuple(dict.fromkeys(cleaned))  # 去重且保序
+    try:
+        docs = _load_documents(symbol, db_path)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("指标解释原文检索加载文档失败 %s: %s", symbol, exc)
+        return []
+    target_year, target_quarter = _target_period_key(period)
+    year = str(target_year) if target_year else None
+
+    hits: list[tuple[int, str, str, str, str]] = []
+    for doc in _pick_documents(docs, year, period):
+        txt_path = _text_path(doc)
+        if txt_path is None:
+            continue
+        doc_year, doc_quarter = _doc_period_key(doc)
+        doc_period = str(doc.get("period") or "")
+        if re.fullmatch(r"20\d{2}", doc_period) and doc_quarter:
+            doc_period = f"{doc_period}Q{doc_quarter}" if doc_quarter != 4 else f"{doc_period}年报"
+        title = str(doc.get("title") or doc_period)
+        try:
+            raw = txt_path.read_text(encoding="utf-8", errors="ignore")
+            if is_garbled_text(raw):
+                _logger.warning("跳过 CID 乱码财报文本 %s", txt_path)
+                continue
+        except OSError as exc:
+            _logger.warning("读取财报文本失败 %s: %s", txt_path, exc)
+            continue
+        for para in _slice_sections(raw) + _slice_explanations(raw):
+            matched = [t for t in terms_tuple if t in para]
+            if not matched:
+                continue
+            score = _score_paragraph(para, terms_tuple, target_quarter)
+            hits.append((score, para[:max_chars], doc_period, title, ",".join(matched[:5])))
+
+    hits.sort(key=lambda item: -item[0])
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for _score, text, doc_period, title, matched in hits:
+        key = text[:80]
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({"text": text, "source": title, "period": doc_period, "keywords": matched})
+        if len(result) >= max_snippets:
+            break
+    return result
 
 
 def retrieve_evidence(

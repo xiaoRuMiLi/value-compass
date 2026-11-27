@@ -34,8 +34,9 @@ _logger = get_logger(__name__)
 # 自由现金流：季度财报固定句式。繁体为主，兼容简体。
 # 「第[一二三四]季的自由现金流为人民币X亿元」或「产生的自由现金流为人民币X亿元」
 _RE_FCF = re.compile(
-    r"(?:第[一二三四]季的自由現金流[為为]|產生的自由現金流[為为]|自由現金流[為为])"
-    r"\s*人民幣\s*([\d,]+)\s*億元",
+    r"(?:第[一二三四]季的自由現金流[為为]|產生的自由現金流[為为]"
+    r"|錄得(?P<neg>負)自由現金流|自由現金流[為为])"
+    r"\s*人民幣\s*(?P<fcf>[\d,]+)\s*億元",
     re.S,
 )
 # 「若剔除…我们的自由现金流为X亿元」是调整后口径，与标准季度口径不可加，
@@ -110,14 +111,17 @@ def _doc_quarter(doc_type: str, text: str) -> int | None:
     return None
 
 
-def extract_fcf_ttm(symbol: str) -> dict[str, Any]:
-    """抽取最近四个季度的自由现金流，汇总为 TTM（单位：亿元人民币）。
+def extract_fcf_ttm(symbol: str, all_quarters: bool = False) -> dict[str, Any]:
+    """抽取自由现金流；默认取最近四季汇总 TTM，all_quarters 时返回全部逐季。
 
+    all_quarters=True 供历史 FCF 落库用：不经 [-4:] 截断，返回归档原文中
+    全部可识别季度，每个季度带 report_date/report_type 便于按报告期入库。
     返回结构（纯 dict）：
     {
       "available": bool,
-      "fcf_ttm_yi": float | None,   # 最近四季自由现金流合计（亿元）
-      "quarters": [{"period","quarter","fcf_yi","quote","source"}],
+      "fcf_ttm_yi": float | None,   # 最近四季合计；all_quarters 时为 None
+      "quarters": [{"period","quarter","report_date","report_type",
+                    "fcf_yi","quote","source"}],
       "method": "公司财报原文披露的自由现金流口径",
       "note": "…",
       "reason": "…"  # 不可用时说明原因
@@ -157,10 +161,17 @@ def extract_fcf_ttm(symbol: str) -> dict[str, Any]:
         seen.add(key)
         quote_start = max(0, m.start() - 20)
         quote = re.sub(r"\s+", " ", text[quote_start:m.end() + 30]).strip()
+        quarter_end = {1: "-03-31", 2: "-06-30", 3: "-09-30", 4: "-12-31"}[q]
+        report_type = {1: "Q1", 2: "H1", 3: "Q3", 4: "FY"}[q]
+        fcf_value = _to_yi(m.group("fcf"))
+        if m.group("neg"):
+            fcf_value = -fcf_value
         quarters.append({
             "period": period,
             "quarter": q,
-            "fcf_yi": _to_yi(m.group(1)),
+            "report_date": period + quarter_end,
+            "report_type": report_type,
+            "fcf_yi": fcf_value,
             "quote": quote,
             "source": str(doc.get("title") or period),
         })
@@ -168,8 +179,22 @@ def extract_fcf_ttm(symbol: str) -> dict[str, Any]:
     if not quarters:
         return {**empty, "reason": "财报原文未找到自由现金流披露句式"}
 
-    # 按 (年, 季) 排序，取最近四个连续季度；缺季则最多取到手的数量并标注。
+    # 按 (年, 季) 排序
     quarters.sort(key=lambda x: (int(x["period"]), x["quarter"]))
+    if all_quarters:
+        note = (
+            "公司财报原文披露的单季自由现金流（经营现金流扣除资本开支、媒体内容及租赁负债等），"
+            f"从归档原文抽出 {len(quarters)} 个季度，按报告期落库，单位亿元人民币。"
+        )
+        return {
+            "available": True,
+            "fcf_ttm_yi": None,
+            "quarters": quarters,
+            "method": "公司财报原文披露的自由现金流口径",
+            "note": note,
+        }
+
+    # 默认模式：取最近四个连续季度汇总 TTM；缺季则最多取到手的数量并标注。
     recent = quarters[-4:]
     total = round(sum(q["fcf_yi"] for q in recent), 2)
     # 校验连续性：相邻季度应为 1→2→3→4→次年1

@@ -41,6 +41,24 @@ class FcfExtractionTests(unittest.TestCase):
         # 调整口径的 376 不应出现
         self.assertNotIn(376.0, values.values())
 
+    def test_extracts_negative_fcf_and_excludes_adjusted_positive(self) -> None:
+        """2026Q2/Q3 原文用「錄得負自由現金流」披露负数；「若剔除…轉正至」是调整口径不能取。"""
+        docs = [
+            _doc("2026", "semi_report",
+                 "二零二六年第二季，本集團錄得負自由現金流人民幣138 億元。"
+                 "若剔 除算力採購的預付款項，我們的自由現金流為人民幣376 億元。"),
+            _doc("2026", "q3_report",
+                 "二零二六年第三季，本集團錄得負自由現金流人民幣691 億元。"
+                 "若剔除算力採購的預付款，我們的自由現金流將轉正至人民幣169 億元。"),
+        ]
+        with mock.patch.object(hk, "_load_report_texts", return_value=docs):
+            result = hk.extract_fcf_ttm("00700.HK", all_quarters=True)
+        values = {q["report_date"]: q["fcf_yi"] for q in result["quarters"]}
+        self.assertEqual(values.get("2026-06-30"), -138.0)
+        self.assertEqual(values.get("2026-09-30"), -691.0)
+        self.assertNotIn(376.0, values.values())
+        self.assertNotIn(169.0, values.values())
+
     def test_no_text_returns_unavailable(self) -> None:
         with mock.patch.object(hk, "_load_report_texts", return_value=[]):
             result = hk.extract_fcf_ttm("00700.HK")

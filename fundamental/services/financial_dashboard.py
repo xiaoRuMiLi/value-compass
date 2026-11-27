@@ -5,54 +5,12 @@ web 层只透传本服务返回值；这里不产生投资结论，也不调用 
 
 from __future__ import annotations
 
-import bisect
-from datetime import date
 from typing import Any
 
 from fundamental.analysis.financial_metrics import build_dashboard
+from fundamental.analysis.kline_periods import align_kline_to_periods
 from fundamental.storage import db, repository
 from fundamental.utils.symbols import parse_symbol
-
-_PERIOD_MONTH_DAY = {
-    "Q1": "-03-31",
-    "Q2": "-06-30",
-    "Q3": "-09-30",
-    "Q4": "-12-31",
-    "年报": "-12-31",
-}
-
-
-def _period_end(label: str) -> date:
-    return date.fromisoformat(label[:4] + _PERIOD_MONTH_DAY.get(label[4:], "-12-31"))
-
-
-def _align_kline(rows: list[dict[str, Any]], labels: list[str]) -> list[dict[str, Any] | None]:
-    """每个报告期取期末或之后最近交易日的一根 K 线，与柱状图共用 x 轴。"""
-
-    dates = [str(row["trade_date"])[:10] for row in rows]
-    aligned: list[dict[str, Any] | None] = []
-    for label in labels:
-        end = _period_end(label)
-        index = bisect.bisect_left(dates, end.isoformat())
-        if index >= len(dates):
-            aligned.append(None)
-            continue
-        bar = rows[index]
-        trade_date = date.fromisoformat(dates[index])
-        # 假期顺延过多说明该期没有对应行情，不拿隔了几个月的K线硬凑。
-        if (trade_date - end).days > 30:
-            aligned.append(None)
-            continue
-        aligned.append(
-            {
-                "trade_date": dates[index],
-                "open": bar["open"],
-                "close": bar["close"],
-                "low": bar["low"],
-                "high": bar["high"],
-            }
-        )
-    return aligned
 
 
 def _hk_ttm_fcf(symbol: str, labels: list[str]) -> dict[str, float]:
@@ -121,7 +79,13 @@ def build_financial_dashboard(symbol: str, frequency: str = "quarter") -> dict[s
             if item["key"] == "fcf":
                 item["values"] = [fcf_by_period.get(label) for label in result["labels"]]
     result["symbol"] = symbol
-    result["kline"] = _align_kline(kline_rows, result["labels"])
+    # 每根 K 线按其财报周期（季度/年度）聚合区间内全部交易日，与柱状图口径一致
+    result["kline"] = align_kline_to_periods(kline_rows, result["labels"])
+    result["notes"].insert(
+        0,
+        "K 线按财报周期聚合：每根对应报告期整段行情（如 2026Q3 = 7/1~9/30），"
+        "开=期初首日、收=期末末日、高低取区间极值，与下方柱状图单季口径一致。",
+    )
     if not statement_rows:
         result["notes"].append(
             "当前标的的三大报表科目尚未入库，三大表与推导比率暂无数据；主要指标仍可查看。"

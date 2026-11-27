@@ -96,6 +96,14 @@ FIELDS: tuple[ExtractField, ...] = (
         ("利息收入", "收到的利息收入", "利息收入现金"),
         "fcf_interest_income",
     ),
+    # 历史自由现金流：财报原文披露的单季 FCF，按报告期落库供历史序列展示。
+    # bridge_key 用 fcf_ 前缀，避免被 EV→股权桥接当作资产加回。
+    ExtractField(
+        "FCF_DISCLOSED",
+        "单季自由现金流（财报披露口径）",
+        ("自由现金流为", "自由現金流為", "自由现金流", "自由現金流"),
+        "fcf_disclosed",
+    ),
 )
 FIELD_BY_CODE = {field.code: field for field in FIELDS}
 FCF_CASH_FIELDS = ("CAPEX_CASH_PAID", "INTEREST_EXPENSE_DETAIL", "INTEREST_INCOME_DETAIL")

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fundamental.utils import paths
 
-SCHEMA_VERSION = 7  # 6→7: extracted_financial_items（财报原文抽取口径，与标准表隔离）
+SCHEMA_VERSION = 8  # 7→8: metric_explanation_cache（单期指标解释缓存，供悬停提示复用）
 
 _EXTRACTED_FINANCIAL_DDL = """
 CREATE TABLE IF NOT EXISTS extracted_financial_items (
@@ -31,6 +31,25 @@ CREATE TABLE IF NOT EXISTS extracted_financial_items (
 );
 CREATE INDEX IF NOT EXISTS idx_extracted_financial_lookup
   ON extracted_financial_items(stock_id, field_code, report_date);
+"""
+
+_METRIC_EXPLANATION_CACHE_DDL = """
+CREATE TABLE IF NOT EXISTS metric_explanation_cache (
+  id INTEGER PRIMARY KEY,
+  cache_key TEXT NOT NULL UNIQUE,
+  symbol TEXT NOT NULL,
+  period TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  stmt_type TEXT NOT NULL DEFAULT '',
+  keys_json TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  payload TEXT NOT NULL,
+  generated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_metric_expl_cache_symbol
+  ON metric_explanation_cache(symbol, scope, stmt_type);
 """
 
 _MIGRATIONS = {
@@ -57,6 +76,7 @@ _MIGRATIONS = {
         # 原文抽取口径单独建表，不写进 statement_items：标准科目优先，缺项才回退。
         _EXTRACTED_FINANCIAL_DDL,
     ],
+    7: [_METRIC_EXPLANATION_CACHE_DDL],
 }
 
 

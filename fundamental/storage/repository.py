@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any, Iterable, Optional, Sequence
 
@@ -84,3 +85,79 @@ def fetch_one(conn: sqlite3.Connection, sql: str, params: Sequence[Any] = ()) ->
 
 def fetch_all(conn: sqlite3.Connection, sql: str, params: Sequence[Any] = ()) -> list[sqlite3.Row]:
     return conn.execute(sql, params).fetchall()
+
+
+# ===== 单期指标解释缓存（供图表悬停提示复用） =====
+
+def save_metric_explanation(
+    conn: sqlite3.Connection,
+    *,
+    cache_key: str,
+    symbol: str,
+    period: str,
+    scope: str,
+    stmt_type: str,
+    keys: list[str],
+    fingerprint: str,
+    version: int,
+    summary: str,
+    payload: dict[str, Any],
+    generated_at: str,
+) -> None:
+    """整行覆盖写入；cache_key 已含标的/报告期/口径/科目组合。"""
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO metric_explanation_cache
+          (cache_key, symbol, period, scope, stmt_type, keys_json, fingerprint,
+           version, summary, payload, generated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            cache_key, symbol, period, scope, stmt_type,
+            json.dumps(keys, ensure_ascii=False), fingerprint, version, summary,
+            json.dumps(payload, ensure_ascii=False), generated_at,
+        ),
+    )
+
+
+def get_metric_explanation(conn: sqlite3.Connection, cache_key: str) -> Optional[dict[str, Any]]:
+    row = conn.execute(
+        "SELECT payload FROM metric_explanation_cache WHERE cache_key = ?", (cache_key,)
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        data = json.loads(row["payload"])
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def list_metric_explanations(conn: sqlite3.Connection, symbol: str) -> list[dict[str, Any]]:
+    """返回该标的全部已缓存解释的索引（摘要 + 元数据，不取完整 payload）。"""
+    rows = conn.execute(
+        """
+        SELECT period, scope, stmt_type, keys_json, fingerprint, version, summary, generated_at
+        FROM metric_explanation_cache WHERE symbol = ? ORDER BY generated_at DESC
+        """,
+        (symbol,),
+    ).fetchall()
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            keys = json.loads(row["keys_json"])
+        except (TypeError, ValueError):
+            keys = []
+        result.append(
+            {
+                "period": row["period"],
+                "scope": row["scope"],
+                "stmt_type": row["stmt_type"],
+                "keys": keys if isinstance(keys, list) else [],
+                "fingerprint": row["fingerprint"],
+                "version": row["version"],
+                "summary": row["summary"],
+                "generated_at": row["generated_at"],
+            }
+        )
+    return result

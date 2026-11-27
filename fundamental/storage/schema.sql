@@ -493,3 +493,21 @@ CREATE TABLE sync_state (
   status TEXT DEFAULT 'ok',
   UNIQUE(provider, capability, stock_id, data_type)
 );
+
+-- 单期指标解释缓存：图表悬停提示直接查表，避免逐期请求与重复生成
+CREATE TABLE metric_explanation_cache (
+  id INTEGER PRIMARY KEY,
+  cache_key TEXT NOT NULL UNIQUE,
+  symbol TEXT NOT NULL,
+  period TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  stmt_type TEXT NOT NULL DEFAULT '',
+  keys_json TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  payload TEXT NOT NULL,
+  generated_at TEXT NOT NULL
+);
+CREATE INDEX idx_metric_expl_cache_symbol
+  ON metric_explanation_cache(symbol, scope, stmt_type);
